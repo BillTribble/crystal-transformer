@@ -580,7 +580,7 @@ function hexToOkhsl(hex) {
 
 /** @type {Record<string, ParamDef>} */
 const STANDARD = {
-  timeScale: { key: 'timeScale', label: 'Speed', value: 3, default: 3, min: 0, max: 4, step: 0.01, uniform: false, desc: 'Global speed of all scene motion.' },
+  timeScale: { key: 'timeScale', label: 'Speed', value: 1.5, default: 1.5, min: 0, max: 4, step: 0.01, uniform: false, desc: 'Global speed of all scene motion.' },
   renderScale: { key: 'renderScale', label: 'Render scale', value: 1, min: 0.25, max: 1, step: 0.05, uniform: false, desc: 'Internal resolution ceiling. Lower = faster, softer. Adaptive quality works below this.' },
   targetFps: { key: 'targetFps', label: 'Target fps', value: 60, min: 24, max: 120, step: 1, uniform: false, desc: 'Frame rate adaptive quality tries to hold.' },
   maxFps: { key: 'maxFps', label: 'Frame cap', value: 0, min: 0, max: 120, step: 1, uniform: false, desc: 'Most frames per second to draw (0 = as many as the screen shows). A slow scene looks the same at 30 and costs half the GPU, battery and heat.' },
@@ -1149,7 +1149,7 @@ const STICKY_USER_KEYS = new Set([
   'autoGrow', 'growSpeed', 'growth', 'spinStart', 'spin', 'tilt', 'fov',
   'bloom', 'faceGlare',
 ]);
-const DISCRETE_INT_KEYS = new Set(['seed', 'crystals', 'fireSamples', 'bounces', 'depth', 'filmFps', 'targetFps', 'maxFps']);
+const DISCRETE_INT_KEYS = new Set(['seed', 'fireSamples', 'bounces', 'depth', 'filmFps', 'targetFps', 'maxFps']);
 function createModel(schema, storageKey, presets = {}) {
   const params = [];
   const byKey = Object.create(null);
@@ -1334,6 +1334,7 @@ function createModel(schema, storageKey, presets = {}) {
       for (const p of params) {
         if (p.key === 'renderScale' || p.key === 'targetFps' || p.key === 'maxFps' || p.key === 'maxDpr' || p.key === 'bloom' || p.noPreset) continue;
         if (STICKY_USER_KEYS.has(p.key) && values[p.key] === undefined) continue;
+        if (p.key === 'seed' && seconds > 0 && glideNumbers) continue;
         const to = coerce(p, resolveTarget(p));
         if (seconds <= 0 || p.type === 'select' || p.type === 'bool' || p.key === 'seed' || (p.type !== 'color' && !glideNumbers)) {
           assign(p, to);
@@ -1351,9 +1352,10 @@ function createModel(schema, storageKey, presets = {}) {
       glideLen = Math.max(seconds, 1e-3);
     },
     applyPreset(name, seconds = 0.65, glideNumbers = true) {
-      const values = customPresets[name] || presets?.[name];
+      const resolvedName = (name === 'Glacial Ice Dendrite' && presets?.['Glacial Ice']) ? 'Glacial Ice' : name;
+      const values = customPresets[resolvedName] || presets?.[resolvedName];
       if (!values) return;
-      store.applyValues(values, seconds, name, glideNumbers);
+      store.applyValues(values, seconds, resolvedName, glideNumbers);
     },
     randomize(customRandomizer, seconds = 10.0) {
       const next = typeof customRandomizer === 'function' ? { ...customRandomizer(store) } : {};
@@ -2250,6 +2252,7 @@ const GOLDEN = Math.PI * (3 - Math.sqrt(5));
 const cluster = {
   data: new Float32Array(ROW_W * ROWS * 4),
   crystals: 0,
+  floatCrystals: 9,
   activeVectors: 0,
   maxVectors: MAX_CRYSTALS * CRYSTAL_PLANES,
   maxCrystals: MAX_CRYSTALS,
@@ -2263,7 +2266,17 @@ const cluster = {
   dissolvedCount: 0,
   generation: 0,
   nodes: [],
+  centerInit: false,
+  pendingCenterDt: 0,
+  centreX: 0,
   centreY: 0,
+  centreZ: 0,
+  velCentreX: 0,
+  velCentreY: 0,
+  velCentreZ: 0,
+  targetCentreX: 0,
+  targetCentreY: 0,
+  targetCentreZ: 0,
   radius: 1,
   radiusXZ: 0.5,
   halfY: 0.5,
@@ -3141,20 +3154,21 @@ cluster.surgeBranch = triggerGrowBurst;
   // === Module: sound.js ===
   const __mod_sound = (() => {
 // Enso Ambient Soundscape Engine for Crystal Transformer
-// Ports the 6 modal Circle-of-Fifths ambient tracks, scales, phrases, and 6 voices
+// Faithfully ports the 6 modal Circle-of-Fifths ambient tracks, scales, phrases, and 6 voices
 // (Felt Piano, CS-80 Ribbon Pad, DX7 Glass Bell, Spectral Choir, Revox Tape Loop, Sub-Bass Pedal)
 // from Enso Soundscapes (//depot/google3/experimental/users/tribble/eno_soundscape).
 //
-// Ultra-low phone CPU architecture (zero live ConvolverNode FFT cost):
-// 1. Pre-baked 320 kbps stereo .ogg (with 320 kbps .mp3 fallback for iOS WebKit) instrument
-//    samples in samples/*.ogg that have the full stereo cathedral convolution reverb + Eno
-//    octave shimmer + Salamander Grand Piano v3 felt EQ already stamped onto each sample.
-// 2. Instant local OfflineAudioContext + stereo ConvolverNode fallback buffer generator so
-//    the very first note plays immediately while .ogg samples stream in the background.
-// 3. Optional lightweight 4-tap non-convolution Feedback Delay Network (FDN) using native
-//    C++ DelayNode + BiquadFilterNode lowpass damping ('Stamped OGG (0% CPU)',
-//    'Hybrid (OGG + Lite FDN)', 'Lite FDN Live').
-// 4. Automatic Circle-of-Fifths track rotation every 3 minutes (180 seconds).
+// Acoustic & Generative Fidelity to Enso-Soundscapes:
+// 1. Clean 320 kbps Salamander Grand Piano v3 samples (samples/piano_*.ogg + .mp3) baked with
+//    Enso's 3-stage warm wool-felt lowpass filter (cutoff ~950 Hz, Q = 0.5) + smooth dark-velvet
+//    stereo cathedral impulse response (lowpassed at 1350 Hz, Q = 0.5, ZERO +12st sine shimmer
+//    on piano, ZERO comb-filter early-reflection spikes, ZERO slapback delay taps) + live per-track
+//    Q = 0.5 felt lowpass bus so pitch-shifted notes never ring.
+// 2. Faithful Enso voice balance (pianoCrossfade = -0.62 -> piano foreground 1.0, background
+//    voices 0.38 * DEFAULT_VOICE_INSTRUMENT_TRIM), slow 2.5s–4.2s pad/choir/drone attack swells,
+//    spacious 15s–24s Music-for-Airports breathing room between piano phrases with Enso's 3-minute
+//    phrase-length LFO and aleatoric note/phrase gates, and a 2-voice background concurrency cap.
+// 3. Automatic Circle-of-Fifths track rotation every 3 minutes (180 seconds).
 const TRACK_ROTATE_SECONDS = 180;
 const ENSO_REVERB_MODES = [
   'Stamped OGG (0% CPU)',
@@ -3172,28 +3186,39 @@ const SAMPLE_ZONES = [
   { id: 'piano_fs5', voice: 'piano', midi: 78, dur: 5.2 },
   { id: 'piano_c6', voice: 'piano', midi: 84, dur: 5.0 },
 
-  { id: 'pad_c3', voice: 'pad', midi: 48, dur: 7.0 },
-  { id: 'pad_g3', voice: 'pad', midi: 55, dur: 7.0 },
-  { id: 'pad_c4', voice: 'pad', midi: 60, dur: 7.0 },
-  { id: 'pad_g4', voice: 'pad', midi: 67, dur: 7.0 },
+  { id: 'pad_c3', voice: 'pad', midi: 48, dur: 8.0 },
+  { id: 'pad_g3', voice: 'pad', midi: 55, dur: 8.0 },
+  { id: 'pad_c4', voice: 'pad', midi: 60, dur: 8.0 },
+  { id: 'pad_g4', voice: 'pad', midi: 67, dur: 8.0 },
 
   { id: 'bell_c4', voice: 'bell', midi: 60, dur: 5.8 },
   { id: 'bell_g4', voice: 'bell', midi: 67, dur: 5.8 },
   { id: 'bell_c5', voice: 'bell', midi: 72, dur: 5.5 },
   { id: 'bell_g5', voice: 'bell', midi: 79, dur: 5.5 },
 
-  { id: 'choir_c4', voice: 'choir', midi: 60, dur: 7.2 },
-  { id: 'choir_g4', voice: 'choir', midi: 67, dur: 7.2 },
-  { id: 'choir_c5', voice: 'choir', midi: 72, dur: 7.2 },
+  { id: 'choir_c4', voice: 'choir', midi: 60, dur: 8.2 },
+  { id: 'choir_g4', voice: 'choir', midi: 67, dur: 8.2 },
+  { id: 'choir_c5', voice: 'choir', midi: 72, dur: 8.2 },
 
-  { id: 'tape_c3', voice: 'tape', midi: 48, dur: 6.2 },
-  { id: 'tape_g3', voice: 'tape', midi: 55, dur: 6.2 },
-  { id: 'tape_c4', voice: 'tape', midi: 60, dur: 6.2 },
+  { id: 'tape_c3', voice: 'tape', midi: 48, dur: 7.2 },
+  { id: 'tape_g3', voice: 'tape', midi: 55, dur: 7.2 },
+  { id: 'tape_c4', voice: 'tape', midi: 60, dur: 7.2 },
 
-  { id: 'drone_c2', voice: 'drone', midi: 36, dur: 7.6 },
-  { id: 'drone_g2', voice: 'drone', midi: 43, dur: 7.6 },
-  { id: 'drone_c3', voice: 'drone', midi: 48, dur: 7.6 },
+  { id: 'drone_c2', voice: 'drone', midi: 36, dur: 8.6 },
+  { id: 'drone_g2', voice: 'drone', midi: 43, dur: 8.6 },
+  { id: 'drone_c3', voice: 'drone', midi: 48, dur: 8.6 },
 ];
+
+// Exact instrument trim & crossfade balance from eno_soundscape/js/audio-engine.js
+// (pianoCrossfade = -0.62 -> pianoMultiplier = 1.0, otherMultiplier = 0.38)
+const VOICE_INSTRUMENT_TRIM = {
+  piano: 0.72,
+  pad: 0.15,
+  bell: 0.18,
+  choir: 0.16,
+  tape: 0.17,
+  drone: 0.18,
+};
 const ENSO_TRACKS = [
   {
     id: 'thursday',
@@ -3204,40 +3229,52 @@ const ENSO_TRACKS = [
     rootMidi: 55,
     intervals: [0, 2, 4, 5, 7, 9, 10],
     degreeWeights: [0.90, 0.75, 0.60, 0.30, 0.80, 0.50, 0.40],
-    phraseCycleSec: 8.4,
-    chordCycleSec: 13.5,
+    markovGravity: [0.92, 0.78, 0.72, 0.32, 0.88, 0.62, 0.76],
+    rotationSpeed: 0.90,
+    pianoCutoffHz: 1120,
+    pianoShelfDb: -6.5,
+    globalAttackSec: 3.2,
+    phraseCycleSec: 15.8,
+    phraseGateProb: 0.76,
+    phraseLengthLfo: { enabled: true, periodSec: 180, minRatio: 0.50, maxRatio: 1.00 },
     chordInstrument: 'choir',
+    chordRollMs: 112,
+    chordVel: 0.54,
     voices: {
-      pad:   { cycle: 16.3, prob: 0.72, gain: 0.42, octave: 0, pan: 0.35 },
-      piano: { cycle: 6.7,  prob: 0.80, gain: 0.88, octave: 0, pan: 0.42 },
-      bell:  { cycle: 13.1, prob: 0.42, gain: 0.36, octave: 1, pan: 0.60 },
-      choir: { cycle: 11.3, prob: 0.78, gain: 0.44, octave: 1, pan: 0.48 },
-      tape:  { cycle: 17.9, prob: 0.50, gain: 0.34, octave: 0, pan: 0.38 },
-      drone: { cycle: 29.3, prob: 0.76, gain: 0.46, octave: -1, pan: 0.15 },
+      pad:   { cycle: 23.3, prob: 0.62, gain: 0.65, attack: 3.2, release: 8.0, octave: 0, pan: 0.35, muted: false },
+      bell:  { cycle: 19.7, prob: 0.34, gain: 0.58, attack: 0.04, release: 4.8, octave: 1, pan: 0.55, muted: false },
+      choir: { cycle: 18.7, prob: 0.72, gain: 0.62, attack: 3.4, release: 9.2, octave: 1, pan: 0.45, muted: false },
+      tape:  { cycle: 27.9, prob: 0.42, gain: 0.58, attack: 2.4, release: 5.8, octave: 0, pan: 0.38, muted: false },
+      drone: { cycle: 37.3, prob: 0.68, gain: 0.65, attack: 3.8, release: 10.5, octave: -1, pan: 0.15, muted: false },
     },
     phrases: [
+      // Sunlit Canopy Cascade (primarySteps & variantSteps from eno_soundscape/js/phrase-patterns.js)
       [
-        { deg: [0, 4], oct: [0, 1], delayMs: 0, vel: 0.82 },
-        { deg: [2], oct: [1], delayMs: 340, vel: 0.68 },
-        { deg: [1], oct: [1], delayMs: 690, vel: 0.60 },
-        { deg: [4], oct: [1], delayMs: 1080, vel: 0.74 },
-        { deg: [6], oct: [0], delayMs: 1740, vel: 0.56 },
-        { deg: [5], oct: [0], delayMs: 2110, vel: 0.64 },
-        { deg: [2], oct: [0], delayMs: 2520, vel: 0.54 },
-        { deg: [0], oct: [1], delayMs: 3320, vel: 0.76 },
+        { deg: [0, 4], oct: [0, 1], delayMs: 0, vel: 0.48, rollMs: 115 },
+        { deg: [2], oct: [1], delayMs: 440, vel: 0.40, rollMs: 90 },
+        { deg: [1], oct: [1], delayMs: 880, vel: 0.36, rollMs: 90 },
+        { deg: [4], oct: [1], delayMs: 1320, vel: 0.44, rollMs: 95 },
+        { deg: [6], oct: [0], delayMs: 1960, vel: 0.34, rollMs: 95 },
+        { deg: [5], oct: [0], delayMs: 2420, vel: 0.38, rollMs: 95 },
+        { deg: [2], oct: [0], delayMs: 2880, vel: 0.33, rollMs: 95 },
+        { deg: [0], oct: [1], delayMs: 3640, vel: 0.45, rollMs: 115 },
       ],
       [
-        { deg: [4], oct: [1], delayMs: 0, vel: 0.76 },
-        { deg: [2], oct: [1], delayMs: 380, vel: 0.65 },
-        { deg: [1], oct: [1], delayMs: 810, vel: 0.58 },
-        { deg: [0], oct: [1], delayMs: 1560, vel: 0.72 },
+        { deg: [0, 4], oct: [0, 1], delayMs: 0, vel: 0.46, rollMs: 115 },
+        { deg: [1], oct: [1], delayMs: 440, vel: 0.38, rollMs: 90 },
+        { deg: [2], oct: [1], delayMs: 900, vel: 0.42, rollMs: 90 },
+        { deg: [6], oct: [1], delayMs: 1380, vel: 0.35, rollMs: 95 },
+        { deg: [4], oct: [1], delayMs: 2040, vel: 0.43, rollMs: 95 },
+        { deg: [3], oct: [0], delayMs: 2500, vel: 0.34, rollMs: 95 },
+        { deg: [1], oct: [0], delayMs: 2960, vel: 0.36, rollMs: 95 },
+        { deg: [0], oct: [1], delayMs: 3720, vel: 0.44, rollMs: 115 },
       ],
     ],
     chords: [
-      { deg: [0, 2, 4], oct: [0, 0, 0], rollMs: 96, vel: 0.68 },
-      { deg: [6, 1, 3], oct: [-1, 0, 0], rollMs: 118, vel: 0.62 },
-      { deg: [3, 5, 0], oct: [0, 0, 1], rollMs: 128, vel: 0.66 },
-      { deg: [4, 6, 1], oct: [0, 0, 1], rollMs: 108, vel: 0.60 },
+      { deg: [0, 2, 4, 6], oct: [0, 0, 0, 0], rollMs: 112, vel: 0.52 },
+      { deg: [6, 1, 3, 5], oct: [-1, 0, 0, 0], rollMs: 118, vel: 0.48 },
+      { deg: [3, 5, 0, 2], oct: [0, 0, 1, 1], rollMs: 124, vel: 0.50 },
+      { deg: [4, 6, 1, 3], oct: [0, 0, 1, 1], rollMs: 112, vel: 0.48 },
     ],
   },
   {
@@ -3249,36 +3286,44 @@ const ENSO_TRACKS = [
     rootMidi: 48,
     intervals: [0, 2, 4, 6, 7, 9, 11],
     degreeWeights: [0.98, 0.86, 0.42, 0.78, 0.92, 0.48, 0.32],
-    phraseCycleSec: 9.6,
-    chordCycleSec: 14.8,
+    markovGravity: [0.98, 0.86, 0.35, 0.78, 0.92, 0.42, 0.28],
+    rotationSpeed: 1.00,
+    pianoCutoffHz: 980,
+    pianoShelfDb: -8.8,
+    globalAttackSec: 4.2,
+    phraseCycleSec: 17.6,
+    phraseGateProb: 0.72,
+    phraseLengthLfo: { enabled: false },
     chordInstrument: 'piano',
+    chordRollMs: 168,
+    chordVel: 0.48,
     voices: {
-      pad:   { cycle: 17.3, prob: 0.74, gain: 0.45, octave: 0, pan: 0.38 },
-      piano: { cycle: 7.9,  prob: 0.70, gain: 0.86, octave: 1, pan: 0.45 },
-      bell:  { cycle: 11.3, prob: 0.48, gain: 0.38, octave: 1, pan: 0.64 },
-      choir: { cycle: 21.9, prob: 0.56, gain: 0.40, octave: 1, pan: 0.50 },
-      tape:  { cycle: 13.7, prob: 0.60, gain: 0.36, octave: 0, pan: 0.40 },
-      drone: { cycle: 27.1, prob: 0.82, gain: 0.48, octave: -1, pan: 0.15 },
+      pad:   { cycle: 21.3, prob: 0.66, gain: 0.65, attack: 4.2, release: 9.5, octave: 0, pan: 0.38, muted: false },
+      bell:  { cycle: 19.3, prob: 0.36, gain: 0.56, attack: 0.08, release: 5.5, octave: 1, pan: 0.60, muted: false },
+      choir: { cycle: 29.9, prob: 0.48, gain: 0.60, attack: 4.5, release: 10.5, octave: 1, pan: 0.50, muted: false },
+      tape:  { cycle: 23.7, prob: 0.46, gain: 0.58, attack: 3.0, release: 6.5, octave: 0, pan: 0.40, muted: false },
+      drone: { cycle: 34.1, prob: 0.76, gain: 0.65, attack: 4.6, release: 12.0, octave: -1, pan: 0.15, muted: false },
     },
     phrases: [
+      // Lydian Glass Progression & Luminous Cell from eno_soundscape/js/phrase-patterns.js
       [
-        { deg: [0], oct: [1], delayMs: 0, vel: 0.68 },
-        { deg: [3], oct: [1], delayMs: 740, vel: 0.58 },
-        { deg: [4], oct: [1], delayMs: 1620, vel: 0.64 },
-        { deg: [1], oct: [1], delayMs: 2740, vel: 0.54 },
+        { deg: [0, 2, 4, 6], oct: [0, 0, 0, 0], delayMs: 0, vel: 0.44, rollMs: 162 },
+        { deg: [1, 3, 5, 0], oct: [0, 0, 0, 1], delayMs: 1950, vel: 0.38, rollMs: 178 },
+        { deg: [6, 1, 3, 5], oct: [-1, 0, 0, 0], delayMs: 4100, vel: 0.35, rollMs: 192 },
+        { deg: [0, 3, 4, 6], oct: [0, 0, 0, 0], delayMs: 6300, vel: 0.42, rollMs: 168 },
       ],
       [
-        { deg: [0], oct: [1], delayMs: 0, vel: 0.66 },
-        { deg: [3], oct: [1], delayMs: 790, vel: 0.58 },
-        { deg: [6], oct: [1], delayMs: 1710, vel: 0.54 },
-        { deg: [4], oct: [1], delayMs: 2820, vel: 0.62 },
+        { deg: [0], oct: [1], delayMs: 0, vel: 0.44, rollMs: 155 },
+        { deg: [3], oct: [1], delayMs: 840, vel: 0.36, rollMs: 155 },
+        { deg: [4], oct: [1], delayMs: 1820, vel: 0.40, rollMs: 165 },
+        { deg: [1], oct: [1], delayMs: 3040, vel: 0.34, rollMs: 175 },
       ],
     ],
     chords: [
-      { deg: [0, 2, 4, 6], oct: [0, 1, 1, 1], rollMs: 162, vel: 0.66 },
-      { deg: [1, 3, 5, 0], oct: [1, 1, 1, 2], rollMs: 178, vel: 0.58 },
-      { deg: [6, 1, 3, 5], oct: [0, 1, 1, 1], rollMs: 192, vel: 0.54 },
-      { deg: [0, 3, 4, 6], oct: [0, 1, 1, 1], rollMs: 168, vel: 0.64 },
+      { deg: [0, 2, 4, 6], oct: [0, 0, 0, 0], rollMs: 162, vel: 0.46 },
+      { deg: [1, 3, 5, 0], oct: [0, 0, 0, 1], rollMs: 178, vel: 0.40 },
+      { deg: [6, 1, 3, 5], oct: [-1, 0, 0, 0], rollMs: 192, vel: 0.38 },
+      { deg: [0, 3, 4, 6], oct: [0, 0, 0, 0], rollMs: 168, vel: 0.44 },
     ],
   },
   {
@@ -3290,40 +3335,44 @@ const ENSO_TRACKS = [
     rootMidi: 53,
     intervals: [0, 2, 4, 6, 7, 9, 11],
     degreeWeights: [0.85, 0.75, 0.70, 0.50, 0.90, 0.60, 0.35],
-    phraseCycleSec: 10.4,
-    chordCycleSec: 15.6,
+    markovGravity: [1.40, 1.32, 1.0, 1.44, 1.55, 1.0, 1.0],
+    rotationSpeed: 0.80,
+    pianoCutoffHz: 1140,
+    pianoShelfDb: -5.5,
+    globalAttackSec: 5.2,
+    phraseCycleSec: 19.4,
+    phraseGateProb: 0.70,
+    phraseLengthLfo: { enabled: false },
     chordInstrument: 'piano',
+    chordRollMs: 208,
+    chordVel: 0.48,
     voices: {
-      pad:   { cycle: 21.9, prob: 0.78, gain: 0.46, octave: 0, pan: 0.38 },
-      piano: { cycle: 10.3, prob: 0.72, gain: 0.85, octave: 0, pan: 0.52 },
-      bell:  { cycle: 7.9,  prob: 0.58, gain: 0.42, octave: 1, pan: 0.66 },
-      choir: { cycle: 25.1, prob: 0.66, gain: 0.46, octave: 1, pan: 0.60 },
-      tape:  { cycle: 17.3, prob: 0.62, gain: 0.38, octave: 0, pan: 0.48 },
-      drone: { cycle: 31.1, prob: 0.88, gain: 0.50, octave: -1, pan: 0.18 },
+      pad:   { cycle: 26.9, prob: 0.68, gain: 0.65, attack: 5.0, release: 12.0, octave: 0, pan: -0.38, muted: false },
+      bell:  { cycle: 16.9, prob: 0.42, gain: 0.58, attack: 0.12, release: 7.2, octave: 1, pan: 0.62, muted: false },
+      choir: { cycle: 31.1, prob: 0.58, gain: 0.62, attack: 5.2, release: 13.5, octave: 1, pan: -0.60, muted: false },
+      tape:  { cycle: 23.3, prob: 0.48, gain: 0.58, attack: 3.4, release: 8.5, octave: 0, pan: 0.48, muted: false },
+      drone: { cycle: 41.1, prob: 0.80, gain: 0.65, attack: 5.4, release: 15.0, octave: -1, pan: 0.18, muted: false },
     },
     phrases: [
+      // Cathedral Vespers Chords & Gallery Horizon Pattern from eno_soundscape/js/phrase-patterns.js
       [
-        { deg: [0], oct: [1], delayMs: 0, vel: 0.78 },
-        { deg: [1], oct: [1], delayMs: 790, vel: 0.60 },
-        { deg: [3], oct: [1], delayMs: 1730, vel: 0.68 },
-        { deg: [4], oct: [1], delayMs: 2830, vel: 0.74 },
-        { deg: [6], oct: [1], delayMs: 4010, vel: 0.62 },
-        { deg: [4], oct: [1], delayMs: 4990, vel: 0.70 },
-        { deg: [2], oct: [1], delayMs: 6070, vel: 0.58 },
-        { deg: [0], oct: [1], delayMs: 7330, vel: 0.76 },
+        { deg: [0, 2, 4, 1], oct: [0, 0, 0, 1], delayMs: 0, vel: 0.46, rollMs: 196 },
+        { deg: [1, 3, 5, 0], oct: [0, 0, 0, 1], delayMs: 2150, vel: 0.40, rollMs: 216 },
+        { deg: [5, 0, 2, 4], oct: [-1, 0, 0, 0], delayMs: 4400, vel: 0.36, rollMs: 204 },
+        { deg: [4, 6, 1, 3], oct: [0, 0, 1, 1], delayMs: 6700, vel: 0.42, rollMs: 224 },
       ],
       [
-        { deg: [4], oct: [1], delayMs: 0, vel: 0.74 },
-        { deg: [3], oct: [1], delayMs: 930, vel: 0.66 },
-        { deg: [1], oct: [1], delayMs: 2010, vel: 0.62 },
-        { deg: [0], oct: [1], delayMs: 3290, vel: 0.72 },
+        { deg: [0], oct: [1], delayMs: 0, vel: 0.46, rollMs: 185 },
+        { deg: [2], oct: [1], delayMs: 950, vel: 0.38, rollMs: 185 },
+        { deg: [3], oct: [1], delayMs: 2050, vel: 0.42, rollMs: 195 },
+        { deg: [4], oct: [1], delayMs: 3350, vel: 0.36, rollMs: 210 },
       ],
     ],
     chords: [
-      { deg: [0, 2, 4, 1], oct: [0, 0, 0, 1], rollMs: 196, vel: 0.72 },
-      { deg: [1, 3, 5, 0], oct: [0, 0, 0, 1], rollMs: 216, vel: 0.64 },
-      { deg: [5, 0, 2, 4], oct: [-1, 0, 0, 0], rollMs: 204, vel: 0.60 },
-      { deg: [4, 6, 1, 3], oct: [0, 0, 1, 1], rollMs: 224, vel: 0.68 },
+      { deg: [0, 2, 4, 1], oct: [0, 0, 0, 1], rollMs: 196, vel: 0.46 },
+      { deg: [1, 3, 5, 0], oct: [0, 0, 0, 1], rollMs: 216, vel: 0.40 },
+      { deg: [5, 0, 2, 4], oct: [-1, 0, 0, 0], rollMs: 204, vel: 0.38 },
+      { deg: [4, 6, 1, 3], oct: [0, 0, 1, 1], rollMs: 224, vel: 0.44 },
     ],
   },
   {
@@ -3335,40 +3384,48 @@ const ENSO_TRACKS = [
     rootMidi: 48,
     intervals: [0, 2, 4, 5, 7, 9, 11],
     degreeWeights: [0.90, 0.82, 0.65, 0.20, 0.85, 0.70, 0.30],
-    phraseCycleSec: 9.2,
-    chordCycleSec: 14.2,
+    markovGravity: [1.55, 1.42, 1.32, 1.0, 1.60, 1.35, 1.0],
+    rotationSpeed: 0.74,
+    pianoCutoffHz: 1080,
+    pianoShelfDb: -7.2,
+    globalAttackSec: 4.8,
+    phraseCycleSec: 17.2,
+    phraseGateProb: 0.74,
+    phraseLengthLfo: { enabled: false },
     chordInstrument: 'pad',
+    chordRollMs: 152,
+    chordVel: 0.50,
     voices: {
-      pad:   { cycle: 19.1, prob: 0.82, gain: 0.48, octave: 0, pan: 0.36 },
-      piano: { cycle: 8.9,  prob: 0.74, gain: 0.86, octave: 1, pan: 0.44 },
-      bell:  { cycle: 14.9, prob: 0.65, gain: 0.42, octave: 1, pan: 0.62 },
-      choir: { cycle: 23.7, prob: 0.70, gain: 0.46, octave: 1, pan: 0.52 },
-      tape:  { cycle: 16.3, prob: 0.58, gain: 0.36, octave: 0, pan: 0.40 },
-      drone: { cycle: 29.9, prob: 0.85, gain: 0.50, octave: -1, pan: 0.15 },
+      pad:   { cycle: 21.1, prob: 0.74, gain: 0.65, attack: 4.8, release: 12.5, octave: 0, pan: 0.36, muted: false },
+      bell:  { cycle: 22.9, prob: 0.44, gain: 0.58, attack: 0.08, release: 7.5, octave: 1, pan: 0.60, muted: false },
+      choir: { cycle: 27.7, prob: 0.58, gain: 0.62, attack: 4.8, release: 14.0, octave: 1, pan: 0.50, muted: false },
+      tape:  { cycle: 24.3, prob: 0.44, gain: 0.56, attack: 3.2, release: 8.0, octave: 0, pan: 0.40, muted: false },
+      drone: { cycle: 37.9, prob: 0.78, gain: 0.65, attack: 5.0, release: 15.5, octave: -1, pan: 0.15, muted: false },
     },
     phrases: [
+      // Tranquility Base Sequence from eno_soundscape/js/phrase-patterns.js
       [
-        { deg: [0, 4], oct: [0, 1], delayMs: 0, vel: 0.80 },
-        { deg: [1], oct: [1], delayMs: 590, vel: 0.62 },
-        { deg: [2], oct: [1], delayMs: 1240, vel: 0.68 },
-        { deg: [4], oct: [1], delayMs: 1960, vel: 0.75 },
-        { deg: [5], oct: [1], delayMs: 3040, vel: 0.64 },
-        { deg: [4], oct: [1], delayMs: 3720, vel: 0.70 },
-        { deg: [2], oct: [1], delayMs: 4460, vel: 0.58 },
-        { deg: [0], oct: [1], delayMs: 5480, vel: 0.76 },
+        { deg: [0, 4], oct: [0, 1], delayMs: 0, vel: 0.48, rollMs: 150 },
+        { deg: [1], oct: [1], delayMs: 650, vel: 0.37, rollMs: 135 },
+        { deg: [2], oct: [1], delayMs: 1380, vel: 0.41, rollMs: 135 },
+        { deg: [4], oct: [1], delayMs: 2180, vel: 0.45, rollMs: 145 },
+        { deg: [5], oct: [1], delayMs: 3360, vel: 0.38, rollMs: 150 },
+        { deg: [4], oct: [1], delayMs: 4120, vel: 0.42, rollMs: 140 },
+        { deg: [2], oct: [1], delayMs: 4940, vel: 0.35, rollMs: 135 },
+        { deg: [0], oct: [1], delayMs: 6040, vel: 0.46, rollMs: 155 },
       ],
       [
-        { deg: [4], oct: [1], delayMs: 0, vel: 0.76 },
-        { deg: [1], oct: [1], delayMs: 680, vel: 0.62 },
-        { deg: [2], oct: [1], delayMs: 1520, vel: 0.68 },
-        { deg: [0], oct: [1], delayMs: 2660, vel: 0.78 },
+        { deg: [4], oct: [1], delayMs: 0, vel: 0.45, rollMs: 145 },
+        { deg: [1], oct: [1], delayMs: 740, vel: 0.37, rollMs: 145 },
+        { deg: [2], oct: [1], delayMs: 1620, vel: 0.41, rollMs: 155 },
+        { deg: [0], oct: [1], delayMs: 2820, vel: 0.46, rollMs: 165 },
       ],
     ],
     chords: [
-      { deg: [0, 2, 4, 6], oct: [0, 1, 1, 1], rollMs: 148, vel: 0.68 },
-      { deg: [5, 0, 2, 4], oct: [0, 1, 1, 1], rollMs: 162, vel: 0.62 },
-      { deg: [3, 5, 0, 2], oct: [0, 0, 1, 1], rollMs: 154, vel: 0.66 },
-      { deg: [4, 6, 1, 3], oct: [0, 0, 1, 1], rollMs: 144, vel: 0.60 },
+      { deg: [0, 2, 4, 6], oct: [0, 0, 0, 0], rollMs: 148, vel: 0.50 },
+      { deg: [5, 0, 2, 4], oct: [-1, 0, 0, 0], rollMs: 162, vel: 0.46 },
+      { deg: [3, 5, 0, 2], oct: [0, 0, 1, 1], rollMs: 154, vel: 0.48 },
+      { deg: [4, 6, 1, 3], oct: [0, 0, 1, 1], rollMs: 144, vel: 0.45 },
     ],
   },
   {
@@ -3380,39 +3437,47 @@ const ENSO_TRACKS = [
     rootMidi: 55,
     intervals: [0, 2, 3, 5, 7, 9, 10],
     degreeWeights: [0.95, 0.70, 0.80, 0.35, 0.85, 0.65, 0.45],
-    phraseCycleSec: 7.4,
-    chordCycleSec: 12.6,
+    markovGravity: [1.48, 1.0, 1.55, 1.0, 1.42, 1.38, 1.0],
+    rotationSpeed: 1.00,
+    pianoCutoffHz: 860,
+    pianoShelfDb: -12.5,
+    globalAttackSec: 2.8,
+    phraseCycleSec: 13.8,
+    phraseGateProb: 0.84,
+    phraseLengthLfo: { enabled: false },
     chordInstrument: 'pad',
+    chordRollMs: 72,
+    chordVel: 0.44,
     voices: {
-      pad:   { cycle: 13.9, prob: 0.58, gain: 0.38, octave: 0, pan: 0.34 },
-      piano: { cycle: 5.3,  prob: 0.90, gain: 0.94, octave: 0, pan: 0.40 },
-      bell:  { cycle: 11.3, prob: 0.38, gain: 0.32, octave: 1, pan: 0.58 },
-      choir: { cycle: 23.1, prob: 0.44, gain: 0.36, octave: 1, pan: 0.46 },
-      tape:  { cycle: 9.7,  prob: 0.72, gain: 0.42, octave: 0, pan: 0.38 },
-      drone: { cycle: 26.3, prob: 0.68, gain: 0.44, octave: -1, pan: 0.14 },
+      pad:   { cycle: 18.9, prob: 0.55, gain: 0.60, attack: 2.8, release: 7.2, octave: 0, pan: 0.34, muted: false },
+      bell:  { cycle: 21.3, prob: 0.28, gain: 0.50, attack: 0.04, release: 4.2, octave: 1, pan: 0.55, muted: false },
+      choir: { cycle: 27.1, prob: 0.38, gain: 0.56, attack: 3.4, release: 8.0, octave: 1, pan: 0.46, muted: false },
+      tape:  { cycle: 17.7, prob: 0.56, gain: 0.58, attack: 2.2, release: 5.2, octave: 0, pan: 0.38, muted: false },
+      drone: { cycle: 31.3, prob: 0.62, gain: 0.62, attack: 3.6, release: 9.0, octave: -1, pan: 0.14, muted: false },
     },
     phrases: [
+      // Winter Bell Cell & Mist & Memory Sequence from eno_soundscape/js/phrase-patterns.js
       [
-        { deg: [0], oct: [1], delayMs: 0, vel: 0.62 },
-        { deg: [2], oct: [1], delayMs: 470, vel: 0.52 },
-        { deg: [1], oct: [1], delayMs: 1390, vel: 0.48 },
-        { deg: [4], oct: [0], delayMs: 1910, vel: 0.58 },
+        { deg: [0], oct: [1], delayMs: 0, vel: 0.40, rollMs: 68 },
+        { deg: [2], oct: [1], delayMs: 520, vel: 0.34, rollMs: 68 },
+        { deg: [1], oct: [1], delayMs: 1480, vel: 0.31, rollMs: 72 },
+        { deg: [4], oct: [0], delayMs: 2080, vel: 0.38, rollMs: 76 },
       ],
       [
-        { deg: [0], oct: [1], delayMs: 0, vel: 0.62 },
-        { deg: [1], oct: [1], delayMs: 490, vel: 0.50 },
-        { deg: [2], oct: [1], delayMs: 1010, vel: 0.56 },
-        { deg: [4], oct: [1], delayMs: 1820, vel: 0.60 },
-        { deg: [3], oct: [1], delayMs: 2380, vel: 0.52 },
-        { deg: [1], oct: [1], delayMs: 2960, vel: 0.48 },
-        { deg: [0], oct: [1], delayMs: 3810, vel: 0.58 },
+        { deg: [0], oct: [1], delayMs: 0, vel: 0.40, rollMs: 68 },
+        { deg: [1], oct: [1], delayMs: 540, vel: 0.33, rollMs: 68 },
+        { deg: [2], oct: [1], delayMs: 1120, vel: 0.36, rollMs: 72 },
+        { deg: [4], oct: [1], delayMs: 1960, vel: 0.39, rollMs: 75 },
+        { deg: [3], oct: [1], delayMs: 2580, vel: 0.34, rollMs: 70 },
+        { deg: [1], oct: [1], delayMs: 3200, vel: 0.31, rollMs: 68 },
+        { deg: [0], oct: [1], delayMs: 4100, vel: 0.38, rollMs: 78 },
       ],
     ],
     chords: [
-      { deg: [0, 2, 4, 6], oct: [0, 0, 0, 0], rollMs: 68, vel: 0.58 },
-      { deg: [3, 5, 0, 2], oct: [0, 0, 1, 1], rollMs: 78, vel: 0.52 },
-      { deg: [6, 1, 3, 5], oct: [-1, 0, 0, 0], rollMs: 65, vel: 0.48 },
-      { deg: [4, 6, 1, 3], oct: [0, 0, 1, 1], rollMs: 84, vel: 0.56 },
+      { deg: [0, 2, 4, 6], oct: [0, 0, 0, 0], rollMs: 72, vel: 0.44 },
+      { deg: [3, 5, 0, 2], oct: [0, 0, 1, 1], rollMs: 78, vel: 0.40 },
+      { deg: [6, 1, 3, 5], oct: [-1, 0, 0, 0], rollMs: 68, vel: 0.38 },
+      { deg: [4, 6, 1, 3], oct: [0, 0, 1, 1], rollMs: 84, vel: 0.42 },
     ],
   },
   {
@@ -3424,39 +3489,48 @@ const ENSO_TRACKS = [
     rootMidi: 50,
     intervals: [0, 2, 3, 5, 7, 8, 10],
     degreeWeights: [0.90, 0.50, 0.75, 0.45, 0.80, 0.60, 0.40],
-    phraseCycleSec: 8.2,
-    chordCycleSec: 12.2,
+    markovGravity: [1.58, 1.0, 1.48, 1.0, 1.52, 1.38, 1.32],
+    rotationSpeed: 1.05,
+    pianoCutoffHz: 910,
+    pianoShelfDb: -11.5,
+    globalAttackSec: 2.4,
+    phraseCycleSec: 14.6,
+    phraseGateProb: 0.86,
+    phraseLengthLfo: { enabled: false },
     chordInstrument: 'tape',
+    chordRollMs: 136,
+    chordVel: 0.48,
+    // In eno_soundscape/js/presets.js, discreet_loops has activeVoiceCount: 4 (bell & choir muted)
     voices: {
-      pad:   { cycle: 15.7, prob: 0.68, gain: 0.42, octave: 0, pan: 0.36 },
-      piano: { cycle: 6.1,  prob: 0.78, gain: 0.88, octave: 0, pan: 0.44 },
-      bell:  { cycle: 12.7, prob: 0.40, gain: 0.34, octave: 1, pan: 0.60 },
-      choir: { cycle: 19.9, prob: 0.54, gain: 0.38, octave: 1, pan: 0.48 },
-      tape:  { cycle: 8.3,  prob: 0.82, gain: 0.48, octave: 0, pan: 0.42 },
-      drone: { cycle: 24.1, prob: 0.78, gain: 0.46, octave: -1, pan: 0.16 },
+      pad:   { cycle: 18.7, prob: 0.60, gain: 0.62, attack: 2.8, release: 7.9, octave: 0, pan: 0.36, muted: false },
+      bell:  { cycle: 19.3, prob: 0.0,  gain: 0.50, attack: 0.05, release: 4.0, octave: 1, pan: 0.60, muted: true },
+      choir: { cycle: 25.9, prob: 0.0,  gain: 0.55, attack: 3.4, release: 7.5, octave: 1, pan: 0.48, muted: true },
+      tape:  { cycle: 14.9, prob: 0.74, gain: 0.65, attack: 2.2, release: 8.0, octave: 0, pan: 0.42, muted: false },
+      drone: { cycle: 26.3, prob: 0.70, gain: 0.65, attack: 3.4, release: 9.5, octave: -1, pan: 0.16, muted: false },
     },
     phrases: [
+      // Discreet Tape Fragment & Earth & Overgrowth Arc from eno_soundscape/js/phrase-patterns.js
       [
-        { deg: [0], oct: [1], delayMs: 0, vel: 0.72 },
-        { deg: [2], oct: [1], delayMs: 610, vel: 0.60 },
-        { deg: [4], oct: [1], delayMs: 1220, vel: 0.66 },
-        { deg: [1], oct: [1], delayMs: 2440, vel: 0.56 },
+        { deg: [0], oct: [1], delayMs: 0, vel: 0.44, rollMs: 125 },
+        { deg: [2], oct: [1], delayMs: 610, vel: 0.36, rollMs: 125 },
+        { deg: [4], oct: [1], delayMs: 1220, vel: 0.40, rollMs: 135 },
+        { deg: [1], oct: [1], delayMs: 2440, vel: 0.34, rollMs: 145 },
       ],
       [
-        { deg: [0], oct: [1], delayMs: 0, vel: 0.72 },
-        { deg: [1], oct: [1], delayMs: 610, vel: 0.58 },
-        { deg: [2], oct: [1], delayMs: 1220, vel: 0.64 },
-        { deg: [4], oct: [1], delayMs: 1830, vel: 0.70 },
-        { deg: [3], oct: [1], delayMs: 3050, vel: 0.60 },
-        { deg: [1], oct: [1], delayMs: 3660, vel: 0.56 },
-        { deg: [0], oct: [1], delayMs: 4880, vel: 0.68 },
+        { deg: [0], oct: [1], delayMs: 0, vel: 0.44, rollMs: 125 },
+        { deg: [1], oct: [1], delayMs: 610, vel: 0.35, rollMs: 125 },
+        { deg: [2], oct: [1], delayMs: 1220, vel: 0.39, rollMs: 130 },
+        { deg: [4], oct: [1], delayMs: 1830, vel: 0.42, rollMs: 135 },
+        { deg: [3], oct: [1], delayMs: 3050, vel: 0.36, rollMs: 130 },
+        { deg: [1], oct: [1], delayMs: 3660, vel: 0.34, rollMs: 125 },
+        { deg: [0], oct: [1], delayMs: 4880, vel: 0.41, rollMs: 140 },
       ],
     ],
     chords: [
-      { deg: [0, 2, 4, 6], oct: [0, 0, 0, 0], rollMs: 128, vel: 0.66 },
-      { deg: [5, 0, 2, 4], oct: [-1, 0, 0, 0], rollMs: 142, vel: 0.60 },
-      { deg: [2, 4, 6, 1], oct: [0, 0, 0, 1], rollMs: 132, vel: 0.58 },
-      { deg: [6, 1, 3, 5], oct: [-1, 0, 0, 0], rollMs: 148, vel: 0.64 },
+      { deg: [0, 2, 4, 6], oct: [0, 0, 0, 0], rollMs: 128, vel: 0.48 },
+      { deg: [5, 0, 2, 4], oct: [-1, 0, 0, 0], rollMs: 142, vel: 0.44 },
+      { deg: [2, 4, 6, 1], oct: [0, 0, 0, 1], rollMs: 132, vel: 0.42 },
+      { deg: [6, 1, 3, 5], oct: [-1, 0, 0, 0], rollMs: 148, vel: 0.46 },
     ],
   },
 ];
@@ -3465,6 +3539,9 @@ function createEnsoSound({ onTrackChange, onStateChange } = {}) {
   let ctx = null;
   let masterGain = null;
   let dryBus = null;
+  let pianoFeltFilter = null;
+  let pianoSilkShelf = null;
+  let bgWarmFilter = null;
   let fdnSend = null;
   let fdnNodes = [];
   let enabled = false;
@@ -3473,10 +3550,13 @@ function createEnsoSound({ onTrackChange, onStateChange } = {}) {
   let reverbMode = ENSO_REVERB_MODES[0];
   let trackIndex = 0;
   let trackElapsedSec = 0;
-  let phraseTimerSec = 0.8;
-  let chordTimerSec = 3.2;
-  let phraseStepIdx = 0;
+  let totalListenedSec = 0;
+  let phraseTimerSec = 15.0;
+  let phraseCycleCount = 0;
   let chordStepIdx = 0;
+  let currentChordDegrees = [0, 2, 4];
+  let noteHistory = [];
+  let bgVoiceTimers = [];
   let notesTriggered = 0;
   let oggSamplesLoaded = 0;
   let offlineFallbackReady = false;
@@ -3487,14 +3567,13 @@ function createEnsoSound({ onTrackChange, onStateChange } = {}) {
   const sampleBank = new Map();
   const scheduledTimers = new Set();
 
-  // Staggered initial phases across the 6 voices so notes unfold immediately
+  // Staggered initial phases across the 5 non-piano voices (piano is driven by the Enso Phrase Engine)
   const voicePhases = {
-    pad: 0.86,
-    piano: 0.92,
-    bell: 0.64,
-    choir: 0.72,
-    tape: 0.55,
-    drone: 0.88,
+    pad: 0.45,
+    bell: 0.12,
+    choir: 0.68,
+    tape: 0.22,
+    drone: 0.55,
   };
 
   function detectAudioFormat() {
@@ -3515,7 +3594,6 @@ function createEnsoSound({ onTrackChange, onStateChange } = {}) {
     const existingIdx = list.findIndex((x) => x.midi === midi);
     const entry = { midi, buffer, source: sourceTag };
     if (existingIdx >= 0) {
-      // Never overwrite a high-bitrate server .ogg/.mp3 sample with an offline fallback
       if (list[existingIdx].source !== 'offline' && sourceTag === 'offline') return;
       list[existingIdx] = entry;
     } else {
@@ -3524,41 +3602,47 @@ function createEnsoSound({ onTrackChange, onStateChange } = {}) {
     }
   }
 
-  // Lightweight 4-tap non-convolution Schroeder / Feedback Delay Network (FDN)
-  // Uses 4 prime-length DelayNodes + 2 allpass diffusers + 1800 Hz lowpass damping filter
+  // Non-ringing, critically damped (Q = 0.5) 4-tap Feedback Delay Network for optional FDN modes
   function buildLiteFdnReverb(audioCtx, destNode) {
     const input = audioCtx.createGain();
-    input.gain.value = 0.0; // controlled by reverbMode
+    input.gain.value = 0.0;
+
+    const preLp = audioCtx.createBiquadFilter();
+    preLp.type = 'lowpass';
+    preLp.frequency.value = 1350;
+    preLp.Q.value = 0.5;
 
     const ap1 = audioCtx.createBiquadFilter();
     ap1.type = 'allpass';
-    ap1.frequency.value = 740;
-    ap1.Q.value = 0.7;
+    ap1.frequency.value = 540;
+    ap1.Q.value = 0.5;
 
     const ap2 = audioCtx.createBiquadFilter();
     ap2.type = 'allpass';
-    ap2.frequency.value = 1650;
-    ap2.Q.value = 0.7;
+    ap2.frequency.value = 1180;
+    ap2.Q.value = 0.5;
 
-    input.connect(ap1);
+    input.connect(preLp);
+    preLp.connect(ap1);
     ap1.connect(ap2);
 
-    const delayTimes = [0.043, 0.067, 0.097, 0.139];
+    const delayTimes = [0.079, 0.113, 0.149, 0.193];
     const merger = audioCtx.createChannelMerger(2);
     const outGain = audioCtx.createGain();
-    outGain.gain.value = 0.42;
+    outGain.gain.value = 0.30;
 
-    const nodes = [input, ap1, ap2, merger, outGain];
+    const nodes = [input, preLp, ap1, ap2, merger, outGain];
     const delays = [];
 
     for (let i = 0; i < delayTimes.length; i++) {
-      const d = audioCtx.createDelay(0.25);
+      const d = audioCtx.createDelay(0.35);
       d.delayTime.value = delayTimes[i];
       const damp = audioCtx.createBiquadFilter();
       damp.type = 'lowpass';
-      damp.frequency.value = 1800;
+      damp.frequency.value = 1200;
+      damp.Q.value = 0.5;
       const fb = audioCtx.createGain();
-      fb.gain.value = 0.76;
+      fb.gain.value = 0.42;
 
       ap2.connect(d);
       d.connect(damp);
@@ -3569,7 +3653,6 @@ function createEnsoSound({ onTrackChange, onStateChange } = {}) {
       nodes.push(d, damp, fb);
     }
 
-    // Cross-couple adjacent delay lines for dense modal tail without ConvolverNode FFT
     for (let i = 0; i < delays.length; i++) {
       const next = delays[(i + 1) % delays.length];
       delays[i].fb.connect(next.d);
@@ -3584,26 +3667,33 @@ function createEnsoSound({ onTrackChange, onStateChange } = {}) {
   function syncReverbMode() {
     if (!fdnSend || !ctx) return;
     const sendVal =
-      reverbMode === 'Lite FDN Live' ? 0.52 :
-      reverbMode === 'Hybrid (OGG + Lite FDN)' ? 0.18 :
+      reverbMode === 'Lite FDN Live' ? 0.36 :
+      reverbMode === 'Hybrid (OGG + Lite FDN)' ? 0.12 :
       0.0;
-    fdnSend.gain.setTargetAtTime(sendVal, ctx.currentTime, 0.04);
+    fdnSend.gain.setTargetAtTime(sendVal, ctx.currentTime, 0.05);
   }
 
-  // Instant zero-network fallback: renders stereo convolution-reverb-stamped root buffers
-  // locally via OfflineAudioContext + ConvolverNode in ~35ms while 320kbps .ogg files stream in.
+  function syncTrackPianoFilter(track) {
+    if (!ctx || !pianoFeltFilter || !pianoSilkShelf) return;
+    const now = ctx.currentTime;
+    pianoFeltFilter.frequency.setTargetAtTime(track.pianoCutoffHz || 1050, now, 0.12);
+    pianoSilkShelf.gain.setTargetAtTime(track.pianoShelfDb ?? -8.0, now, 0.12);
+  }
+
+  // Instant zero-network fallback: renders smooth, dark-damped (Q = 0.5, zero ringing) root buffers
+  // locally via OfflineAudioContext + ConvolverNode in ~25ms while 320kbps .ogg files stream in.
   async function buildOfflineStampedFallback() {
     const OfflineCtx = window.OfflineAudioContext || window.webkitOfflineAudioContext;
     if (!OfflineCtx) return;
     const quickZones = [
-      { voice: 'piano', midi: 48, dur: 4.2 },
-      { voice: 'piano', midi: 60, dur: 4.0 },
-      { voice: 'piano', midi: 72, dur: 3.8 },
-      { voice: 'pad',   midi: 55, dur: 4.6 },
-      { voice: 'bell',  midi: 67, dur: 4.0 },
-      { voice: 'choir', midi: 60, dur: 4.6 },
-      { voice: 'tape',  midi: 55, dur: 4.2 },
-      { voice: 'drone', midi: 43, dur: 4.8 },
+      { voice: 'piano', midi: 48, dur: 4.5 },
+      { voice: 'piano', midi: 60, dur: 4.2 },
+      { voice: 'piano', midi: 72, dur: 4.0 },
+      { voice: 'pad',   midi: 55, dur: 5.2 },
+      { voice: 'bell',  midi: 67, dur: 4.2 },
+      { voice: 'choir', midi: 60, dur: 5.2 },
+      { voice: 'tape',  midi: 55, dur: 4.6 },
+      { voice: 'drone', midi: 43, dur: 5.4 },
     ];
 
     const rate = 24000;
@@ -3613,7 +3703,6 @@ function createEnsoSound({ onTrackChange, onStateChange } = {}) {
         const octx = new OfflineCtx(2, frames, rate);
         const freq = 440 * Math.pow(2, (z.midi - 69) / 12);
 
-        // Stereo cathedral impulse response inside OfflineAudioContext
         const irDur = Math.min(z.dur - 0.3, 3.4);
         const irLen = Math.floor(rate * irDur);
         const irBuf = octx.createBuffer(2, irLen, rate);
@@ -3622,20 +3711,24 @@ function createEnsoSound({ onTrackChange, onStateChange } = {}) {
         let s = (z.midi * 2654435761) >>> 0;
         const rand = () => { s = (s * 1664525 + 1013904223) >>> 0; return (s / 4294967296) * 2 - 1; };
         const decay = 3.8 / irDur;
+        let lpL = 0, lpR = 0;
         for (let i = 0; i < irLen; i++) {
           const t = i / rate;
-          const env = Math.min(1, t / 0.015) * Math.exp(-decay * t);
-          irL[i] = rand() * env * 0.45;
-          irR[i] = rand() * env * 0.45;
+          const env = 0.5 * (1 - Math.cos(Math.PI * Math.min(1, t / 0.025))) * Math.exp(-decay * t);
+          lpL += 0.16 * (rand() * env - lpL);
+          lpR += 0.16 * (rand() * env - lpR);
+          irL[i] = lpL;
+          irR[i] = lpR;
         }
 
         const conv = octx.createConvolver();
         conv.buffer = irBuf;
         const damp = octx.createBiquadFilter();
         damp.type = 'lowpass';
-        damp.frequency.value = 3800;
+        damp.frequency.value = z.voice === 'piano' ? 1300 : 1700;
+        damp.Q.value = 0.5;
         const wet = octx.createGain();
-        wet.gain.value = 0.55;
+        wet.gain.value = z.voice === 'piano' ? 0.30 : 0.45;
         damp.connect(conv);
         conv.connect(wet);
         wet.connect(octx.destination);
@@ -3643,22 +3736,23 @@ function createEnsoSound({ onTrackChange, onStateChange } = {}) {
         const env = octx.createGain();
         const isPerc = z.voice === 'piano' || z.voice === 'bell';
         env.gain.setValueAtTime(0.0001, 0);
-        env.gain.linearRampToValueAtTime(0.65, isPerc ? 0.012 : 0.75);
+        env.gain.linearRampToValueAtTime(0.60, isPerc ? 0.010 : 1.2);
         env.gain.exponentialRampToValueAtTime(0.0001, z.dur - 0.15);
         env.connect(octx.destination);
         env.connect(damp);
 
         const o1 = octx.createOscillator();
-        o1.type = z.voice === 'pad' ? 'sawtooth' : z.voice === 'tape' ? 'triangle' : 'sine';
+        o1.type = z.voice === 'pad' ? 'triangle' : 'sine';
         o1.frequency.value = freq;
         const o2 = octx.createOscillator();
-        o2.type = 'triangle';
-        o2.frequency.value = z.voice === 'bell' ? freq * 2.76 : freq * 2;
+        o2.type = 'sine';
+        o2.frequency.value = freq * 2.0;
         const g2 = octx.createGain();
-        g2.gain.value = z.voice === 'bell' ? 0.22 : 0.25;
+        g2.gain.value = z.voice === 'piano' ? 0.16 : 0.18;
         const lp = octx.createBiquadFilter();
         lp.type = 'lowpass';
-        lp.frequency.value = Math.min(8000, freq * 3.2);
+        lp.frequency.value = z.voice === 'piano' ? 950 : Math.min(1800, freq * 2.5);
+        lp.Q.value = 0.5;
         o1.connect(lp);
         o2.connect(g2);
         g2.connect(lp);
@@ -3702,7 +3796,6 @@ function createEnsoSound({ onTrackChange, onStateChange } = {}) {
       return false;
     };
 
-    // Load middle-register priority zones first for instant studio-grade playback
     const priority = SAMPLE_ZONES.filter((z) => z.midi >= 48 && z.midi <= 72);
     const outer = SAMPLE_ZONES.filter((z) => z.midi < 48 || z.midi > 72);
     await Promise.all(priority.map(fetchZone));
@@ -3726,6 +3819,30 @@ function createEnsoSound({ onTrackChange, onStateChange } = {}) {
     dryBus = ctx.createGain();
     dryBus.gain.value = 1.0;
     dryBus.connect(masterGain);
+
+    // Live per-track 3-stage Felt Piano bus filters (Q = 0.5, zero resonance peak)
+    // Ensures pitch-shifted piano samples stay warm, soft, and completely ring-free
+    const track = ENSO_TRACKS[trackIndex];
+    pianoFeltFilter = ctx.createBiquadFilter();
+    pianoFeltFilter.type = 'lowpass';
+    pianoFeltFilter.frequency.value = track.pianoCutoffHz || 1050;
+    pianoFeltFilter.Q.value = 0.5;
+
+    pianoSilkShelf = ctx.createBiquadFilter();
+    pianoSilkShelf.type = 'highshelf';
+    pianoSilkShelf.frequency.value = 1350;
+    pianoSilkShelf.Q.value = 0.5;
+    pianoSilkShelf.gain.value = track.pianoShelfDb ?? -8.0;
+
+    pianoFeltFilter.connect(pianoSilkShelf);
+    pianoSilkShelf.connect(dryBus);
+
+    // Warm lowpass bus for background pads/choir/tape/drone/bell (Q = 0.5)
+    bgWarmFilter = ctx.createBiquadFilter();
+    bgWarmFilter.type = 'lowpass';
+    bgWarmFilter.frequency.value = 1850;
+    bgWarmFilter.Q.value = 0.5;
+    bgWarmFilter.connect(dryBus);
 
     fdnSend = buildLiteFdnReverb(ctx, masterGain);
     syncReverbMode();
@@ -3758,19 +3875,43 @@ function createEnsoSound({ onTrackChange, onStateChange } = {}) {
     return track.rootMidi + intervals[degIdx] + (octaveOffset + octWrap) * 12;
   }
 
-  function pickWeightedDegree(track) {
-    const weights = track.degreeWeights;
+  // Enso Markov consonance + chord-tone gravity pitch selector (from probability-engine.js & phrase-engine.js)
+  function pickEnsoDegree(track) {
+    const intervals = track.intervals;
+    const baseWeights = track.degreeWeights;
+    const gravity = track.markovGravity || [];
+    const lastDeg = noteHistory.length > 0 ? noteHistory[0] : null;
+    const lastInterval = lastDeg !== null && intervals[lastDeg] !== undefined ? intervals[lastDeg] : 0;
+
+    const weights = intervals.map((iv, i) => {
+      let w = Math.max(0.02, baseWeights[i] ?? 0.5);
+      if (typeof gravity[i] === 'number') w *= gravity[i];
+      if (currentChordDegrees && currentChordDegrees.includes(i)) w *= 1.35;
+      if (lastDeg !== null) {
+        const diff = Math.abs(iv - lastInterval) % 12;
+        if (diff === 7) w *= 1.45;
+        else if (diff === 5 || diff === 4 || diff === 3) w *= 1.32;
+        else if (diff === 0 || diff === 2 || diff === 9) w *= 1.18;
+        else if (diff === 1 || diff === 6) w *= 0.28;
+      }
+      return w;
+    });
+
     let sum = 0;
     for (let i = 0; i < weights.length; i++) sum += weights[i];
     let r = Math.random() * sum;
     for (let i = 0; i < weights.length; i++) {
       r -= weights[i];
-      if (r <= 0) return i;
+      if (r <= 0) {
+        noteHistory.unshift(i);
+        if (noteHistory.length > 8) noteHistory.length = 8;
+        return i;
+      }
     }
     return 0;
   }
 
-  function triggerVoice(voice, midiNote, velocity = 0.7, pan = 0) {
+  function triggerVoice(voice, midiNote, velocity = 0.5, pan = 0, gainScale = 1.0) {
     if (!enabled) return false;
     const audioCtx = ensureContext();
     if (!audioCtx) return false;
@@ -3788,25 +3929,60 @@ function createEnsoSound({ onTrackChange, onStateChange } = {}) {
     src.playbackRate.setValueAtTime(rate, now);
 
     const track = ENSO_TRACKS[trackIndex];
-    const vCfg = track.voices[voice] || { gain: 0.5 };
+    const isPiano = voice === 'piano';
+    const vCfg = track.voices[voice] || { gain: isPiano ? 1.0 : 0.60, attack: track.globalAttackSec || 3.2, release: 8.0 };
+    const instTrim = VOICE_INSTRUMENT_TRIM[voice] ?? 0.16;
     const env = audioCtx.createGain();
-    const peak = Math.max(0.02, Math.min(1.0, velocity * (vCfg.gain || 0.5) * 0.72));
-    const dur = match.buffer.duration / rate;
 
-    env.gain.setValueAtTime(peak, now);
-    env.gain.setValueAtTime(peak, now + Math.max(0.1, dur * 0.65));
-    env.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+    const rawDur = match.buffer.duration / rate;
+    const dur = Math.max(1.2, rawDur);
+    const peak = Math.max(0.005, Math.min(0.85, velocity * (vCfg.gain || 0.65) * instTrim * gainScale));
+
+    if (isPiano) {
+      // Soft 8ms wool-felt hammer onset + natural felt decay
+      env.gain.setValueAtTime(0.0001, now);
+      env.gain.linearRampToValueAtTime(peak, now + 0.008);
+      env.gain.setValueAtTime(peak * 0.92, now + Math.min(0.65, dur * 0.25));
+      env.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+    } else if (voice === 'bell') {
+      // Gentle glass chime bloom
+      const att = Math.min(0.08, vCfg.attack || 0.06);
+      env.gain.setValueAtTime(0.0001, now);
+      env.gain.linearRampToValueAtTime(peak, now + att);
+      env.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+    } else {
+      // Slow, breathing Enso pad/choir/tape/drone swell (2.4s–4.5s fade-in, long release)
+      const att = Math.min(dur * 0.42, Math.max(1.8, (vCfg.attack || track.globalAttackSec || 3.2) * 0.78));
+      const sustainEnd = Math.min(dur * 0.62, att + 0.8);
+      env.gain.setValueAtTime(0.0001, now);
+      env.gain.linearRampToValueAtTime(peak, now + att);
+      env.gain.setValueAtTime(peak * 0.94, now + sustainEnd);
+      env.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+    }
+
+    // Per-note warm lowpass damping when a piano sample is pitch-shifted up (rate > 1)
+    let voiceNode = src;
+    if (isPiano && rate > 1.02) {
+      const noteLp = audioCtx.createBiquadFilter();
+      noteLp.type = 'lowpass';
+      noteLp.frequency.setValueAtTime(Math.max(760, (track.pianoCutoffHz || 1020) / Math.pow(rate, 0.45)), now);
+      noteLp.Q.value = 0.5;
+      src.connect(noteLp);
+      voiceNode = noteLp;
+    }
+
+    const destBus = isPiano ? (pianoFeltFilter || dryBus) : (bgWarmFilter || dryBus);
 
     if (audioCtx.createStereoPanner) {
       const panner = audioCtx.createStereoPanner();
       panner.pan.setValueAtTime(Math.max(-1, Math.min(1, pan)), now);
-      src.connect(env);
+      voiceNode.connect(env);
       env.connect(panner);
-      panner.connect(dryBus);
+      panner.connect(destBus);
       if (fdnSend) panner.connect(fdnSend);
     } else {
-      src.connect(env);
-      env.connect(dryBus);
+      voiceNode.connect(env);
+      env.connect(destBus);
       if (fdnSend) env.connect(fdnSend);
     }
 
@@ -3831,48 +4007,122 @@ function createEnsoSound({ onTrackChange, onStateChange } = {}) {
   function clearScheduledTimers() {
     for (const id of scheduledTimers) clearTimeout(id);
     scheduledTimers.clear();
+    bgVoiceTimers = [];
   }
 
-  function triggerTrackPhrase(track) {
+  // Enso 3-Minute Phrase-Length LFO + Aleatoric Phrase Variation Engine (from phrase-engine.js)
+  function getPhraseLengthLfoCutoff(track, totalSteps) {
+    const lfo = track.phraseLengthLfo;
+    if (!lfo || !lfo.enabled) return totalSteps;
+    const period = lfo.periodSec || 180;
+    const minR = lfo.minRatio ?? 0.50;
+    const maxR = lfo.maxRatio ?? 1.00;
+    const phase = ((totalListenedSec % period) + period) / period;
+    const wave = 0.5 * (1 + Math.cos(2 * Math.PI * phase));
+    const ratio = minR + (maxR - minR) * wave;
+    const minSteps = Math.min(totalSteps, Math.max(2, Math.round(totalSteps * minR)));
+    return Math.max(minSteps, Math.min(totalSteps, Math.round(totalSteps * ratio)));
+  }
+
+  function triggerTrackPhrase(track, { forceFull = false } = {}) {
     const phrases = track.phrases;
     if (!phrases || !phrases.length) return;
-    const pattern = phrases[phraseStepIdx % phrases.length];
-    phraseStepIdx++;
+    phraseCycleCount++;
 
-    for (const step of pattern) {
-      if (Math.random() < 0.14) continue; // Enso probabilistic note gate
-      scheduleDelayed(() => {
-        for (let i = 0; i < step.deg.length; i++) {
-          const midi = scaleDegreeToMidi(track, step.deg[i], step.oct[i] || 0);
-          const pan = (Math.random() * 2 - 1) * 0.38;
-          scheduleDelayed(() => {
-            triggerVoice('piano', midi, step.vel || 0.68, pan);
-          }, i * 85);
+    // Alternate between primary and variant phrase patterns like eno_soundscape/js/phrase-engine.js
+    const isPrimary = phraseCycleCount <= 1 || Math.random() < 0.55;
+    const pattern = isPrimary ? phrases[0] : (phrases[1] || phrases[0]);
+    const totalSteps = pattern.length;
+
+    const lfoCutoff = forceFull ? totalSteps : getPhraseLengthLfoCutoff(track, totalSteps);
+    let cutoffIdx = lfoCutoff;
+    const omittedSteps = new Set();
+
+    // Enso aleatoric phrase variations (start-only dice or 1–2 omitted inner notes for spacious breathing)
+    if (!forceFull && phraseCycleCount > 1 && lfoCutoff >= 3 && Math.random() < 0.55) {
+      if (Math.random() < 0.42) {
+        cutoffIdx = 2 + Math.floor(Math.random() * Math.max(1, lfoCutoff - 2));
+      } else {
+        const omitCount = lfoCutoff >= 6 ? (1 + Math.floor(Math.random() * 2)) : 1;
+        for (let k = 0; k < omitCount; k++) {
+          const candidate = 1 + Math.floor(Math.random() * (lfoCutoff - 1));
+          if (lfoCutoff - (omittedSteps.size + 1) >= 2) omittedSteps.add(candidate);
         }
-      }, step.delayMs || 0);
+      }
+    }
+
+    const speed = Math.max(0.5, track.rotationSpeed || 1.0);
+
+    for (let sIdx = 0; sIdx < cutoffIdx; sIdx++) {
+      if (omittedSteps.has(sIdx)) continue;
+      const step = pattern[sIdx];
+      const delayMs = Math.round((step.delayMs || 0) / speed);
+
+      scheduleDelayed(() => {
+        const degs = step.deg;
+        const octs = step.oct || [];
+        const rollMs = step.rollMs || track.chordRollMs || 110;
+        // Polyphonic chord headroom scaling from eno_soundscape/js/phrase-engine.js
+        const chordScale = degs.length > 1 ? (1 / Math.pow(degs.length, 0.24)) : 1.0;
+        const vel = (step.vel || 0.42) * chordScale;
+
+        for (let i = 0; i < degs.length; i++) {
+          let oct = octs[i] || 0;
+          if (!forceFull && Math.random() < 0.03) oct += Math.random() < 0.5 ? 1 : -1;
+          const midi = scaleDegreeToMidi(track, degs[i], oct);
+          const pan = (Math.random() * 2 - 1) * 0.34;
+          scheduleDelayed(() => {
+            triggerVoice('piano', midi, vel, pan, 1.0);
+          }, i * rollMs);
+        }
+      }, delayMs);
     }
   }
 
+  // Enso Single-Instrument Chord Progression (triggered by track.chordInstrument on its prime cycle)
   function triggerTrackChord(track) {
     const chords = track.chords;
     if (!chords || !chords.length) return;
     const chord = chords[chordStepIdx % chords.length];
     chordStepIdx++;
-    const voice = track.chordInstrument || 'pad';
-    const rollMs = chord.rollMs || 120;
+    currentChordDegrees = chord.deg.slice();
 
-    for (let i = 0; i < chord.deg.length; i++) {
-      const midi = scaleDegreeToMidi(track, chord.deg[i], chord.oct[i] || 0);
-      const pan = ((i / Math.max(1, chord.deg.length - 1)) * 2 - 1) * 0.45;
-      scheduleDelayed(() => {
-        triggerVoice(voice, midi, chord.vel || 0.62, pan);
-      }, i * rollMs);
+    const voice = track.chordInstrument || 'pad';
+    const rollMs = chord.rollMs || track.chordRollMs || 120;
+    const isPianoChord = voice === 'piano';
+
+    if (!isPianoChord) {
+      if (bgVoiceTimers.length >= 2) return;
+      bgVoiceTimers.push(6.5);
     }
+
+    // Optionally omit 1 inner chord tone (phraseNoteGate = 0.22 in phrase-engine.js) so chords stay airy
+    let indices = chord.deg.map((_, idx) => idx);
+    if (indices.length >= 4 && Math.random() < 0.28) {
+      const drop = 1 + Math.floor(Math.random() * (indices.length - 2));
+      indices = indices.filter((idx) => idx !== drop);
+    }
+
+    const chordScale = 1 / Math.pow(Math.max(1, indices.length), 0.26);
+    const vel = (chord.vel || track.chordVel || 0.46) * chordScale;
+    const gainScale = isPianoChord ? 0.85 : 0.68;
+
+    indices.forEach((cIdx, orderIdx) => {
+      const midi = scaleDegreeToMidi(track, chord.deg[cIdx], chord.oct[cIdx] || 0);
+      const pan = ((orderIdx / Math.max(1, indices.length - 1)) * 2 - 1) * 0.36;
+      scheduleDelayed(() => {
+        triggerVoice(voice, midi, vel, pan, gainScale);
+      }, orderIdx * rollMs);
+    });
   }
 
   function tick(dt) {
     if (!enabled || dt <= 0) return;
     const clampedDt = Math.min(dt, 0.25);
+    totalListenedSec += clampedDt;
+    if (bgVoiceTimers.length > 0) {
+      bgVoiceTimers = bgVoiceTimers.map((t) => t - clampedDt).filter((t) => t > 0);
+    }
     const track = ENSO_TRACKS[trackIndex];
 
     // 1. 3-Minute (180s) Circle-of-Fifths Automatic Track Rotation
@@ -3881,47 +4131,53 @@ function createEnsoSound({ onTrackChange, onStateChange } = {}) {
       if (trackElapsedSec >= TRACK_ROTATE_SECONDS) {
         trackElapsedSec = 0;
         trackIndex = (trackIndex + 1) % ENSO_TRACKS.length;
-        phraseStepIdx = 0;
+        phraseCycleCount = 0;
         chordStepIdx = 0;
-        const nextTrack = ENSO_TRACKS[trackIndex];
-        onTrackChange?.(nextTrack.label, nextTrack);
-        triggerTrackChord(nextTrack);
+        const nextT = ENSO_TRACKS[trackIndex];
+        syncTrackPianoFilter(nextT);
+        onTrackChange?.(nextT.label, nextT);
+        phraseTimerSec = 2.4;
       }
     }
 
-    // 2. Enso Piano Phrase Sequencer
+    // 2. Enso Felt Piano Phrase Engine (spacious 14s–24s breathing room, never overlapping)
     phraseTimerSec -= clampedDt;
     if (phraseTimerSec <= 0) {
-      phraseTimerSec = (track.phraseCycleSec || 8.5) * (0.85 + Math.random() * 0.35);
-      if (Math.random() < 0.82) {
+      const baseCycle = (track.phraseCycleSec || 16.0) / Math.max(0.6, track.rotationSpeed || 1.0);
+      phraseTimerSec = baseCycle * (0.90 + Math.random() * 0.30);
+      if (Math.random() <= (track.phraseGateProb ?? 0.76)) {
         triggerTrackPhrase(track);
       }
     }
 
-    // 3. Enso Rolled Chord Progression Sequencer
-    chordTimerSec -= clampedDt;
-    if (chordTimerSec <= 0) {
-      chordTimerSec = (track.chordCycleSec || 13.5) * (0.88 + Math.random() * 0.28);
-      if (Math.random() < 0.86) {
-        triggerTrackChord(track);
-      }
-    }
-
-    // 4. Asynchronous Prime-Length Tape Loops across all 6 Enso voices
+    // 3. Asynchronous Prime-Length Loops for Background Voices (pad, bell, choir, tape, drone)
+    //    Matches eno_soundscape/js/probability-engine.js:
+    //    - Piano never fires random single notes (handled exclusively by the Phrase Engine above)
+    //    - When voiceId === track.chordInstrument (and !== 'piano'), its cycle triggers 1 gentle chord
+    //    - At most 2 background voices swell concurrently so the soundscape stays sparse and meditative
+    const speed = Math.max(0.6, track.rotationSpeed || 1.0);
     for (const [voiceId, cfg] of Object.entries(track.voices)) {
-      voicePhases[voiceId] = (voicePhases[voiceId] || 0) + clampedDt / cfg.cycle;
+      if (cfg.muted || cfg.prob <= 0) continue;
+      const effCycle = Math.max(8.0, cfg.cycle / speed);
+      voicePhases[voiceId] = (voicePhases[voiceId] || 0) + clampedDt / effCycle;
       if (voicePhases[voiceId] >= 1.0) {
         voicePhases[voiceId] -= Math.floor(voicePhases[voiceId]);
         if (Math.random() <= cfg.prob) {
-          const deg = voiceId === 'drone' ? (Math.random() < 0.72 ? 0 : 4) : pickWeightedDegree(track);
-          let oct = cfg.octave || 0;
-          if (voiceId !== 'drone' && Math.random() < 0.10) {
-            oct += Math.random() < 0.65 ? 1 : -1;
+          if (voiceId === track.chordInstrument && voiceId !== 'piano') {
+            triggerTrackChord(track);
+          } else if (bgVoiceTimers.length < 2) {
+            bgVoiceTimers.push(5.5);
+
+            const deg = voiceId === 'drone' ? (Math.random() < 0.75 ? 0 : 4) : pickEnsoDegree(track);
+            let oct = cfg.octave || 0;
+            if (voiceId !== 'drone' && Math.random() < 0.08) {
+              oct += Math.random() < 0.5 ? 1 : -1;
+            }
+            const midi = scaleDegreeToMidi(track, deg, oct);
+            const pan = (Math.random() * 2 - 1) * Math.abs(cfg.pan || 0.38);
+            const vel = 0.42 + Math.random() * 0.22;
+            triggerVoice(voiceId, midi, vel, pan, 1.0);
           }
-          const midi = scaleDegreeToMidi(track, deg, oct);
-          const pan = (Math.random() * 2 - 1) * (cfg.pan || 0.4);
-          const vel = 0.55 + Math.random() * 0.30;
-          triggerVoice(voiceId, midi, vel, pan);
         }
       }
     }
@@ -3936,14 +4192,27 @@ function createEnsoSound({ onTrackChange, onStateChange } = {}) {
       if (audioCtx) {
         if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
         masterGain.gain.cancelScheduledValues(audioCtx.currentTime);
-        masterGain.gain.setTargetAtTime(volume, audioCtx.currentTime, 0.08);
+        masterGain.gain.setTargetAtTime(volume, audioCtx.currentTime, 0.10);
       }
-      // Trigger an immediate welcoming chord + piano motif once buffers are ready
+      // Reset timers & phases so the opening phrase has a full 16s+ breathing window after it plays
+      const track = ENSO_TRACKS[trackIndex];
+      syncTrackPianoFilter(track);
+      phraseTimerSec = (track.phraseCycleSec || 16.0) * 1.05;
+      voicePhases.pad = 0.45;
+      voicePhases.bell = 0.10;
+      voicePhases.choir = 0.30;
+      voicePhases.tape = 0.15;
+      voicePhases.drone = 0.55;
+
       const fireInitial = () => {
         if (!enabled) return;
-        const track = ENSO_TRACKS[trackIndex];
-        triggerTrackChord(track);
-        scheduleDelayed(() => triggerTrackPhrase(track), 420);
+        const curTrack = ENSO_TRACKS[trackIndex];
+        // Soft foundational pad swell + the track's opening felt piano phrase (never overlapping two phrases!)
+        const rootMidi = scaleDegreeToMidi(curTrack, 0, 0);
+        triggerVoice('pad', rootMidi, 0.45, -0.22, 0.90);
+        scheduleDelayed(() => {
+          if (enabled) triggerTrackPhrase(curTrack, { forceFull: true });
+        }, 280);
       };
       if (sampleBank.size > 0) {
         fireInitial();
@@ -3954,7 +4223,7 @@ function createEnsoSound({ onTrackChange, onStateChange } = {}) {
       clearScheduledTimers();
       if (ctx && masterGain) {
         masterGain.gain.cancelScheduledValues(ctx.currentTime);
-        masterGain.gain.setTargetAtTime(0.0001, ctx.currentTime, 0.12);
+        masterGain.gain.setTargetAtTime(0.0001, ctx.currentTime, 0.15);
       }
     }
     onStateChange?.(enabled);
@@ -3975,12 +4244,20 @@ function createEnsoSound({ onTrackChange, onStateChange } = {}) {
       (t) => t.label.toLowerCase() === q || t.id.toLowerCase() === q || t.name.toLowerCase() === q
     );
     if (idx >= 0 && idx !== trackIndex) {
+      clearScheduledTimers();
       trackIndex = idx;
       trackElapsedSec = 0;
-      phraseStepIdx = 0;
+      phraseCycleCount = 0;
       chordStepIdx = 0;
+      const track = ENSO_TRACKS[trackIndex];
+      syncTrackPianoFilter(track);
+      phraseTimerSec = (track.phraseCycleSec || 16.0) * 1.05;
       if (enabled) {
-        triggerTrackChord(ENSO_TRACKS[trackIndex]);
+        const rootMidi = scaleDegreeToMidi(track, 0, 0);
+        triggerVoice('pad', rootMidi, 0.42, -0.20, 0.85);
+        scheduleDelayed(() => {
+          if (enabled) triggerTrackPhrase(track, { forceFull: true });
+        }, 260);
       }
     }
     return ENSO_TRACKS[trackIndex];
@@ -4000,13 +4277,22 @@ function createEnsoSound({ onTrackChange, onStateChange } = {}) {
   }
 
   function nextTrack(dir = 1) {
+    clearScheduledTimers();
     trackIndex = (trackIndex + dir + ENSO_TRACKS.length) % ENSO_TRACKS.length;
     trackElapsedSec = 0;
-    phraseStepIdx = 0;
+    phraseCycleCount = 0;
     chordStepIdx = 0;
     const track = ENSO_TRACKS[trackIndex];
+    syncTrackPianoFilter(track);
+    phraseTimerSec = (track.phraseCycleSec || 16.0) * 1.05;
     onTrackChange?.(track.label, track);
-    if (enabled) triggerTrackChord(track);
+    if (enabled) {
+      const rootMidi = scaleDegreeToMidi(track, 0, 0);
+      triggerVoice('pad', rootMidi, 0.42, -0.20, 0.85);
+      scheduleDelayed(() => {
+        if (enabled) triggerTrackPhrase(track, { forceFull: true });
+      }, 260);
+    }
     return track;
   }
 
@@ -4025,6 +4311,9 @@ function createEnsoSound({ onTrackChange, onStateChange } = {}) {
     get preferredFormat() { return preferredFormat; },
     get liveConvolverCount() { return 0; }, // Strictly 0 live ConvolverNodes on the main AudioContext
     get fdnNodeCount() { return fdnNodes.length; },
+    get pianoCutoffHz() { return pianoFeltFilter ? pianoFeltFilter.frequency.value : (ENSO_TRACKS[trackIndex]?.pianoCutoffHz || 1050); },
+    get pianoFilterQ() { return pianoFeltFilter ? pianoFeltFilter.Q.value : 0.5; },
+    get activeBgVoices() { return bgVoiceTimers.length; },
     tracks: ENSO_TRACKS,
     sampleZones: SAMPLE_ZONES,
     setEnabled,
@@ -4038,6 +4327,7 @@ function createEnsoSound({ onTrackChange, onStateChange } = {}) {
     tick,
   };
 }
+
 
     return { TRACK_ROTATE_SECONDS, ENSO_REVERB_MODES, SAMPLE_ZONES, ENSO_TRACKS, ENSO_TRACK_NAMES, createEnsoSound };
   })();
@@ -4191,7 +4481,7 @@ function run(slug, { manifest, params, presets, randomize, sketch }) {
     stageIndex: 0,
     diceRolls: 0,
     fromPreset: standardPresetNames[0] || 'Amethyst Cathedral',
-    toPreset: standardPresetNames[1] || 'Classic Quartz Prism',
+    toPreset: standardPresetNames[1] || 'Glacial Ice',
     elapsed: 0,
     holdRemaining: 0,
     progress: 0,
@@ -4608,7 +4898,7 @@ function run(slug, { manifest, params, presets, randomize, sketch }) {
         velPitch *= idleDecay;
       }
       if (P.spin && Math.abs(velYaw) > 4) {
-        const mag = Math.abs(Number(P.spin.value)) || 7;
+        const mag = Math.abs(Number(P.spin.value)) || 1.5;
         store.setValue(P.spin, Math.sign(velYaw) * mag);
       }
       const baseSpin = P.spin ? Number(P.spin.value) : 0;
@@ -4951,7 +5241,8 @@ const __default_shader = {
       f.f_cam[k] = M[k];
       f.f_cam[3 + k] = M[3 + k];
       f.f_cam[6 + k] = -M[6 + k];
-      f.f_camPos[k] = D * M[6 + k] + (k === 1 ? cluster.centreY : 0);
+      const cOff = k === 0 ? (cluster.centreX || 0) : k === 1 ? (cluster.centreY || 0) : (cluster.centreZ || 0);
+      f.f_camPos[k] = D * M[6 + k] + cOff;
     }
 
     const ka = P.keyAngle.value * DEG, kh = P.keyHeight.value * DEG, ra = P.rimAngle.value * DEG;
@@ -5242,8 +5533,10 @@ vec3 inside(int id, vec3 ro, vec3 rd, float len, float travelled, float jitter, 
     T *= (1.0 - a) * exp(-sigma * dt);
   }
 
-  // Multi-generation nested phantoms (guarded behind u_phantom > 0.01; smoothly weighted per layer so morphing phantomLayers never snaps)
-  if (u_phantom > 0.01 && hash(vec3(uid, f_seed, 97.0)) < u_phantomRate) {
+  // Multi-generation nested phantoms (guarded behind u_phantom > 0.01; smoothly weighted per layer & phantomRate so morphing never snaps)
+  float phRateRoll = hash(vec3(uid, f_seed, 97.0));
+  float phRateW = smoothstep(phRateRoll - 0.14, phRateRoll + 0.14, u_phantomRate);
+  if (u_phantom > 0.01 && phRateW > 1e-4) {
     vec3 phTint = exp(-mix(f_sigma, f_sigmaCore, 0.4) * 0.35);
     vec3 phLightIn = lightIn * mix(vec3(1.0), normalize(phTint + vec3(0.05)) * 1.25, clamp(length(f_sigma) * 0.22, 0.0, 0.85));
     for (int layer = 0; layer < 4; layer++) {
@@ -5268,7 +5561,7 @@ vec3 inside(int id, vec3 ro, vec3 rd, float len, float travelled, float jitter, 
           vec3 hp = ro + rd * t;
           float cosk = abs(dot(rd, body(id, PA + (e == 0 ? kn : kf)).xyz));
           float dust = texture(u_incl, hp * u_inclusionScale * 2.0 + off + float(layer) * 0.37).r;
-          float sheet = layerWeight * clamp(u_phantom * (0.12 - 0.02 * float(layer)) * (0.3 + 1.7 * dust) / max(cosk, 0.12), 0.0, 1.0);
+          float sheet = phRateW * layerWeight * clamp(u_phantom * (0.12 - 0.02 * float(layer)) * (0.3 + 1.7 * dust) / max(cosk, 0.12), 0.0, 1.0);
           vec3 phCol = u_iridescence > 0.01
             ? mix(phLightIn, spectralRainbow(cosk * 2.4 + float(layer) * 0.33 + hueOff) * (phLightIn + vec3(0.35)), clamp(u_iridescence * 0.6, 0.0, 1.0))
             : phLightIn;
@@ -5316,7 +5609,9 @@ vec3 inside(int id, vec3 ro, vec3 rd, float len, float travelled, float jitter, 
   // Deep internal iridescent cleavage plane (guarded behind u_fractures > 0.01 || u_iridescence > 0.01)
   if (u_fractures > 0.01 || u_iridescence > 0.01 || u_flash > 0.01) {
     float effFractures = clamp(u_fractures + u_iridescence * 0.22 + u_flash * 0.25, 0.0, 1.0);
-    if (hash(vec3(uid, f_seed, 91.0)) < effFractures) {
+    float fracRoll = hash(vec3(uid, f_seed, 91.0));
+    float fracW = smoothstep(fracRoll - 0.14, fracRoll + 0.14, effFractures);
+    if (fracW > 1e-4) {
       vec3 hj = vec3(uid, f_seed, 93.0);
       vec3 fn = normalize(vec3(hash(hj), hash(hj + 1.0), hash(hj + 2.0)) - 0.5);
       vec3 fc = root + axis * L * (0.25 + 0.4 * hash(hj + 3.0));
@@ -5327,7 +5622,7 @@ vec3 inside(int id, vec3 ro, vec3 rd, float len, float travelled, float jitter, 
           vec3 hp = ro + rd * t;
           vec4 v = texture(u_incl, hp * 2.5 + off);
           float extent = length(hp - fc) / (r * (1.6 + 0.35 * u_iridescence));
-          float mask = 1.0 - smoothstep(0.55, 0.78, extent + 0.45 * (v.b - 0.5) + 0.25 * v.r);
+          float mask = fracW * (1.0 - smoothstep(0.55, 0.78, extent + 0.45 * (v.b - 0.5) + 0.25 * v.r));
           if (mask > 0.0) {
             float film = v.b * 2.5 + length(hp - fc) * 6.0 + hueOff + abs(dn) * 2.2;
             vec3 irid = spectralRainbow(film);
@@ -5518,7 +5813,9 @@ void main() {
     hopCost += alpha;
 
     float footprint = travelled * f_pixAngle;
-    float rough = hash(vec3(uid, float(k), f_seed + 0.5)) < u_frostShare ? u_frost : 0.0;
+    float frostRoll = hash(vec3(uid, float(k), f_seed + 0.5));
+    float frostW = smoothstep(frostRoll - 0.15, frostRoll + 0.15, u_frostShare);
+    float rough = u_frost * frostW;
     float dEdge = (u_edgeWear > 0.0 || u_hopper > 0.0 || u_iridescence > 0.0 || u_bloom > 0.0) ? edgeDist(id, k, p) : 1.0;
     float chip = wearFromDist(id, p, dEdge);
     rough = max(rough, chip * 0.6);
@@ -5545,7 +5842,9 @@ void main() {
       float nextTravelled = travelled + len * alpha;
       p = ro + rd * len;
 
-      float fr = hash(vec3(uid, float(kf), f_seed + 0.5)) < u_frostShare ? u_frost : 0.0;
+      float exitFrostRoll = hash(vec3(uid, float(kf), f_seed + 0.5));
+      float exitFrostW = smoothstep(exitFrostRoll - 0.15, exitFrostRoll + 0.15, u_frostShare);
+      float fr = u_frost * exitFrostW;
       float dExit = (u_hopper > 0.0 || u_iridescence > 0.0 || u_bloom > 0.0) ? edgeDist(id, kf, p) : 1.0;
       vec3 nf = faceNormal(id, kf, body(id, PA + kf).xyz, p, fr, nextTravelled * f_pixAngle, dExit);
       float cosi = dot(rd, nf);
@@ -5681,7 +5980,7 @@ const HABITS = [
   'Dendritic Starburst',
 ];
 const __default_params = [
-  playback({ timeScale: 3, maxDpr: 1, maxFps: 30 }, {
+  playback({ timeScale: 1.5, maxDpr: 1, maxFps: 30 }, {
     quality: true,
     extra: [
       { key: 'seed', label: 'Seed', value: 7, min: 0, max: 100, step: 1, uniform: false, desc: 'A different cluster: layout, faces and inclusions.' },
@@ -5709,7 +6008,7 @@ const __default_params = [
   {
     group: 'Motion',
     params: [
-      { key: 'spin', label: 'Spin °/s', value: 3, default: 3, min: 0, max: 7, step: 0.05, uniform: false, desc: 'How fast the cluster turns about its upright axis.' },
+      { key: 'spin', label: 'Spin °/s', value: 1.5, default: 1.5, min: 0, max: 7, step: 0.05, uniform: false, desc: 'How fast the cluster turns about its upright axis.' },
       { key: 'spinStart', label: 'Orbit angle °', value: 280.757, default: 280.757, min: 0, max: 360, step: 0.5, uniform: false, desc: 'Current horizontal orbit angle around the cluster (drag horizontally on canvas).' },
       { key: 'sway', label: 'Sway °', value: 0, min: 0, max: 25, step: 0.5, uniform: false, desc: 'The cluster rocks gently as it turns.' },
       { key: 'swaySpeed', label: 'Sway speed', value: 0.07, min: 0, max: 0.5, step: 0.005, uniform: false, desc: 'Rocks per second.', when: { key: 'sway', not: [0] } },
@@ -5740,7 +6039,7 @@ const __default_params = [
   {
     group: 'Cluster',
     params: [
-      { key: 'crystals', label: 'Crystals', value: 9, min: 1, max: 28, step: 1, uniform: false, desc: 'Total crystal points and twin offshoots in the cluster.' },
+      { key: 'crystals', label: 'Crystals', value: 9, min: 1, max: 28, step: 0.01, uniform: false, desc: 'Total crystal points and twin offshoots in the cluster.' },
       { key: 'fan', label: 'Fan °', value: 55, min: 0, max: 85, step: 1, uniform: false, desc: 'How far the outer points lean away from upright.' },
       { key: 'crossAt', label: 'Cross point', value: 0.45, min: 0, max: 1, step: 0.01, uniform: false, desc: 'Where along their length the points cross: 0.5 through their middles, 1 at their outer tips, 0 at their roots.' },
       { key: 'lengthJitter', label: 'Length variety', value: 0.22, min: 0, max: 0.9, step: 0.01, uniform: false, desc: 'How much shorter the subsidiary points are than the tallest.' },
@@ -5872,44 +6171,43 @@ const presets = {
     iridescence: 0.35,
     flash: 0.5,
   },
-  'Classic Quartz Prism': {
-    seed: 19,
-    habit: 'Quartz Cluster',
+  'Glacial Ice': {
+    seed: 77,
+    habit: 'Dendritic Starburst',
     growth: 1,
     symmetry: 6,
-    taper: 0.08,
-    chamfer: 0.08,
-    twinShare: 0.25,
-    twinAngle: 48,
+    taper: 0.24,
+    chamfer: 0.18,
+    twinShare: 0.75,
+    twinAngle: 60,
     cavityCurve: 0,
-    hopper: 0,
-    crystals: 8,
-    fan: 46,
-    crossAt: 0.36,
-    lengthJitter: 0.28,
-    thickness: 0.095,
-    faceDominance: 0.24,
-    tipAngle: 58.5,
-    stoneColour: '#dbeafe',
-    colourDepth: 0.35,
-    colourZoning: 0.2,
-    biColour: 0,
-    ior: 1.544,
-    fire: 0.028,
-    striations: 0.35,
-    striationScale: 165,
-    milk: 0.65,
-    milkBase: 0.88,
-    veils: 1.5,
-    phantom: 0.55,
-    phantomRate: 0.6,
+    hopper: 0.45,
+    crystals: 22,
+    fan: 68,
+    crossAt: 0.5,
+    lengthJitter: 0.35,
+    thickness: 0.068,
+    tipAngle: 68,
+    stoneColour: '#7dd3fc',
+    colourDepth: 1.45,
+    colourZoning: 0.5,
+    biColour: 0.4,
+    coreColour: '#e0f2fe',
+    ior: 1.31,
+    fire: 0.022,
+    frostShare: 0.48,
+    frost: 0.42,
+    milk: 0.85,
+    milkBase: 0.4,
+    veils: 2.2,
+    phantom: 0.7,
+    phantomRate: 0.7,
     phantomLayers: 3,
-    needles: 0,
-    fractures: 0.3,
+    fractures: 0.65,
+    fractureGlow: 1.9,
     hueShift: 180,
-    backdropLight: 0.095,
-    iridescence: 0.22,
-    flash: 0.4,
+    iridescence: 0.55,
+    flash: 0.45,
   },
   'Phantom Emerald Twin': {
     seed: 42,
@@ -6120,44 +6418,6 @@ const presets = {
     iridescence: 0.4234,
     flash: 0.45,
   },
-  'Glacial Ice Dendrite': {
-    seed: 77,
-    habit: 'Dendritic Starburst',
-    growth: 1,
-    symmetry: 6,
-    taper: 0.24,
-    chamfer: 0.18,
-    twinShare: 0.75,
-    twinAngle: 60,
-    cavityCurve: 0,
-    hopper: 0.45,
-    crystals: 22,
-    fan: 68,
-    crossAt: 0.5,
-    lengthJitter: 0.35,
-    thickness: 0.068,
-    tipAngle: 68,
-    stoneColour: '#7dd3fc',
-    colourDepth: 1.45,
-    colourZoning: 0.5,
-    biColour: 0.4,
-    coreColour: '#e0f2fe',
-    ior: 1.31,
-    fire: 0.022,
-    frostShare: 0.48,
-    frost: 0.42,
-    milk: 0.85,
-    milkBase: 0.4,
-    veils: 2.2,
-    phantom: 0.7,
-    phantomRate: 0.7,
-    phantomLayers: 3,
-    fractures: 0.65,
-    fractureGlow: 1.9,
-    hueShift: 180,
-    iridescence: 0.55,
-    flash: 0.45,
-  },
   'Rutilated Smoky Scepter': {
     seed: 14,
     habit: 'Scepter Overgrowth',
@@ -6235,6 +6495,45 @@ const presets = {
     hueShift: 180,
     iridescence: 0.45,
     flash: 0.5,
+  },
+  'Classic Quartz Prism': {
+    seed: 19,
+    habit: 'Quartz Cluster',
+    growth: 1,
+    symmetry: 6,
+    taper: 0.08,
+    chamfer: 0.08,
+    twinShare: 0.25,
+    twinAngle: 48,
+    cavityCurve: 0,
+    hopper: 0,
+    crystals: 8,
+    fan: 46,
+    crossAt: 0.36,
+    lengthJitter: 0.28,
+    thickness: 0.095,
+    faceDominance: 0.24,
+    tipAngle: 58.5,
+    stoneColour: '#dbeafe',
+    colourDepth: 0.35,
+    colourZoning: 0.2,
+    biColour: 0,
+    ior: 1.544,
+    fire: 0.028,
+    striations: 0.35,
+    striationScale: 165,
+    milk: 0.65,
+    milkBase: 0.88,
+    veils: 1.5,
+    phantom: 0.55,
+    phantomRate: 0.6,
+    phantomLayers: 3,
+    needles: 0,
+    fractures: 0.3,
+    hueShift: 180,
+    backdropLight: 0.095,
+    iridescence: 0.22,
+    flash: 0.4,
   },
 };
 

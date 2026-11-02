@@ -1,8 +1,11 @@
 {
-  "generator": "Enso Soundscapes OfflineAudioContext + Stereo Cathedral ConvolverNode (48kHz / 320kbps OGG + MP3)",
+  "generator": "Enso Soundscapes Warm Felt Piano (3-Stage Q=0.5 Lowpass, Zero Shimmer/Comb Ringing) + Dark-Velvet Cathedral IR (48kHz / 320kbps OGG + MP3)",
   "sampleRate": 48000,
   "targetBitrateKbps": 320,
   "reverbStamped": true,
+  "pianoShimmerFree": true,
+  "pianoFeltLowpassHz": 950,
+  "pianoReverbLowpassHz": 1350,
   "count": 26,
   "samples": [
     {
@@ -14,7 +17,7 @@
       "bitrateKbps": 320,
       "ogg": "samples/piano_c2.ogg",
       "mp3": "samples/piano_c2.mp3",
-      "oggBytes": 113431,
+      "oggBytes": 43073,
       "mp3Bytes": 250605
     },
     {
@@ -26,7 +29,7 @@
       "bitrateKbps": 320,
       "ogg": "samples/piano_fs2.ogg",
       "mp3": "samples/piano_fs2.mp3",
-      "oggBytes": 108341,
+      "oggBytes": 43137,
       "mp3Bytes": 250605
     },
     {
@@ -38,7 +41,7 @@
       "bitrateKbps": 320,
       "ogg": "samples/piano_c3.ogg",
       "mp3": "samples/piano_c3.mp3",
-      "oggBytes": 110442,
+      "oggBytes": 40958,
       "mp3Bytes": 241965
     },
     {
@@ -50,7 +53,7 @@
       "bitrateKbps": 320,
       "ogg": "samples/piano_fs3.ogg",
       "mp3": "samples/piano_fs3.mp3",
-      "oggBytes": 105688,
+      "oggBytes": 41083,
       "mp3Bytes": 241965
     },
     {
@@ -62,7 +65,7 @@
       "bitrateKbps": 320,
       "ogg": "samples/piano_c4.ogg",
       "mp3": "samples/piano_c4.mp3",
-      "oggBytes": 93730,
+      "oggBytes": 38947,
       "mp3Bytes": 234285
     },
     {
@@ -74,7 +77,7 @@
       "bitrateKbps": 320,
       "ogg": "samples/piano_fs4.ogg",
       "mp3": "samples/piano_fs4.mp3",
-      "oggBytes": 83603,
+      "oggBytes": 39872,
       "mp3Bytes": 226605
     },
     {
@@ -86,7 +89,7 @@
       "bitrateKbps": 320,
       "ogg": "samples/piano_c5.ogg",
       "mp3": "samples/piano_c5.mp3",
-      "oggBytes": 67865,
+      "oggBytes": 38455,
       "mp3Bytes": 217965
     },
     {
@@ -98,7 +101,7 @@
       "bitrateKbps": 320,
       "ogg": "samples/piano_fs5.ogg",
       "mp3": "samples/piano_fs5.mp3",
-      "oggBytes": 62580,
+      "oggBytes": 36942,
       "mp3Bytes": 210285
     },
     {
@@ -110,56 +113,56 @@
       "bitrateKbps": 320,
       "ogg": "samples/piano_c6.ogg",
       "mp3": "samples/piano_c6.mp3",
-      "oggBytes": 62303,
+      "oggBytes": 38313,
       "mp3Bytes": 202605
     },
     {
       "id": "pad_c3",
       "voice": "pad",
       "midi": 48,
-      "durationSec": 7,
+      "durationSec": 8,
       "sampleRate": 48000,
       "bitrateKbps": 320,
       "ogg": "samples/pad_c3.ogg",
       "mp3": "samples/pad_c3.mp3",
-      "oggBytes": 135167,
-      "mp3Bytes": 282285
+      "oggBytes": 72443,
+      "mp3Bytes": 322605
     },
     {
       "id": "pad_g3",
       "voice": "pad",
       "midi": 55,
-      "durationSec": 7,
+      "durationSec": 8,
       "sampleRate": 48000,
       "bitrateKbps": 320,
       "ogg": "samples/pad_g3.ogg",
       "mp3": "samples/pad_g3.mp3",
-      "oggBytes": 162835,
-      "mp3Bytes": 282285
+      "oggBytes": 71285,
+      "mp3Bytes": 322605
     },
     {
       "id": "pad_c4",
       "voice": "pad",
       "midi": 60,
-      "durationSec": 7,
+      "durationSec": 8,
       "sampleRate": 48000,
       "bitrateKbps": 320,
       "ogg": "samples/pad_c4.ogg",
       "mp3": "samples/pad_c4.mp3",
-      "oggBytes": 162402,
-      "mp3Bytes": 282285
+      "oggBytes": 79860,
+      "mp3Bytes": 322605
     },
     {
       "id": "pad_g4",
       "voice": "pad",
       "midi": 67,
-      "durationSec": 7,
+      "durationSec": 8,
       "sampleRate": 48000,
       "bitrateKbps": 320,
       "ogg": "samples/pad_g4.ogg",
       "mp3": "samples/pad_g4.mp3",
-      "oggBytes": 167483,
-      "mp3Bytes": 282285
+      "oggBytes": 94160,
+      "mp3Bytes": 322605
     },
     {
       "id": "bell_c4",
@@ -170,7 +173,7 @@
       "bitrateKbps": 320,
       "ogg": "samples/bell_c4.ogg",
       "mp3": "samples/bell_c4.mp3",
-      "oggBytes": 72108,
+      "oggBytes": 41406,
       "mp3Bytes": 234285
     },
     {
@@ -182,7 +185,7 @@
       "bitrateKbps": 320,
       "ogg": "samples/bell_g4.ogg",
       "mp3": "samples/bell_g4.mp3",
-      "oggBytes": 81950,
+      "oggBytes": 47822,
       "mp3Bytes": 234285
     },
     {
@@ -194,7 +197,7 @@
       "bitrateKbps": 320,
       "ogg": "samples/bell_c5.ogg",
       "mp3": "samples/bell_c5.mp3",
-      "oggBytes": 83011,
+      "oggBytes": 46588,
       "mp3Bytes": 222765
     },
     {
@@ -206,116 +209,116 @@
       "bitrateKbps": 320,
       "ogg": "samples/bell_g5.ogg",
       "mp3": "samples/bell_g5.mp3",
-      "oggBytes": 87761,
+      "oggBytes": 44085,
       "mp3Bytes": 222765
     },
     {
       "id": "choir_c4",
       "voice": "choir",
       "midi": 60,
-      "durationSec": 7.2,
+      "durationSec": 8.2,
       "sampleRate": 48000,
       "bitrateKbps": 320,
       "ogg": "samples/choir_c4.ogg",
       "mp3": "samples/choir_c4.mp3",
-      "oggBytes": 118121,
-      "mp3Bytes": 289965
+      "oggBytes": 63680,
+      "mp3Bytes": 330285
     },
     {
       "id": "choir_g4",
       "voice": "choir",
       "midi": 67,
-      "durationSec": 7.2,
+      "durationSec": 8.2,
       "sampleRate": 48000,
       "bitrateKbps": 320,
       "ogg": "samples/choir_g4.ogg",
       "mp3": "samples/choir_g4.mp3",
-      "oggBytes": 112885,
-      "mp3Bytes": 289965
+      "oggBytes": 70963,
+      "mp3Bytes": 330285
     },
     {
       "id": "choir_c5",
       "voice": "choir",
       "midi": 72,
-      "durationSec": 7.2,
+      "durationSec": 8.2,
       "sampleRate": 48000,
       "bitrateKbps": 320,
       "ogg": "samples/choir_c5.ogg",
       "mp3": "samples/choir_c5.mp3",
-      "oggBytes": 99226,
-      "mp3Bytes": 289965
+      "oggBytes": 70958,
+      "mp3Bytes": 330285
     },
     {
       "id": "tape_c3",
       "voice": "tape",
       "midi": 48,
-      "durationSec": 6.2,
+      "durationSec": 7.2,
       "sampleRate": 48000,
       "bitrateKbps": 320,
       "ogg": "samples/tape_c3.ogg",
       "mp3": "samples/tape_c3.mp3",
-      "oggBytes": 178090,
-      "mp3Bytes": 250605
+      "oggBytes": 139081,
+      "mp3Bytes": 289965
     },
     {
       "id": "tape_g3",
       "voice": "tape",
       "midi": 55,
-      "durationSec": 6.2,
+      "durationSec": 7.2,
       "sampleRate": 48000,
       "bitrateKbps": 320,
       "ogg": "samples/tape_g3.ogg",
       "mp3": "samples/tape_g3.mp3",
-      "oggBytes": 179182,
-      "mp3Bytes": 250605
+      "oggBytes": 155678,
+      "mp3Bytes": 289965
     },
     {
       "id": "tape_c4",
       "voice": "tape",
       "midi": 60,
-      "durationSec": 6.2,
+      "durationSec": 7.2,
       "sampleRate": 48000,
       "bitrateKbps": 320,
       "ogg": "samples/tape_c4.ogg",
       "mp3": "samples/tape_c4.mp3",
-      "oggBytes": 166501,
-      "mp3Bytes": 250605
+      "oggBytes": 137740,
+      "mp3Bytes": 289965
     },
     {
       "id": "drone_c2",
       "voice": "drone",
       "midi": 36,
-      "durationSec": 7.6,
+      "durationSec": 8.6,
       "sampleRate": 48000,
       "bitrateKbps": 320,
       "ogg": "samples/drone_c2.ogg",
       "mp3": "samples/drone_c2.mp3",
-      "oggBytes": 113663,
-      "mp3Bytes": 306285
+      "oggBytes": 59161,
+      "mp3Bytes": 346605
     },
     {
       "id": "drone_g2",
       "voice": "drone",
       "midi": 43,
-      "durationSec": 7.6,
+      "durationSec": 8.6,
       "sampleRate": 48000,
       "bitrateKbps": 320,
       "ogg": "samples/drone_g2.ogg",
       "mp3": "samples/drone_g2.mp3",
-      "oggBytes": 93957,
-      "mp3Bytes": 306285
+      "oggBytes": 60222,
+      "mp3Bytes": 346605
     },
     {
       "id": "drone_c3",
       "voice": "drone",
       "midi": 48,
-      "durationSec": 7.6,
+      "durationSec": 8.6,
       "sampleRate": 48000,
       "bitrateKbps": 320,
       "ogg": "samples/drone_c3.ogg",
       "mp3": "samples/drone_c3.mp3",
-      "oggBytes": 101624,
-      "mp3Bytes": 306285
+      "oggBytes": 55214,
+      "mp3Bytes": 346605
     }
   ]
 }
