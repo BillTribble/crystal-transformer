@@ -2,17 +2,17 @@
 // bounded sliding-window evolution (Phase 1: Seed -> Full Size, Phase 2: Continuous
 // Frontier Branching + Smooth Old-Segment Dissolve & Garbage Collection).
 //
-// Every crystal body is the exact intersection of 18 half-spaces (CRYSTAL_PLANES = 18),
+// Every crystal body is the exact intersection of 20 half-spaces (CRYSTAL_PLANES = 20),
 // written into `cluster.data` (a std140 uniform buffer read as `bodies[]` in the trace shader).
-// Slot layout per crystal row (`ROW_W = 22` vec4s):
+// Slot layout per crystal row (`ROW_W = 24` vec4s):
 //   col 0: vec4(sphereCentre.xyz, sphereRadius)
 //   col 1: vec4(axis.xyz, L)
 //   col 2: vec4(alpha, hueOffset, stableUid, r)
 //   col 3: vec4(root.xyz, rnd)
-//   col 4..21: 18 half-space planes vec4(normal.xyz, planeOffset)
+//   col 4..23: 20 half-space planes vec4(normal.xyz, planeOffset) (slots 18..19 = 3D corner-nip planes)
 
 export const MAX_CRYSTALS = 28;
-export const CRYSTAL_PLANES = 18;
+export const CRYSTAL_PLANES = 20;
 export const PLANES_AT = 4; // first plane slot in a row
 export const ROW_W = PLANES_AT + CRYSTAL_PLANES;
 export const ROWS = MAX_CRYSTALS;
@@ -104,6 +104,74 @@ function centeredPlane(row, k, L, lx, ly, lz, offsetFromMid) {
   const my = root[1] + ax[1] * 0.5 * L;
   const mz = root[2] + ax[2] * 0.5 * L;
   slot(row, PLANES_AT + k, nx, ny, nz, nx * mx + ny * my + nz * mz + offsetFromMid);
+}
+
+/**
+ * Finds the exact exposed 3D upper vertex where the ridge between planes `pA` and `pB`
+ * terminates against a third face `mMax` of crystal `rowIdx`, and writes a corner-nip plane
+ * into `slotIdx` (18 or 19) that slices a crisp triangular/trapezoidal corner chip off that vertex.
+ */
+function writeCornerNipPlane(rowIdx, slotIdx, pA, pB, depth, biasA = 0.85, biasB = 1.0, biasC = 0.95) {
+  const base = (rowIdx * ROW_W + PLANES_AT) * 4;
+  const oA = base + pA * 4, oB = base + pB * 4;
+  const ax0 = cluster.data[oA], ay0 = cluster.data[oA + 1], az0 = cluster.data[oA + 2], wA = cluster.data[oA + 3];
+  const bx0 = cluster.data[oB], by0 = cluster.data[oB + 1], bz0 = cluster.data[oB + 2], wB = cluster.data[oB + 3];
+  const dotAB = ax0 * bx0 + ay0 * by0 + az0 * bz0;
+  const denom = 1.0 - dotAB * dotAB;
+  if (denom < 1e-3) return false;
+  const cA = (wA - dotAB * wB) / denom;
+  const cB = (wB - dotAB * wA) / denom;
+  const p0x = cA * ax0 + cB * bx0;
+  const p0y = cA * ay0 + cB * by0;
+  const p0z = cA * az0 + cB * bz0;
+
+  let ux = ay0 * bz0 - az0 * by0;
+  let uy = az0 * bx0 - ax0 * bz0;
+  let uz = ax0 * by0 - ay0 * bx0;
+  const ul = Math.hypot(ux, uy, uz);
+  if (ul < 1e-4) return false;
+  ux /= ul; uy /= ul; uz /= ul;
+  if (ux * ax[0] + uy * ax[1] + uz * ax[2] < 0) {
+    ux = -ux; uy = -uy; uz = -uz;
+  }
+
+  let tMin = -1e9, tMax = 1e9, mMax = -1;
+  for (let m = 0; m < 18; m++) {
+    if (m === pA || m === pB) continue;
+    const oM = base + m * 4;
+    const mx = cluster.data[oM], my = cluster.data[oM + 1], mz = cluster.data[oM + 2], wM = cluster.data[oM + 3];
+    const du = mx * ux + my * uy + mz * uz;
+    const dist = wM - (mx * p0x + my * p0y + mz * p0z);
+    if (Math.abs(du) < 1e-6) {
+      if (dist < -1e-4) return false;
+      continue;
+    }
+    const t = dist / du;
+    if (du > 0) {
+      if (t < tMax) { tMax = t; mMax = m; }
+    } else if (t > tMin) {
+      tMin = t;
+    }
+  }
+  const ridgeLen = tMax - tMin;
+  if (ridgeLen <= 1e-3 || mMax < 0 || tMax > 1e4) return false;
+
+  const vx = p0x + tMax * ux;
+  const vy = p0y + tMax * uy;
+  const vz = p0z + tMax * uz;
+  const oC = base + mMax * 4;
+  const cx0 = cluster.data[oC], cy0 = cluster.data[oC + 1], cz0 = cluster.data[oC + 2];
+  let nx = ax0 * biasA + bx0 * biasB + cx0 * biasC;
+  let ny = ay0 * biasA + by0 * biasB + cy0 * biasC;
+  let nz = az0 * biasA + bz0 * biasB + cz0 * biasC;
+  const nl = Math.hypot(nx, ny, nz);
+  if (nl < 1e-4) return false;
+  nx /= nl; ny /= nl; nz /= nl;
+
+  const effDepth = Math.min(depth, ridgeLen * 0.28);
+  const wNip = (nx * vx + ny * vy + nz * vz) - effDepth;
+  slot(rowIdx, PLANES_AT + slotIdx, nx, ny, nz, wNip);
+  return true;
 }
 
 function buildSideBasis(twistAngle) {
@@ -580,7 +648,7 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
   if (!Number.isFinite(cluster.smoothEffPrimaryCount) || !evolveOn) {
     cluster.smoothEffPrimaryCount = rawEffPrimaryCount;
   } else if (nodeDt > 0) {
-    cluster.smoothEffPrimaryCount += (rawEffPrimaryCount - cluster.smoothEffPrimaryCount) * (1 - Math.exp(-0.65 * nodeDt));
+    cluster.smoothEffPrimaryCount += (rawEffPrimaryCount - cluster.smoothEffPrimaryCount) * (1 - Math.exp(-0.22 * nodeDt));
   }
   const effPrimaryCount = cluster.smoothEffPrimaryCount;
   let activeCount = 0;
@@ -591,10 +659,10 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
     const i = node.cohortIdx;
     const nodeSymmetry = symmetry;
 
-    // Continuous presence & twinW with slow 2nd-order critically-damped spring (omega = 0.65 rad/s,
-    // max velocity <= 0.20/s) so budding crystals and twin branches emerge at the exact same
-    // slow, meditative pace as the rest of the crystal transformation.
-    const rawPresence = idx < nActive ? smooth01(Math.max(0.0, Math.min(1.0, floatC - i))) : 0.0;
+    // Continuous presence & twinW with ultra-slow 2nd-order critically-damped spring (omega = 0.20..0.24 rad/s,
+    // max velocity <= 0.065/s, taking ~15-18s — 3x longer than before) so appearing and disappearing
+    // crystals bud and shrink very gradually across preset changes.
+    const rawPresence = smooth01(Math.max(0.0, Math.min(1.0, floatC - i)));
     const rawTwinW = i < 2 ? 0.0 : smooth01(Math.max(0.0, Math.min(1.0, (twinShare - node.twinRoll + 0.44) / 0.88)));
     if (!node.smoothInit || !evolveOn) {
       node.smoothPresence = rawPresence;
@@ -604,10 +672,10 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
       node.smoothInit = true;
     } else if (nodeDt > 0) {
       let remN = nodeDt;
-      const omegaN = 0.65;
+      const omegaN = 0.20 + 0.04 * (0.5 + 0.5 * (node.uLen || 0));
       const omegaN2 = omegaN * omegaN;
       const dampN = 2.0 * omegaN;
-      const maxVelN = 0.20;
+      const maxVelN = 0.065;
       while (remN > 1e-6) {
         const ndt = Math.min(remN, 0.05);
         remN -= ndt;
@@ -635,7 +703,7 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
     node.presence = presence;
     node.twinW = twinW;
     node.isSecondary = twinW >= 0.5;
-    if (presence < 1e-3) {
+    if (presence < 2e-3) {
       node.worldL = 0;
       node.worldFullL = 0;
       node.worldR = 0;
@@ -990,7 +1058,32 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
     const tableFrac = Math.max(0.68, 1.12 - 0.58 * dynChamfer);
     crystalPlane(rowIdx, 17, 0, 1, 0, L * tableFrac);
 
-    const half = 0.5 * L, rc = rMax / Math.cos(Math.PI / Math.max(3, sSym));
+    // Slots 18 & 19: Literal 3D geometric corner-nip half-space planes (as if crystal corners were dropped/chipped)
+    const edgeChipsVal = P.edgeChips ? Math.max(0, Math.min(1, Number(P.edgeChips.value))) : 0.28;
+    const rc = rMax / Math.cos(Math.PI / Math.max(3, sSym));
+    crystalPlane(rowIdx, 18, 0, 1, 0, L * 12 + r * 12);
+    crystalPlane(rowIdx, 19, 0, 1, 0, L * 12 + r * 12);
+    if (edgeChipsVal > 0.01) {
+      const nipRoll1 = ((node.uid * 37 + 7) % 19) / 19;
+      const nipW1 = smooth01(Math.max(0, Math.min(1, (edgeChipsVal * 1.85 - nipRoll1 * 0.45) / 0.35)));
+      if (nipW1 > 1e-3) {
+        const k0 = Math.floor((node.uid * 7 + 1) % nSym);
+        const k1 = (k0 + 1) % nSym;
+        const nipDepth1 = r * (0.09 + 0.19 * edgeChipsVal) * nipW1;
+        writeCornerNipPlane(rowIdx, 18, k0, k1, nipDepth1, 0.82, 1.08, 0.92);
+      }
+
+      const nipRoll2 = ((node.uid * 53 + 3) % 23) / 23;
+      const nipW2 = smooth01(Math.max(0, Math.min(1, (edgeChipsVal * 1.65 - nipRoll2 * 0.55) / 0.35)));
+      if (nipW2 > 1e-3) {
+        const c0 = 8 + Math.floor((node.uid * 11 + 3) % nSym);
+        const c1 = 8 + ((c0 - 8 + 1) % nSym);
+        const nipDepth2 = r * (0.08 + 0.17 * edgeChipsVal) * nipW2;
+        writeCornerNipPlane(rowIdx, 19, c0, c1, nipDepth2, 0.95, 0.78, 0.88);
+      }
+    }
+
+    const half = 0.5 * L;
     const nodeAlpha = Math.max(0.0, Math.min(1.0, node.alpha * smooth01(Math.min(1.0, presence / 0.35))));
     const scx = root[0] + ax[0] * half;
     const scy = root[1] + ax[1] * half;

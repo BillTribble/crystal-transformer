@@ -407,7 +407,7 @@ vec3 inside(int id, vec3 ro, vec3 rd, float len, float travelled, float jitter, 
       if (pScale <= 0.12) break;
       vec3 c = root + axis * L * (0.45 - 0.06 * float(layer));
       float tn = -1e9, tf = 1e9; int kn = 0, kf = 0;
-      for (int k = 0; k < CP; k++) {
+      for (int k = 0; k < 18; k++) {
         vec4 pl = body(id, PA + k);
         float d = dot(pl.xyz, c) + (pl.w - dot(pl.xyz, c)) * pScale;
         float dn = dot(pl.xyz, rd), dist = d - dot(pl.xyz, ro);
@@ -701,7 +701,8 @@ void main() {
     rough = max(rough, chip * 0.6);
     vec3 n = faceNormal(id, k, body(id, PA + k).xyz, p, rough, footprint, dEdge);
     float inChip = 0.0;
-    if (u_edgeChips > 0.01 && eDist < 0.018) {
+    bool isCornerNip = (k >= 18);
+    if (u_edgeChips > 0.01 && (isCornerNip || eDist < 0.014)) {
       vec3 axis = body(id, 1).xyz, root = body(id, 3).xyz;
       float r = max(body(id, 2).w, 0.03);
       vec3 p0 = body(id, PA).xyz;
@@ -711,18 +712,28 @@ void main() {
       vec3 t2 = cross(axis, t1);
       vec3 rel = p - root;
       vec3 lp = vec3(dot(rel, t1), dot(rel, axis), dot(rel, t2));
-      float chipZone = smoothstep(0.62, 0.82, n3(lp * 12.5 + vec3(float(id) * 3.7 + float(k) * 1.3)));
-      if (chipZone > 0.001) {
-        float chipDetail = n3(lp * 38.0) * 0.65 + n3(lp * 84.0) * 0.35;
-        float maxW = min(0.016, r * (0.035 + 0.085 * u_edgeChips));
-        float chipWidth = maxW * chipZone * smoothstep(0.38, 0.75, chipDetail);
-        if (eDist < chipWidth && chipWidth > 1e-4) {
-          inChip = (1.0 - smoothstep(chipWidth * 0.25, chipWidth, eDist)) * step(1e-4, u_edgeChips);
-          if (inChip > 0.001) {
-            vec3 edgeBevelN = normalize(body(id, PA + k).xyz + adjN);
-            vec3 chipN = normalize(vec3(n3(lp * 52.0) - 0.5, n3(lp * 52.0 + 7.1) - 0.5, n3(lp * 52.0 + 13.3) - 0.5));
-            n = normalize(mix(n, mix(edgeBevelN, chipN, 0.45), inChip * 0.65));
-            rough = max(rough, inChip * 0.42);
+      if (isCornerNip) {
+        // Literal 3D chipped corner facet: conchoidal shell ripples + raw fractured mineral surface
+        float shellRipple = sin(length(lp) * 95.0 + n3(lp * 28.0) * 4.5);
+        vec3 chipN = normalize(vec3(n3(lp * 46.0) - 0.5, n3(lp * 46.0 + 7.1) - 0.5, n3(lp * 46.0 + 13.3) - 0.5));
+        n = normalize(n + chipN * 0.22 + axis * (shellRipple * 0.06));
+        inChip = 0.58 * clamp(u_edgeChips * 1.6, 0.0, 1.0);
+        rough = max(rough, 0.32);
+      } else {
+        // Sparse 1/8th frequency isolated edge nips along facet ridges
+        float chipZone = smoothstep(0.81, 0.91, n3(lp * 14.5 + vec3(float(id) * 5.3 + float(k) * 2.7)));
+        if (chipZone > 0.001) {
+          float chipDetail = n3(lp * 42.0) * 0.65 + n3(lp * 88.0) * 0.35;
+          float maxW = min(0.013, r * (0.032 + 0.075 * u_edgeChips));
+          float chipWidth = maxW * chipZone * smoothstep(0.64, 0.84, chipDetail);
+          if (eDist < chipWidth && chipWidth > 1e-4) {
+            inChip = (1.0 - smoothstep(chipWidth * 0.25, chipWidth, eDist)) * step(1e-4, u_edgeChips);
+            if (inChip > 0.001) {
+              vec3 edgeBevelN = normalize(body(id, PA + k).xyz + adjN);
+              vec3 chipN = normalize(vec3(n3(lp * 52.0) - 0.5, n3(lp * 52.0 + 7.1) - 0.5, n3(lp * 52.0 + 13.3) - 0.5));
+              n = normalize(mix(n, mix(edgeBevelN, chipN, 0.45), inChip * 0.65));
+              rough = max(rough, inChip * 0.42);
+            }
           }
         }
       }

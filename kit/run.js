@@ -281,9 +281,9 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
   resetEvolution(P, { startFromSeed: !capture && !sp.has('growth') && !!P.evolve?.value });
   resetMorphFromPreset(store.preset || standardPresetNames[0] || 'Amethyst Cathedral');
 
-  function doRandomize(seconds = 10.0) {
+  function doRandomize(seconds = 18.0) {
     if (!randomize) return;
-    const dur = typeof seconds === 'number' && Number.isFinite(seconds) ? seconds : 10.0;
+    const dur = typeof seconds === 'number' && Number.isFinite(seconds) ? seconds : 18.0;
     saveOnLanding = true;
     const fromSnap = {};
     for (const p of store.params) fromSnap[p.key] = p.value;
@@ -471,7 +471,7 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
     if (!sound.enabled) toggleSound();
   });
   growBtn?.addEventListener('click', growMore);
-  randHudBtn?.addEventListener('click', () => doRandomize(10.0));
+  randHudBtn?.addEventListener('click', () => doRandomize(18.0));
   syncSoundFromParams();
 
   function cyclePreset(dir) {
