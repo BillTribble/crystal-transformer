@@ -9,13 +9,17 @@ import { buildCluster, cluster, resetEvolution, stepEvolution } from '../cluster
 import { createEnsoSound } from '../sound.js';
 
 const DEFAULT_ZOOM_KEY = 'crystals_default_zoom';
+const SOUND_PARAM_KEYS = new Set([
+  'sound', 'soundVolume', 'washLevel', 'droneMode', 'washInstrument', 'washFade', 'washGap',
+  'soundTrack', 'soundRotate', 'soundReverbMode',
+]);
 const NON_MORPH_KEYS = new Set([
   'renderScale', 'targetFps', 'maxFps', 'maxDpr', 'timeScale',
   'defaultZoom', 'distance', 'fov', 'tilt', 'spin', 'spinStart', 'sway', 'swaySpeed',
   'evolve', 'evolveSpeed', 'morphPresets', 'morphTime', 'autoGrow', 'growth', 'growSpeed',
   'graduallyShift', 'complementaryBg', 'hueShift', 'studioEdge',
   'seed', 'filmFps', 'fireSamples', 'bounces', 'depth', 'bloom', 'faceGlare',
-  'sound', 'soundVolume', 'washLevel', 'soundTrack', 'soundRotate', 'soundReverbMode',
+  ...SOUND_PARAM_KEYS,
 ]);
 
 export function computeDeviceDpr() {
@@ -323,27 +327,51 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
   const soundIconOff = document.getElementById('sound-icon-off');
   const unmuteCenterBtn = document.getElementById('unmute-center-btn');
 
+  let panel = null;
+
+  function syncParamsFromTrack(track, { syncPanel = true } = {}) {
+    if (!track) return;
+    if (P.soundTrack && P.soundTrack.value !== track.label) {
+      store.setValue(P.soundTrack, track.label);
+      P.soundTrack.base = track.label;
+    }
+    if (P.droneMode && track.droneMode) {
+      store.setValue(P.droneMode, track.droneMode);
+      P.droneMode.base = track.droneMode;
+    }
+    if (P.washInstrument && track.washInstrument) {
+      store.setValue(P.washInstrument, track.washInstrument);
+      P.washInstrument.base = track.washInstrument;
+    }
+    if (P.washFade && Number.isFinite(track.washFade)) {
+      store.setValue(P.washFade, track.washFade);
+      P.washFade.base = track.washFade;
+    }
+    if (P.washGap && Number.isFinite(track.washGap)) {
+      store.setValue(P.washGap, track.washGap);
+      P.washGap.base = track.washGap;
+    }
+    if (syncPanel && panel) {
+      panel.syncAll();
+      panel.refreshStatus();
+      store.scheduleSave();
+    }
+  }
+
   const sound = createEnsoSound({
-    onTrackChange(nextLabel) {
-      if (P.soundTrack && P.soundTrack.value !== nextLabel) {
-        store.setValue(P.soundTrack, nextLabel);
-        P.soundTrack.base = nextLabel;
-        panel.syncAll();
-        panel.refreshStatus();
-        store.scheduleSave();
-      }
+    onTrackChange(nextLabel, nextTrack) {
+      syncParamsFromTrack(nextTrack || sound.currentTrack, { syncPanel: true });
     },
     onStateChange() {
       syncHudButtons();
     },
   });
 
-  // Randomize the Enso track that the app starts with on every page load
+  // Sync initial Enso track and drone/wash defaults on page load
   if (P.soundTrack && !sp.has('soundTrack')) {
-    const startLabel = sound.currentTrack.label;
-    store.setValue(P.soundTrack, startLabel);
-    P.soundTrack.default = startLabel;
-    P.soundTrack.base = startLabel;
+    const startTrack = sound.currentTrack;
+    syncParamsFromTrack(startTrack, { syncPanel: false });
+    P.soundTrack.default = startTrack.label;
   }
 
   function syncSoundFromParams(changedKey) {
@@ -351,8 +379,32 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
     if (P.washLevel) sound.setWashLevel(P.washLevel.value);
     if (P.soundRotate) sound.setAutoRotate(P.soundRotate.value);
     if (P.soundReverbMode) sound.setReverbMode(P.soundReverbMode.value);
-    if (P.soundTrack && (changedKey === 'soundTrack' || !changedKey)) {
+    if (changedKey === 'soundTrack' && P.soundTrack) {
       sound.setTrack(P.soundTrack.value);
+    } else if (!changedKey || changedKey === 'reset') {
+      if (P.soundTrack && P.soundTrack.value !== sound.currentTrack.label) {
+        sound.setTrack(P.soundTrack.value);
+      }
+      if (P.droneMode) sound.setDroneMode(P.droneMode.value);
+      if (P.washInstrument) sound.setWashInstrument(P.washInstrument.value);
+      if (P.washFade) sound.setWashFade(P.washFade.value);
+      if (P.washGap) sound.setWashGap(P.washGap.value);
+    } else if (changedKey === 'droneMode' && P.droneMode) {
+      if (P.droneMode.value === 'Breathing wash' && P.washGap && Number(P.washGap.value) <= 0) {
+        const defGap = Number.isFinite(sound.currentTrack?.washGap) && sound.currentTrack.washGap > 0 ? sound.currentTrack.washGap : 2.8;
+        store.setValue(P.washGap, defGap);
+      } else if (P.droneMode.value === 'Continuous drone' && P.washGap && Number(P.washGap.value) > 0) {
+        store.setValue(P.washGap, 0);
+      }
+      sound.setDroneMode(P.droneMode.value);
+      if (P.washGap) sound.setWashGap(P.washGap.value);
+      panel?.syncAll();
+    } else if (changedKey === 'washInstrument' && P.washInstrument) {
+      sound.setWashInstrument(P.washInstrument.value);
+    } else if (changedKey === 'washFade' && P.washFade) {
+      sound.setWashFade(P.washFade.value);
+    } else if (changedKey === 'washGap' && P.washGap) {
+      sound.setWashGap(P.washGap.value);
     }
     if (P.sound) {
       sound.setEnabled(!!P.sound.value);
@@ -398,7 +450,7 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
     return s;
   }
 
-  const panel = buildPanel({
+  panel = buildPanel({
     slug,
     store,
     presets,
@@ -413,7 +465,7 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
         resetEvolution(P, { startFromSeed: !!P.evolve?.value });
         resetMorphFromPreset(store.preset || standardPresetNames[0]);
         syncSoundFromParams('reset');
-      } else if (changedKey && (changedKey.startsWith('sound') || changedKey === 'washLevel')) {
+      } else if (changedKey && SOUND_PARAM_KEYS.has(changedKey)) {
         syncSoundFromParams(changedKey);
       } else if (changedKey) {
         cluster.applyManualParam?.(changedKey, P);
@@ -765,7 +817,7 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
     set: (key, value) => {
       if (P[key]) {
         store.setValue(P[key], value);
-        if (key.startsWith('sound') || key === 'washLevel') {
+        if (SOUND_PARAM_KEYS.has(key)) {
           syncSoundFromParams(key);
         } else {
           cluster.applyManualParam?.(key, P);

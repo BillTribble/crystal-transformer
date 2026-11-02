@@ -2,17 +2,17 @@
 // bounded sliding-window evolution (Phase 1: Seed -> Full Size, Phase 2: Continuous
 // Frontier Branching + Smooth Old-Segment Dissolve & Garbage Collection).
 //
-// Every crystal body is the exact intersection of 20 half-spaces (CRYSTAL_PLANES = 20),
+// Every crystal body is the exact intersection of 21 half-spaces (CRYSTAL_PLANES = 21),
 // written into `cluster.data` (a std140 uniform buffer read as `bodies[]` in the trace shader).
-// Slot layout per crystal row (`ROW_W = 24` vec4s):
+// Slot layout per crystal row (`ROW_W = 25` vec4s):
 //   col 0: vec4(sphereCentre.xyz, sphereRadius)
 //   col 1: vec4(axis.xyz, L)
 //   col 2: vec4(alpha, hueOffset, stableUid, r)
 //   col 3: vec4(root.xyz, rnd)
-//   col 4..23: 20 half-space planes vec4(normal.xyz, planeOffset) (slots 18..19 = 3D corner-nip planes)
+//   col 4..24: 21 half-space planes vec4(normal.xyz, planeOffset) (slots 18..20 = 3D corner-nip planes)
 
 export const MAX_CRYSTALS = 28;
-export const CRYSTAL_PLANES = 20;
+export const CRYSTAL_PLANES = 21;
 export const PLANES_AT = 4; // first plane slot in a row
 export const ROW_W = PLANES_AT + CRYSTAL_PLANES;
 export const ROWS = MAX_CRYSTALS;
@@ -109,9 +109,9 @@ function centeredPlane(row, k, L, lx, ly, lz, offsetFromMid) {
 /**
  * Finds the exact exposed 3D upper vertex where the ridge between planes `pA` and `pB`
  * terminates against a third face `mMax` of crystal `rowIdx`, and writes a corner-nip plane
- * into `slotIdx` (18 or 19) that slices a crisp triangular/trapezoidal corner chip off that vertex.
+ * into `slotIdx` (18..20) that slices a crisp, small 3D corner nip off that vertex.
  */
-function writeCornerNipPlane(rowIdx, slotIdx, pA, pB, depth, biasA = 0.85, biasB = 1.0, biasC = 0.95) {
+function writeCornerNipPlane(rowIdx, slotIdx, pA, pB, kPrism0, kPrism1, cHoriz, cVert, depth, bias0 = 0.85, bias1 = 1.15) {
   const base = (rowIdx * ROW_W + PLANES_AT) * 4;
   const oA = base + pA * 4, oB = base + pB * 4;
   const ax0 = cluster.data[oA], ay0 = cluster.data[oA + 1], az0 = cluster.data[oA + 2], wA = cluster.data[oA + 3];
@@ -159,16 +159,25 @@ function writeCornerNipPlane(rowIdx, slotIdx, pA, pB, depth, biasA = 0.85, biasB
   const vx = p0x + tMax * ux;
   const vy = p0y + tMax * uy;
   const vz = p0z + tMax * uz;
-  const oC = base + mMax * 4;
-  const cx0 = cluster.data[oC], cy0 = cluster.data[oC + 1], cz0 = cluster.data[oC + 2];
-  let nx = ax0 * biasA + bx0 * biasB + cx0 * biasC;
-  let ny = ay0 * biasA + by0 * biasB + cy0 * biasC;
-  let nz = az0 * biasA + bz0 * biasB + cz0 * biasC;
-  const nl = Math.hypot(nx, ny, nz);
-  if (nl < 1e-4) return false;
+
+  // Build outward corner bisector from the two prism face normals + crystal shaft axis
+  const oP0 = base + kPrism0 * 4, oP1 = base + kPrism1 * 4;
+  let hx = cluster.data[oP0] * bias0 + cluster.data[oP1] * bias1;
+  let hy = cluster.data[oP0 + 1] * bias0 + cluster.data[oP1 + 1] * bias1;
+  let hz = cluster.data[oP0 + 2] * bias0 + cluster.data[oP1 + 2] * bias1;
+  const hProj = hx * ax[0] + hy * ax[1] + hz * ax[2];
+  hx -= hProj * ax[0]; hy -= hProj * ax[1]; hz -= hProj * ax[2];
+  const hl = Math.hypot(hx, hy, hz);
+  if (hl < 1e-4) return false;
+  hx /= hl; hy /= hl; hz /= hl;
+
+  let nx = hx * cHoriz + ax[0] * cVert;
+  let ny = hy * cHoriz + ax[1] * cVert;
+  let nz = hz * cHoriz + ax[2] * cVert;
+  const nl = Math.hypot(nx, ny, nz) || 1;
   nx /= nl; ny /= nl; nz /= nl;
 
-  const effDepth = Math.min(depth, ridgeLen * 0.28);
+  const effDepth = Math.min(depth, ridgeLen * 0.06);
   const wNip = (nx * vx + ny * vy + nz * vz) - effDepth;
   slot(rowIdx, PLANES_AT + slotIdx, nx, ny, nz, wNip);
   return true;
@@ -1058,28 +1067,47 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
     const tableFrac = Math.max(0.68, 1.12 - 0.58 * dynChamfer);
     crystalPlane(rowIdx, 17, 0, 1, 0, L * tableFrac);
 
-    // Slots 18 & 19: Literal 3D geometric corner-nip half-space planes (as if crystal corners were dropped/chipped)
+    // Slots 18..20: Literal 3D geometric corner-nip half-space planes (as if crystal corners were dropped/chipped)
     const edgeChipsVal = P.edgeChips ? Math.max(0, Math.min(1, Number(P.edgeChips.value))) : 0.28;
     const rc = rMax / Math.cos(Math.PI / Math.max(3, sSym));
     crystalPlane(rowIdx, 18, 0, 1, 0, L * 12 + r * 12);
     crystalPlane(rowIdx, 19, 0, 1, 0, L * 12 + r * 12);
+    crystalPlane(rowIdx, 20, 0, 1, 0, L * 12 + r * 12);
     if (edgeChipsVal > 0.01) {
+      // Shoulder corner normal MUST have cVert between prism (0) and crown (cosNT) so it only nips the shoulder vertex!
+      const shVert1 = Math.max(0.08, Math.min(0.65, cosNT * 0.52));
+      const shHoriz1 = Math.sqrt(Math.max(0.1, 1 - shVert1 * shVert1));
+      const shVert2 = Math.max(0.08, Math.min(0.65, cosNT * 0.58));
+      const shHoriz2 = Math.sqrt(Math.max(0.1, 1 - shVert2 * shVert2));
+
       const nipRoll1 = ((node.uid * 37 + 7) % 19) / 19;
-      const nipW1 = smooth01(Math.max(0, Math.min(1, (edgeChipsVal * 1.85 - nipRoll1 * 0.45) / 0.35)));
+      const nipW1 = smooth01(Math.max(0, Math.min(1, (edgeChipsVal * 2.1 - nipRoll1 * 0.35) / 0.35)));
+      const k0 = Math.floor((node.uid * 5 + 0) % nSym);
+      const k1 = (k0 + 1) % nSym;
       if (nipW1 > 1e-3) {
-        const k0 = Math.floor((node.uid * 7 + 1) % nSym);
-        const k1 = (k0 + 1) % nSym;
-        const nipDepth1 = r * (0.09 + 0.19 * edgeChipsVal) * nipW1;
-        writeCornerNipPlane(rowIdx, 18, k0, k1, nipDepth1, 0.82, 1.08, 0.92);
+        const nipDepth1 = r * (0.028 + 0.055 * edgeChipsVal) * nipW1;
+        writeCornerNipPlane(rowIdx, 18, k0, k1, k0, k1, shHoriz1, shVert1, nipDepth1, 0.85, 1.15);
       }
 
       const nipRoll2 = ((node.uid * 53 + 3) % 23) / 23;
-      const nipW2 = smooth01(Math.max(0, Math.min(1, (edgeChipsVal * 1.65 - nipRoll2 * 0.55) / 0.35)));
+      const nipW2 = smooth01(Math.max(0, Math.min(1, (edgeChipsVal * 1.9 - nipRoll2 * 0.45) / 0.35)));
       if (nipW2 > 1e-3) {
-        const c0 = 8 + Math.floor((node.uid * 11 + 3) % nSym);
-        const c1 = 8 + ((c0 - 8 + 1) % nSym);
-        const nipDepth2 = r * (0.08 + 0.17 * edgeChipsVal) * nipW2;
-        writeCornerNipPlane(rowIdx, 19, c0, c1, nipDepth2, 0.95, 0.78, 0.88);
+        const k2 = (k0 + Math.max(1, Math.floor(nSym / 2))) % nSym;
+        const k3 = (k2 + 1) % nSym;
+        const nipDepth2 = r * (0.025 + 0.050 * edgeChipsVal) * nipW2;
+        writeCornerNipPlane(rowIdx, 19, k2, k3, k2, k3, shHoriz2, shVert2, nipDepth2, 1.12, 0.88);
+      }
+
+      // Tip corner normal has cVert slightly above cosNT to nip a tiny asymmetric chip right at the apex/table corner
+      const tipVert = Math.min(0.94, cosNT + (1.0 - cosNT) * 0.45);
+      const tipHoriz = Math.sqrt(Math.max(0.05, 1 - tipVert * tipVert));
+      const nipRoll3 = ((node.uid * 29 + 5) % 17) / 17;
+      const nipW3 = smooth01(Math.max(0, Math.min(1, (edgeChipsVal * 1.85 - nipRoll3 * 0.45) / 0.35)));
+      if (nipW3 > 1e-3) {
+        const kt0 = (k0 + 1) % nSym;
+        const kt1 = (kt0 + 1) % nSym;
+        const nipDepth3 = r * (0.020 + 0.042 * edgeChipsVal) * nipW3;
+        writeCornerNipPlane(rowIdx, 20, 8 + kt0, 8 + kt1, kt0, kt1, tipHoriz, tipVert, nipDepth3, 0.90, 1.10);
       }
     }
 
