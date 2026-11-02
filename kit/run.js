@@ -18,6 +18,7 @@ const NON_MORPH_KEYS = new Set([
   'defaultZoom', 'distance', 'fov', 'tilt', 'spin', 'spinStart', 'sway', 'swaySpeed',
   'evolve', 'evolveSpeed', 'morphPresets', 'morphTime', 'autoGrow', 'growth', 'growSpeed',
   'graduallyShift', 'complementaryBg', 'hueShift', 'studioEdge',
+  'mirrorMode', 'mirrorScale', 'mirrorStrength', 'mirrorComplement', 'occlusionStyle', 'occlusion',
   'seed', 'filmFps', 'fireSamples', 'bounces', 'depth', 'bloom', 'faceGlare',
   ...SOUND_PARAM_KEYS,
 ]);
@@ -286,6 +287,9 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
   resetEvolution(P, { startFromSeed: !capture && !sp.has('growth') && !!P.evolve?.value });
   resetMorphFromPreset(store.preset || standardPresetNames[0] || 'Amethyst Cathedral');
 
+  let occlusionDriftTime = 0;
+  let occlusionManualHold = 0;
+
   function doRandomize(seconds = 18.0) {
     if (!randomize) return;
     const dur = typeof seconds === 'number' && Number.isFinite(seconds) ? seconds : 18.0;
@@ -293,9 +297,6 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
     const fromSnap = {};
     for (const p of store.params) fromSnap[p.key] = p.value;
     const targetValues = store.randomize(randomize, dur);
-    if (!P.evolve?.value && dur <= 0) {
-      resetEvolution(P, { startFromSeed: false });
-    }
     prepareMorphStage('Randomized', standardPresetNames.length, 4.0);
     syncPageColour();
     panel.syncAll();
@@ -439,9 +440,6 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
     const own = !!instance?.morph;
     store.applyPreset(name, s, !own && s > 0);
     if (own && s > 0) instance.morph(s, name);
-    if (!evolveOn) {
-      resetEvolution(P, { startFromSeed: false });
-    }
     resetMorphFromPreset(name);
     syncPageColour();
     syncHudButtons();
@@ -468,6 +466,15 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
         syncSoundFromParams('reset');
       } else if (changedKey && SOUND_PARAM_KEYS.has(changedKey)) {
         syncSoundFromParams(changedKey);
+      } else if (changedKey === 'occlusionStyle' && P.occlusion) {
+        occlusionManualHold = 0;
+        const st = String(P.occlusionStyle?.value || 'Auto drift (1/3 time)');
+        if (st === 'Always on (Massive)') store.setValue(P.occlusion, 0.92);
+        else if (st === 'Subtle') store.setValue(P.occlusion, 0.38);
+        else if (st === 'Off') store.setValue(P.occlusion, 0.0);
+        panel.syncAll();
+      } else if (changedKey === 'occlusion') {
+        occlusionManualHold = 30.0;
       } else if (changedKey) {
         cluster.applyManualParam?.(changedKey, P);
         if (P[changedKey] && morphState.fromMap[changedKey] !== undefined) {
@@ -763,6 +770,32 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
     if (dt > 0) {
       stepEvolution(P, dt, canvas.clientWidth || window.innerWidth, canvas.clientHeight || window.innerHeight);
       sound.tick(dt);
+      if (P.occlusion && P.occlusionStyle) {
+        const occStyle = String(P.occlusionStyle.value || 'Auto drift (1/3 time)');
+        if (occlusionManualHold > 0) {
+          occlusionManualHold = Math.max(0, occlusionManualHold - dt);
+        } else if (occStyle === 'Auto drift (1/3 time)' && P.evolve?.value) {
+          occlusionDriftTime += dt;
+          // 72-second cycle: ~2/3 of the time (46s) at 0.0, ~1/3 of the time (26s) drifting smoothly into massive abstract voids (0.92) and back
+          const cyc = occlusionDriftTime % 72.0;
+          let targetOcc = 0.0;
+          if (cyc >= 46.0 && cyc < 54.0) {
+            const u = (cyc - 46.0) / 8.0;
+            targetOcc = 0.92 * (0.5 - 0.5 * Math.cos(Math.PI * u));
+          } else if (cyc >= 54.0 && cyc < 64.0) {
+            targetOcc = 0.92 + 0.06 * Math.sin((cyc - 54.0) * 0.62);
+          } else if (cyc >= 64.0) {
+            const u = (cyc - 64.0) / 8.0;
+            targetOcc = 0.92 * (0.5 + 0.5 * Math.cos(Math.PI * u));
+          }
+          const curOcc = Number(P.occlusion.value) || 0;
+          if (Math.abs(targetOcc - curOcc) > 1e-3) {
+            store.setSmooth(P.occlusion, Number(targetOcc.toFixed(3)));
+            P.occlusion.base = P.occlusion.value;
+            needsUiSync = true;
+          }
+        }
+      }
     }
 
     if (state !== 'idle' || needsUiSync) {

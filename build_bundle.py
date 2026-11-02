@@ -76,16 +76,6 @@ MODULES = [
     ),
     ("manifest", "manifest.js", [], [], "__default_manifest"),
     (
-        "shader",
-        "shader.js",
-        [
-            "const { FILM_GLSL } = __mod_film;",
-            "const { cluster, CRYSTAL_PLANES, MAX_CRYSTALS, PLANES_AT, ROW_W, ROWS } = __mod_cluster;",
-        ],
-        [],
-        "__default_shader",
-    ),
-    (
         "params",
         "params.js",
         [
@@ -94,8 +84,19 @@ MODULES = [
             "const { okhslToHex } = __mod_okhsl;",
             "const { ENSO_TRACK_NAMES, ENSO_REVERB_MODES, ENSO_DRONE_MODES, ENSO_WASH_INSTRUMENTS } = __mod_sound;",
         ],
-        ["HABITS", "presets", "randomize"],
+        ["HABITS", "MIRROR_MODES", "presets", "randomize"],
         "__default_params",
+    ),
+    (
+        "shader",
+        "shader.js",
+        [
+            "const { FILM_GLSL } = __mod_film;",
+            "const { cluster, CRYSTAL_PLANES, MAX_CRYSTALS, PLANES_AT, ROW_W, ROWS } = __mod_cluster;",
+            "const { MIRROR_MODES } = __mod_params;",
+        ],
+        [],
+        "__default_shader",
     ),
     (
         "sketch",

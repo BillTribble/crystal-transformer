@@ -17,6 +17,24 @@ export const HABITS = [
   'Dendritic Starburst',
 ];
 
+export const MIRROR_MODES = [
+  'Plain (None)',
+  'Infinite Planes (Above & Below)',
+  'Concave Bowl',
+  'Ripples (Liquid Pool)',
+  'Triangle Kaleidoscope (Geodesic Dome)',
+  'Kaleidoscope Hex Tunnel',
+  'Faceted Geode Dome',
+  'Fluted Columns',
+  'Concentric Fresnel Rings',
+  'Shattered Mirror Mosaic',
+  'Hyperbolic Saddle',
+  'Twin Corner V-Mirror',
+  'Spiral Vortex Dish',
+  'Brushed Anisotropic Metal',
+  'Infinity Chamber',
+];
+
 export default [
   playback({ timeScale: 1.5, maxDpr: 1, maxFps: 30 }, {
     quality: true,
@@ -117,8 +135,9 @@ export default [
       { key: 'striationScale', label: 'Ridge spacing', value: 140, min: 20, max: 400, step: 1, desc: 'Ridges per unit of length.', when: { key: 'striations', not: [0] } },
       { key: 'frostShare', label: 'Frosted faces', value: 0.55, default: 0.55, min: 0, max: 1, step: 0.01, desc: 'Share of faces that are etched with grainy micro-crystalline mineral texture rather than mirror-polished.' },
       { key: 'frost', label: 'Frost', value: 0.36, default: 0.36, min: 0, max: 1, step: 0.01, desc: 'Intensity of the grainy micro-crystalline surface etching on frosted faces.', when: { key: 'frostShare', not: [0] } },
-      { key: 'edgeChips', label: 'Edge chipping', value: 0.28, default: 0.28, min: 0, max: 1, step: 0.01, desc: 'Tiny, occasional crystal-locked 3D nicks and micro-fractures along crystal edges and corners.' },
-      { key: 'occlusion', label: 'Occlusion voids', value: 0, default: 0, min: 0, max: 1, step: 0.01, desc: 'Invisible 3D displacing objects that carve smooth concave architectural gaps and hollows out of the crystals.' },
+      { key: 'edgeChips', label: 'Edge chipping', value: 0.28, default: 0.28, min: 0, max: 1, step: 0.01, desc: 'Tiny, crystal-locked 3D nicks and elongated conchoidal flake scars concentrated around crystal corners and edges.' },
+      { key: 'occlusionStyle', label: 'Occlusion mode', type: 'select', options: ['Auto drift (1/3 time)', 'Always on (Massive)', 'Subtle', 'Off'], value: 'Auto drift (1/3 time)', default: 'Auto drift (1/3 time)', randomize: false, noPreset: true, uniform: false, desc: 'Auto drift smoothly brings the massive abstract occlusion voids in and out ~1/3 of the time independent of preset; or lock Always on (Massive), Subtle, or Off.' },
+      { key: 'occlusion', label: 'Occlusion voids', value: 0, default: 0, min: 0, max: 1, step: 0.01, randomize: false, noPreset: true, desc: 'Massive abstract invisible 3D displacing objects that carve sweeping concave architectural gaps and hollows out of the crystals.' },
       { key: 'edgeWear', label: 'Edge wear', value: 0.55, min: 0, max: 1, step: 0.01, desc: 'Chips and bruising along facet edges.' },
       { key: 'edgeWidth', label: 'Wear width', value: 0.05, min: 0.005, max: 0.2, step: 0.001, desc: 'How far the wear reaches from an edge.', when: { key: 'edgeWear', not: [0] } },
     ],
@@ -146,6 +165,10 @@ export default [
   {
     group: 'Studio',
     params: [
+      { key: 'mirrorMode', label: 'Mirrored background', type: 'select', options: MIRROR_MODES, value: 'Plain (None)', default: 'Plain (None)', randomize: false, noPreset: true, uniform: false, desc: 'Analytical GPU mirrored background mode: Plain (default), Infinite Planes (Above & Below), Concave Bowl, Ripples, Triangle Kaleidoscope (Geodesic Dome), plus 10 creative mirror variations.' },
+      { key: 'mirrorScale', label: 'Mirror scale', value: 1.0, default: 1.0, min: 0.25, max: 4.0, step: 0.05, randomize: false, noPreset: true, desc: 'Scales the mirror geometry (plane spacing, bowl curvature, ripple frequency, geodesic dome triangle density, column width, mosaic shard size).', when: { key: 'mirrorMode', not: ['Plain (None)'] } },
+      { key: 'mirrorStrength', label: 'Mirror reflectivity', value: 0.65, default: 0.65, min: 0, max: 1, step: 0.01, randomize: false, noPreset: true, desc: 'Reflectivity of the mirrored background when a mirror mode is active.', when: { key: 'mirrorMode', not: ['Plain (None)'] } },
+      { key: 'mirrorComplement', label: 'Complementary mirror tint', value: 0.0, default: 0.0, min: 0, max: 1, step: 0.01, randomize: false, noPreset: true, desc: 'Blends the 180° complementary color of the studio background into the mirrored background and its reflections.', when: { key: 'mirrorMode', not: ['Plain (None)'] } },
       { key: 'graduallyShift', label: 'Complementary bg', type: 'bool', value: true, default: true, uniform: false, desc: 'Always shift the background color to the opposite (180° complementary) hue of the main crystal color.' },
       { key: 'hueShift', label: 'Hue shift °', value: 180, default: 180, min: 0, max: 360, step: 1, uniform: false, desc: 'Backdrop hue relative to the stone\'s (0 or 360 = same hue, 180 = opposite).' },
       { key: 'backdropSat', label: 'Backdrop sat.', value: 0.55, default: 0.55, min: 0, max: 1, step: 0.01, uniform: false, desc: 'Saturation of the backdrop glow.' },

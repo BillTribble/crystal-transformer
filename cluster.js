@@ -649,9 +649,9 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
   let weightedSumX = 0, weightedSumY = 0, weightedSumZ = 0, weightTotal = 0;
 
   const rawEffPrimaryCount = Math.max(1.8, floatC * (1.0 - 0.38 * twinShare));
-  const nodeDt = evolveOn ? Math.max(0, Math.min(cluster.pendingNodeDt || 0, 10)) : 0;
+  const nodeDt = Math.max(0, Math.min(cluster.pendingNodeDt || 0, 10));
   cluster.pendingNodeDt = 0;
-  if (!Number.isFinite(cluster.smoothEffPrimaryCount) || !evolveOn) {
+  if (!Number.isFinite(cluster.smoothEffPrimaryCount)) {
     cluster.smoothEffPrimaryCount = rawEffPrimaryCount;
   } else if (nodeDt > 0) {
     cluster.smoothEffPrimaryCount += (rawEffPrimaryCount - cluster.smoothEffPrimaryCount) * (1 - Math.exp(-0.22 * nodeDt));
@@ -670,7 +670,7 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
     // crystals bud and shrink very gradually across preset changes.
     const rawPresence = smooth01(Math.max(0.0, Math.min(1.0, floatC - i)));
     const rawTwinW = i < 2 ? 0.0 : smooth01(Math.max(0.0, Math.min(1.0, (twinShare - node.twinRoll + 0.44) / 0.88)));
-    if (!node.smoothInit || !evolveOn) {
+    if (!node.smoothInit) {
       node.smoothPresence = rawPresence;
       node.velPresence = 0;
       node.smoothTwinW = rawTwinW;
@@ -704,8 +704,8 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
       }
     }
 
-    const presence = evolveOn ? node.smoothPresence : rawPresence;
-    const twinW = evolveOn ? node.smoothTwinW : rawTwinW;
+    const presence = node.smoothPresence;
+    const twinW = node.smoothTwinW;
     node.presence = presence;
     node.twinW = twinW;
     node.isSecondary = twinW >= 0.5;
@@ -1081,7 +1081,7 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
     const rawChip2 = smooth01(Math.max(0, Math.min(1, (edgeChipsVal * 1.7 - nipRoll2 * 0.42 + 0.12) / 0.55)));
     const rawChip3 = smooth01(Math.max(0, Math.min(1, (edgeChipsVal * 1.6 - nipRoll3 * 0.42 + 0.12) / 0.55)));
 
-    if (!Number.isFinite(node.smoothChip1) || !evolveOn) {
+    if (!Number.isFinite(node.smoothChip1)) {
       node.smoothChip1 = rawChip1;
       node.smoothChip2 = rawChip2;
       node.smoothChip3 = rawChip3;
@@ -1121,7 +1121,7 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
     writeCornerNipPlane(rowIdx, 20, 8 + kt0, 8 + kt1, kt0, kt1, tipHoriz, tipVert, nipDepth3, 0.90, 1.10);
 
     const half = 0.5 * L;
-    const nodeAlpha = Math.max(0.0, Math.min(1.0, node.alpha * smooth01(Math.min(1.0, presence / 0.12))));
+    const nodeAlpha = Math.max(0.0, Math.min(1.0, node.alpha * smooth01(Math.min(1.0, presence / 0.55))));
     const scx = root[0] + ax[0] * half;
     const scy = root[1] + ax[1] * half;
     const scz = root[2] + ax[2] * half;
