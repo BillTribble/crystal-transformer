@@ -12,109 +12,109 @@
       "id": "piano_c2",
       "voice": "piano",
       "midi": 36,
-      "durationSec": 6.2,
+      "durationSec": 12,
       "sampleRate": 48000,
       "bitrateKbps": 320,
       "ogg": "samples/piano_c2.ogg",
       "mp3": "samples/piano_c2.mp3",
-      "oggBytes": 43073,
-      "mp3Bytes": 250605
+      "oggBytes": 93538,
+      "mp3Bytes": 481965
     },
     {
       "id": "piano_fs2",
       "voice": "piano",
       "midi": 42,
-      "durationSec": 6.2,
+      "durationSec": 12,
       "sampleRate": 48000,
       "bitrateKbps": 320,
       "ogg": "samples/piano_fs2.ogg",
       "mp3": "samples/piano_fs2.mp3",
-      "oggBytes": 43137,
-      "mp3Bytes": 250605
+      "oggBytes": 94030,
+      "mp3Bytes": 481965
     },
     {
       "id": "piano_c3",
       "voice": "piano",
       "midi": 48,
-      "durationSec": 6,
+      "durationSec": 11.8,
       "sampleRate": 48000,
       "bitrateKbps": 320,
       "ogg": "samples/piano_c3.ogg",
       "mp3": "samples/piano_c3.mp3",
-      "oggBytes": 40958,
-      "mp3Bytes": 241965
+      "oggBytes": 89509,
+      "mp3Bytes": 474285
     },
     {
       "id": "piano_fs3",
       "voice": "piano",
       "midi": 54,
-      "durationSec": 6,
+      "durationSec": 11.8,
       "sampleRate": 48000,
       "bitrateKbps": 320,
       "ogg": "samples/piano_fs3.ogg",
       "mp3": "samples/piano_fs3.mp3",
-      "oggBytes": 41083,
-      "mp3Bytes": 241965
+      "oggBytes": 89561,
+      "mp3Bytes": 474285
     },
     {
       "id": "piano_c4",
       "voice": "piano",
       "midi": 60,
-      "durationSec": 5.8,
+      "durationSec": 11.6,
       "sampleRate": 48000,
       "bitrateKbps": 320,
       "ogg": "samples/piano_c4.ogg",
       "mp3": "samples/piano_c4.mp3",
-      "oggBytes": 38947,
-      "mp3Bytes": 234285
+      "oggBytes": 88127,
+      "mp3Bytes": 466605
     },
     {
       "id": "piano_fs4",
       "voice": "piano",
       "midi": 66,
-      "durationSec": 5.6,
+      "durationSec": 11.5,
       "sampleRate": 48000,
       "bitrateKbps": 320,
       "ogg": "samples/piano_fs4.ogg",
       "mp3": "samples/piano_fs4.mp3",
-      "oggBytes": 39872,
-      "mp3Bytes": 226605
+      "oggBytes": 87799,
+      "mp3Bytes": 462765
     },
     {
       "id": "piano_c5",
       "voice": "piano",
       "midi": 72,
-      "durationSec": 5.4,
+      "durationSec": 11.4,
       "sampleRate": 48000,
       "bitrateKbps": 320,
       "ogg": "samples/piano_c5.ogg",
       "mp3": "samples/piano_c5.mp3",
-      "oggBytes": 38455,
-      "mp3Bytes": 217965
+      "oggBytes": 89106,
+      "mp3Bytes": 457965
     },
     {
       "id": "piano_fs5",
       "voice": "piano",
       "midi": 78,
-      "durationSec": 5.2,
+      "durationSec": 11.2,
       "sampleRate": 48000,
       "bitrateKbps": 320,
       "ogg": "samples/piano_fs5.ogg",
       "mp3": "samples/piano_fs5.mp3",
-      "oggBytes": 36942,
-      "mp3Bytes": 210285
+      "oggBytes": 88648,
+      "mp3Bytes": 450285
     },
     {
       "id": "piano_c6",
       "voice": "piano",
       "midi": 84,
-      "durationSec": 5,
+      "durationSec": 11,
       "sampleRate": 48000,
       "bitrateKbps": 320,
       "ogg": "samples/piano_c6.ogg",
       "mp3": "samples/piano_c6.mp3",
-      "oggBytes": 38313,
-      "mp3Bytes": 202605
+      "oggBytes": 89390,
+      "mp3Bytes": 442605
     },
     {
       "id": "pad_c3",

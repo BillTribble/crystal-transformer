@@ -20,7 +20,7 @@ function noSuggestions(input) {
   input.setAttribute('autocapitalize', 'off');
 }
 
-export function buildPanel({ slug, store, onEdited, presets, onPreset, onRandomize }) {
+export function buildPanel({ slug, store, onEdited, presets, onPreset, onRandomize, onSkipTrack }) {
   const controls = document.getElementById('controls');
   const copyBtn = document.getElementById('copy');
   const shareBtn = document.getElementById('share-url');
@@ -319,6 +319,31 @@ export function buildPanel({ slug, store, onEdited, presets, onPreset, onRandomi
       const rowWrap = buildRow(p);
       det.appendChild(rowWrap);
       groupRows.push(rows[rows.length - 1]);
+      if (p.key === 'soundTrack') {
+        const nowRow = el('div', 'row row-track-now');
+        nowRow.id = 'current-track-row';
+        const nowLbl = el('span', 'lbl', 'Current track');
+        const nowName = el('span', 'current-track-name', String(p.value || ''));
+        nowName.id = 'current-track-name';
+        nowName.title = String(p.value || '');
+        const skipBtn = el('button', 'mini-btn skip-track-btn', 'Next track →');
+        skipBtn.type = 'button';
+        skipBtn.id = 'skip-track-btn';
+        skipBtn.title = 'Skip forward to the next Enso ambient track';
+        skipBtn.addEventListener('click', () => {
+          onSkipTrack?.();
+          nowName.textContent = String(p.value || '');
+          nowName.title = String(p.value || '');
+        });
+        nowRow.append(nowLbl, nowName, skipBtn);
+        det.appendChild(nowRow);
+        const origSync = rows[rows.length - 1].sync;
+        rows[rows.length - 1].sync = () => {
+          origSync();
+          nowName.textContent = String(p.value || '');
+          nowName.title = String(p.value || '');
+        };
+      }
     }
     controls.appendChild(det);
     groupEntries.push({ group, det, rows: groupRows });

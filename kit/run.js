@@ -15,7 +15,7 @@ const NON_MORPH_KEYS = new Set([
   'evolve', 'evolveSpeed', 'morphPresets', 'morphTime', 'autoGrow', 'growth', 'growSpeed',
   'graduallyShift', 'complementaryBg', 'hueShift', 'studioEdge',
   'seed', 'filmFps', 'fireSamples', 'bounces', 'depth', 'bloom', 'faceGlare',
-  'sound', 'soundVolume', 'soundTrack', 'soundRotate', 'soundReverbMode',
+  'sound', 'soundVolume', 'washLevel', 'soundTrack', 'soundRotate', 'soundReverbMode',
 ]);
 
 export function computeDeviceDpr() {
@@ -321,6 +321,7 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
   const soundBtn = document.getElementById('sound-btn');
   const soundIconOn = document.getElementById('sound-icon-on');
   const soundIconOff = document.getElementById('sound-icon-off');
+  const unmuteCenterBtn = document.getElementById('unmute-center-btn');
 
   const sound = createEnsoSound({
     onTrackChange(nextLabel) {
@@ -337,8 +338,17 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
     },
   });
 
+  // Randomize the Enso track that the app starts with on every page load
+  if (P.soundTrack && !sp.has('soundTrack')) {
+    const startLabel = sound.currentTrack.label;
+    store.setValue(P.soundTrack, startLabel);
+    P.soundTrack.default = startLabel;
+    P.soundTrack.base = startLabel;
+  }
+
   function syncSoundFromParams(changedKey) {
     if (P.soundVolume) sound.setVolume(P.soundVolume.value);
+    if (P.washLevel) sound.setWashLevel(P.washLevel.value);
     if (P.soundRotate) sound.setAutoRotate(P.soundRotate.value);
     if (P.soundReverbMode) sound.setReverbMode(P.soundReverbMode.value);
     if (P.soundTrack && (changedKey === 'soundTrack' || !changedKey)) {
@@ -394,6 +404,7 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
     presets,
     onPreset: (name) => applyPreset(name),
     onRandomize: doRandomize,
+    onSkipTrack: () => sound.nextTrack(1),
     onEdited(changedKey) {
       if (changedKey === 'defaultZoom') {
         syncDefaultZoomToCamera(true);
@@ -402,7 +413,7 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
         resetEvolution(P, { startFromSeed: !!P.evolve?.value });
         resetMorphFromPreset(store.preset || standardPresetNames[0]);
         syncSoundFromParams('reset');
-      } else if (changedKey && changedKey.startsWith('sound')) {
+      } else if (changedKey && (changedKey.startsWith('sound') || changedKey === 'washLevel')) {
         syncSoundFromParams(changedKey);
       } else if (changedKey) {
         cluster.applyManualParam?.(changedKey, P);
@@ -448,9 +459,17 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
       if (soundIconOn) soundIconOn.style.display = isPlaying ? 'block' : 'none';
       if (soundIconOff) soundIconOff.style.display = isPlaying ? 'none' : 'block';
     }
+    if (unmuteCenterBtn) {
+      const hidePrompt = capture || !!sound.enabled;
+      unmuteCenterBtn.classList.toggle('is-unmuted', hidePrompt);
+      unmuteCenterBtn.setAttribute('aria-hidden', String(hidePrompt));
+    }
   }
 
   soundBtn?.addEventListener('click', toggleSound);
+  unmuteCenterBtn?.addEventListener('click', () => {
+    if (!sound.enabled) toggleSound();
+  });
   growBtn?.addEventListener('click', growMore);
   randHudBtn?.addEventListener('click', () => doRandomize(10.0));
   syncSoundFromParams();
@@ -746,7 +765,7 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
     set: (key, value) => {
       if (P[key]) {
         store.setValue(P[key], value);
-        if (key.startsWith('sound')) {
+        if (key.startsWith('sound') || key === 'washLevel') {
           syncSoundFromParams(key);
         } else {
           cluster.applyManualParam?.(key, P);

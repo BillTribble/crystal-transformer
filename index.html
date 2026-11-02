@@ -110,6 +110,44 @@
     #shot:disabled { opacity: 0.3; cursor: progress; }
     #cog[aria-expanded="true"] { opacity: 1; transform: rotate(60deg); background: rgba(255, 255, 255, 0.18); }
 
+    /* Top startup Unmute button */
+    #unmute-center-btn {
+      position: fixed; top: max(14px, env(safe-area-inset-top)); left: 50%; transform: translateX(-50%);
+      z-index: 25; height: 38px; padding: 0 18px;
+      display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+      background: rgba(10, 10, 14, 0.56); border: 1px solid rgba(255, 255, 255, 0.24);
+      border-radius: 19px; color: var(--ink); font: 500 12px/1 var(--mono); letter-spacing: .03em;
+      backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+      box-shadow: 0 6px 24px rgba(0, 0, 0, 0.40);
+      cursor: pointer; transition: opacity .35s ease, background .2s, border-color .2s;
+    }
+    .row-track-now {
+      grid-template-columns: 92px 1fr auto !important;
+      align-items: center;
+      gap: 6px;
+    }
+    .current-track-name {
+      color: var(--ink);
+      font: 500 10.5px/1.2 var(--mono);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .skip-track-btn {
+      padding: 4px 8px !important;
+      white-space: nowrap;
+      flex: none;
+    }
+    #unmute-center-btn:hover {
+      background: rgba(255, 255, 255, 0.16); border-color: rgba(255, 255, 255, 0.48);
+      transform: translateX(-50%) scale(1.03);
+    }
+    #unmute-center-btn svg { width: 16px; height: 16px; display: block; flex: none; }
+    #unmute-center-btn.is-unmuted, #unmute-center-btn[hidden] {
+      opacity: 0 !important; pointer-events: none !important;
+      transform: translateX(-50%) scale(0.94);
+    }
+
     @media (min-width: 700px) {
       body[data-pane="open"] .disc { background: rgba(255, 255, 255, 0.09); }
       body[data-pane="open"] .disc.active { background: rgba(255, 255, 255, 0.22); }
@@ -152,6 +190,17 @@
       #rand-btn { right: calc(max(14px, env(safe-area-inset-right)) + 44px); }
       #grow-btn { right: calc(max(14px, env(safe-area-inset-right)) + 88px); }
       #sound-btn { right: calc(max(14px, env(safe-area-inset-right)) + 132px); }
+      #unmute-center-btn {
+        top: calc(max(14px, env(safe-area-inset-top)) + 46px);
+        left: max(14px, env(safe-area-inset-left));
+        transform: none;
+      }
+      #unmute-center-btn:hover {
+        transform: scale(1.03);
+      }
+      #unmute-center-btn.is-unmuted, #unmute-center-btn[hidden] {
+        transform: scale(0.94);
+      }
     }
 
     .head {
@@ -331,6 +380,11 @@
     <button id="hud-preset-name" type="button" title="Open settings & presets"><span id="preset-name">Amethyst Cathedral</span></button>
     <button id="next-preset" type="button" title="Next preset" aria-label="Next preset">›</button>
   </div>
+
+  <button id="unmute-center-btn" type="button" aria-label="Unmute ambient sound" title="Unmute Enso ambient soundscape (M)">
+    <svg viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M163.51,24.81a8,8,0,0,0-8.42.88L77.25,80H32A16,16,0,0,0,16,96v64a16,16,0,0,0,16,16H77.25l77.84,54.31A8,8,0,0,0,168,224V32A8,8,0,0,0,163.51,24.81ZM152,199.11,84.75,152H32V104H84.75L152,56.89Zm56-71.11a40,40,0,0,1-11.72,28.28,8,8,0,0,1-11.31-11.31,24,24,0,0,0,0-33.94,8,8,0,0,1,11.31-11.31A40,40,0,0,1,208,128Zm32,0a72,72,0,0,1-21.09,50.91,8,8,0,0,1-11.31-11.31,56,56,0,0,0,0-79.2,8,8,0,0,1,11.31-11.31A72,72,0,0,1,240,128Z"/></svg>
+    <span>Unmute</span>
+  </button>
 
   <button id="sound-btn" class="disc" type="button" aria-label="Toggle ambient sound (M)" aria-pressed="false" title="Toggle Enso ambient soundscape (M)">
     <svg id="sound-icon-off" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true"><path d="M168,32V224a8,8,0,0,1-12.91,6.31L77.25,176H32a16,16,0,0,1-16-16V96A16,16,0,0,1,32,80H77.25l77.84-54.31A8,8,0,0,1,168,32Zm-16,24.89L84.75,104H32v48H84.75L152,199.11ZM245.66,101.66,221.31,126l24.35,24.34a8,8,0,0,1-11.32,11.32L210,137.31l-24.34,24.35a8,8,0,0,1-11.32-11.32L198.69,126,174.34,101.66a8,8,0,0,1,11.32-11.32L210,114.69l24.34-24.35a8,8,0,0,1,11.32,11.32Z"/></svg>
@@ -1796,7 +1850,7 @@ function noSuggestions(input) {
   input.setAttribute('autocorrect', 'off');
   input.setAttribute('autocapitalize', 'off');
 }
-function buildPanel({ slug, store, onEdited, presets, onPreset, onRandomize }) {
+function buildPanel({ slug, store, onEdited, presets, onPreset, onRandomize, onSkipTrack }) {
   const controls = document.getElementById('controls');
   const copyBtn = document.getElementById('copy');
   const shareBtn = document.getElementById('share-url');
@@ -2095,6 +2149,31 @@ function buildPanel({ slug, store, onEdited, presets, onPreset, onRandomize }) {
       const rowWrap = buildRow(p);
       det.appendChild(rowWrap);
       groupRows.push(rows[rows.length - 1]);
+      if (p.key === 'soundTrack') {
+        const nowRow = el('div', 'row row-track-now');
+        nowRow.id = 'current-track-row';
+        const nowLbl = el('span', 'lbl', 'Current track');
+        const nowName = el('span', 'current-track-name', String(p.value || ''));
+        nowName.id = 'current-track-name';
+        nowName.title = String(p.value || '');
+        const skipBtn = el('button', 'mini-btn skip-track-btn', 'Next track →');
+        skipBtn.type = 'button';
+        skipBtn.id = 'skip-track-btn';
+        skipBtn.title = 'Skip forward to the next Enso ambient track';
+        skipBtn.addEventListener('click', () => {
+          onSkipTrack?.();
+          nowName.textContent = String(p.value || '');
+          nowName.title = String(p.value || '');
+        });
+        nowRow.append(nowLbl, nowName, skipBtn);
+        det.appendChild(nowRow);
+        const origSync = rows[rows.length - 1].sync;
+        rows[rows.length - 1].sync = () => {
+          origSync();
+          nowName.textContent = String(p.value || '');
+          nowName.title = String(p.value || '');
+        };
+      }
     }
     controls.appendChild(det);
     groupEntries.push({ group, det, rows: groupRows });
@@ -2390,12 +2469,24 @@ function centeredPlane(row, k, L, lx, ly, lz, offsetFromMid) {
 }
 
 function buildSideBasis(twistAngle) {
-  let px = -ax[2], pz = ax[0], pl = Math.hypot(px, pz);
-  if (pl < 1e-4) { px = 1; pz = 0; pl = 1; }
-  px /= pl; pz /= pl;
-  const qx = ax[1] * pz, qy = ax[2] * px - ax[0] * pz, qz = -ax[1] * px;
+  // Singularity-free quaternion half-angle orthonormal basis around +Y = (0, 1, 0).
+  // Unlike cross([0, 1, 0], ax), which has a pole singularity right at ax = (0, 1, 0)
+  // where upright crystals point (causing a 180-degree azimuth pirouette when a crystal
+  // tilts across vertical), this shortest-arc mapping is C-infinity smooth across +Y.
+  const ax0 = ax[0], ay0 = ax[1], az0 = ax[2];
+  const denom = Math.max(1e-4, 1.0 + ay0);
+  const ux0 = 1.0 - (ax0 * ax0) / denom;
+  const uy0 = -ax0;
+  const uz0 = -(ax0 * az0) / denom;
+  const vx0 = -(ax0 * az0) / denom;
+  const vy0 = -az0;
+  const vz0 = 1.0 - (az0 * az0) / denom;
   const c = Math.cos(twistAngle), s = Math.sin(twistAngle);
-  sx[0] = c * px + s * qx; sx[1] = s * qy; sx[2] = c * pz + s * qz;
+  sx[0] = c * ux0 + s * vx0;
+  sx[1] = c * uy0 + s * vy0;
+  sx[2] = c * uz0 + s * vz0;
+  const sl = Math.hypot(sx[0], sx[1], sx[2]) || 1;
+  sx[0] /= sl; sx[1] /= sl; sx[2] /= sl;
   sz[0] = ax[1] * sx[2] - ax[2] * sx[1];
   sz[1] = ax[2] * sx[0] - ax[0] * sx[2];
   sz[2] = ax[0] * sx[1] - ax[1] * sx[0];
@@ -2466,7 +2557,13 @@ function createInitialCohortNode(i, nBase, nPrimary, parentNode, startFromSeed, 
     parentUid: parentNode ? parentNode.uid : (parentIdx >= 0 ? parentIdx + 1 : -1),
     twinRoll,
     twinW: 0,
+    smoothTwinW: 0,
+    velTwinW: 0,
     presence: 1,
+    smoothPresence: 1,
+    velPresence: 0,
+    smoothInit: false,
+    frameInit: false,
     birthHabit: habit,
     birthSymmetry: symmetry,
     birthNPrimary: nPrimary,
@@ -2731,7 +2828,7 @@ function resetEvolution(P, _opts = {}) {
   }
 }
 function triggerGrowBurst(_P) {
-  cluster.evoBurstVel = Math.min(2.4, (cluster.evoBurstVel || 0) + 0.65);
+  cluster.evoBurstVel = Math.min(0.35, (cluster.evoBurstVel || 0) + 0.14);
   cluster.version++;
 }
 function stepEvolution(P, dt, viewportW = 0, viewportH = 0) {
@@ -2741,6 +2838,7 @@ function stepEvolution(P, dt, viewportW = 0, viewportH = 0) {
 
   const safeDt = Math.max(0, Math.min(Number(dt) || 0, 30));
   cluster.pendingCenterDt = (cluster.pendingCenterDt || 0) + safeDt;
+  cluster.pendingNodeDt = (cluster.pendingNodeDt || 0) + safeDt;
 
   const evolveOn = P?.evolve ? !!P.evolve.value : true;
   if (!evolveOn) {
@@ -2834,23 +2932,72 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
   let minY = Infinity, maxY = -Infinity, maxR2 = 0;
   let weightedSumX = 0, weightedSumY = 0, weightedSumZ = 0, weightTotal = 0;
 
-  const effPrimaryCount = Math.max(1.8, floatC * (1.0 - 0.38 * twinShare));
+  const rawEffPrimaryCount = Math.max(1.8, floatC * (1.0 - 0.38 * twinShare));
+  const nodeDt = evolveOn ? Math.max(0, Math.min(cluster.pendingNodeDt || 0, 10)) : 0;
+  cluster.pendingNodeDt = 0;
+  if (!Number.isFinite(cluster.smoothEffPrimaryCount) || !evolveOn) {
+    cluster.smoothEffPrimaryCount = rawEffPrimaryCount;
+  } else if (nodeDt > 0) {
+    cluster.smoothEffPrimaryCount += (rawEffPrimaryCount - cluster.smoothEffPrimaryCount) * (1 - Math.exp(-0.65 * nodeDt));
+  }
+  const effPrimaryCount = cluster.smoothEffPrimaryCount;
   let activeCount = 0;
 
-  for (let idx = 0; idx < nActive; idx++) {
+  for (let idx = 0; idx < cluster.nodes.length; idx++) {
     if (activeCount >= MAX_CRYSTALS) break;
     const node = cluster.nodes[idx];
     const i = node.cohortIdx;
     const nodeSymmetry = symmetry;
 
-    // Continuous presence factor for crystal idx: smoothly emerges from 0 out of the core
-    // as floatC crosses idx..idx+1, and smoothly shrinks back to 0 before removal.
-    const presence = smooth01(Math.max(0.0, Math.min(1.0, floatC - i)));
+    // Continuous presence & twinW with slow 2nd-order critically-damped spring (omega = 0.65 rad/s,
+    // max velocity <= 0.20/s) so budding crystals and twin branches emerge at the exact same
+    // slow, meditative pace as the rest of the crystal transformation.
+    const rawPresence = idx < nActive ? smooth01(Math.max(0.0, Math.min(1.0, floatC - i))) : 0.0;
+    const rawTwinW = i < 2 ? 0.0 : smooth01(Math.max(0.0, Math.min(1.0, (twinShare - node.twinRoll + 0.44) / 0.88)));
+    if (!node.smoothInit || !evolveOn) {
+      node.smoothPresence = rawPresence;
+      node.velPresence = 0;
+      node.smoothTwinW = rawTwinW;
+      node.velTwinW = 0;
+      node.smoothInit = true;
+    } else if (nodeDt > 0) {
+      let remN = nodeDt;
+      const omegaN = 0.65;
+      const omegaN2 = omegaN * omegaN;
+      const dampN = 2.0 * omegaN;
+      const maxVelN = 0.20;
+      while (remN > 1e-6) {
+        const ndt = Math.min(remN, 0.05);
+        remN -= ndt;
+        node.velPresence += ((rawPresence - node.smoothPresence) * omegaN2 - dampN * node.velPresence) * ndt;
+        if (node.velPresence > maxVelN) node.velPresence = maxVelN;
+        else if (node.velPresence < -maxVelN) node.velPresence = -maxVelN;
+        node.smoothPresence = Math.max(0, Math.min(1, node.smoothPresence + node.velPresence * ndt));
+
+        node.velTwinW += ((rawTwinW - node.smoothTwinW) * omegaN2 - dampN * node.velTwinW) * ndt;
+        if (node.velTwinW > maxVelN) node.velTwinW = maxVelN;
+        else if (node.velTwinW < -maxVelN) node.velTwinW = -maxVelN;
+        node.smoothTwinW = Math.max(0, Math.min(1, node.smoothTwinW + node.velTwinW * ndt));
+      }
+      if (rawPresence <= 1e-4 && node.smoothPresence < 1e-3) {
+        node.smoothPresence = 0;
+        node.velPresence = 0;
+      } else if (rawPresence >= 1 - 1e-4 && node.smoothPresence > 1 - 1e-3) {
+        node.smoothPresence = 1;
+        node.velPresence = 0;
+      }
+    }
+
+    const presence = evolveOn ? node.smoothPresence : rawPresence;
+    const twinW = evolveOn ? node.smoothTwinW : rawTwinW;
     node.presence = presence;
+    node.twinW = twinW;
+    node.isSecondary = twinW >= 0.5;
     if (presence < 1e-3) {
       node.worldL = 0;
       node.worldFullL = 0;
       node.worldR = 0;
+      node.frameInit = false;
       continue;
     }
 
@@ -2885,12 +3032,12 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
     // 1. Compute Primary Root Transform (primRoot, primAx, primBaseL, primBaseR, primTw)
     const rho = i === 0 ? 0.12 * node.uRho : Math.min(1.0, Math.sqrt((i + 0.5 * node.uRho) / effPrimaryCount));
     node.rho = rho;
-    const az = i * GOLDEN + 0.55 * node.uAz + 0.14 * azWave;
+    const az = i * GOLDEN + 0.55 * node.uAz + 0.04 * azWave;
     let lean = fan * Math.min(1, rho + 0.28 * node.uLean * (i > 0 ? 1 : 0.25));
     const smoothAbsTilt = Math.sqrt(tiltWave * tiltWave + 0.01) - 0.1;
     lean = i === 0
-      ? Math.max(0.02, lean * (1 + 0.18 * tiltWave) + 0.10 * fan * smoothAbsTilt)
-      : lean * (1 + 0.18 * tiltWave);
+      ? Math.max(0.02, lean * (1 + 0.08 * tiltWave) + 0.06 * fan * smoothAbsTilt)
+      : lean * (1 + 0.08 * tiltWave);
 
     if (growSideways) {
       if (i > 0) {
@@ -2901,7 +3048,7 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
       lean = lean * (1 - 0.58 * dirProgress);
     }
 
-    const leanAz = az + 0.35 * node.uLeanAz + 0.14 * tiltWave;
+    const leanAz = az + 0.35 * node.uLeanAz + 0.04 * tiltWave;
     primAx[0] = Math.sin(lean) * Math.cos(leanAz);
     primAx[1] = Math.cos(lean);
     primAx[2] = Math.sin(lean) * Math.sin(leanAz);
@@ -2916,7 +3063,7 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
     }
 
     const primBaseR = P.thickness.value * Math.pow(primBaseL, 0.65) * Math.max(0.25, 1 + P.thicknessJitter.value * 0.55 * node.uRadSym) * radMod;
-    const primTw = node.uTwist + 0.22 * w4;
+    const primTw = node.uTwist + 0.03 * w3;
 
     ax[0] = primAx[0]; ax[1] = primAx[1]; ax[2] = primAx[2];
     buildSideBasis(primTw);
@@ -2961,10 +3108,6 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
 
     // 2. Continuous twinShare transition (twinW in [0, 1]): smoothly blends between
     // primary root crystal and secondary twin branch with zero discrete jumps.
-    const twinW = i < 2 ? 0.0 : smooth01(Math.max(0.0, Math.min(1.0, (twinShare - node.twinRoll + 0.18) / 0.36)));
-    node.twinW = twinW;
-    node.isSecondary = twinW >= 0.5;
-
     let baseL = primBaseL;
     let baseR = primBaseR;
     let tw = primTw;
@@ -2974,7 +3117,6 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
         root[k] = primRoot[k];
         ax[k] = primAx[k];
       }
-      buildSideBasis(tw);
     } else {
       const pNode = cluster.nodes[node.parentIdx >= 0 ? node.parentIdx : 0];
       if (pNode && pNode.worldL > 0.005) {
@@ -2995,8 +3137,8 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
       const pR = node.savedParentR;
       const pTwist = node.savedParentTwist;
 
-      const branchAz = i * GOLDEN + 0.35 * node.uBranchAz + 0.14 * azWave;
-      const bAngle = twinAngle * (0.85 + 0.3 * node.uBranchAngle) * (1 + 0.18 * tiltWave);
+      const branchAz = i * GOLDEN + 0.35 * node.uBranchAz + 0.04 * azWave;
+      const bAngle = twinAngle * (0.85 + 0.3 * node.uBranchAngle) * (1 + 0.06 * tiltWave);
       const cosB = Math.cos(bAngle), sinB = Math.sin(bAngle);
 
       for (let k = 0; k < 3; k++) ax[k] = pAxis[k];
@@ -3041,7 +3183,8 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
       const tal = Math.hypot(twinAx[0], twinAx[1], twinAx[2]) || 1;
       twinAx[0] /= tal; twinAx[1] /= tal; twinAx[2] /= tal;
 
-      const twinTw = pTwist + branchAz + 0.22 * w4;
+      // Keep axial twist identical between primary and twin so twinW blending never spins the shaft
+      const twinTw = primTw;
       const twinBaseL = pFullL * (0.44 + 0.32 * node.uBranchLen) * (1 + 0.32 * dirProgress) * lenMod;
       const twinBaseR = Math.max(0.035, P.thickness.value * 0.85) * (0.68 + 0.28 * node.uBranchRad) * radMod;
 
@@ -3053,9 +3196,71 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
       ax[0] /= al; ax[1] /= al; ax[2] /= al;
       baseL = primBaseL + (twinBaseL - primBaseL) * twinW;
       baseR = primBaseR + (twinBaseR - primBaseR) * twinW;
-      tw = primTw + (twinTw - primTw) * twinW;
-      buildSideBasis(tw);
+      tw = twinTw;
     }
+
+    // Per-crystal world-space angular velocity clamp & smooth damping so no crystal ever spins or whips rapidly
+    if (evolveOn && node.frameInit && nodeDt > 0) {
+      const prevAx = node.worldAxis;
+      const dotA = Math.max(-1, Math.min(1, prevAx[0] * ax[0] + prevAx[1] * ax[1] + prevAx[2] * ax[2]));
+      const thetaA = Math.acos(dotA);
+      if (thetaA > 1e-5) {
+        const stepA = Math.min(thetaA, thetaA * (1 - Math.exp(-1.5 * nodeDt)), 0.11 * nodeDt);
+        const fA = stepA / thetaA;
+        ax[0] = prevAx[0] + (ax[0] - prevAx[0]) * fA;
+        ax[1] = prevAx[1] + (ax[1] - prevAx[1]) * fA;
+        ax[2] = prevAx[2] + (ax[2] - prevAx[2]) * fA;
+        const al = Math.hypot(ax[0], ax[1], ax[2]) || 1;
+        ax[0] /= al; ax[1] /= al; ax[2] /= al;
+      }
+
+      const prevRoot = node.worldRoot;
+      const dxR = root[0] - prevRoot[0];
+      const dyR = root[1] - prevRoot[1];
+      const dzR = root[2] - prevRoot[2];
+      const distR = Math.hypot(dxR, dyR, dzR);
+      if (distR > 1e-5) {
+        const stepR = Math.min(distR, distR * (1 - Math.exp(-1.8 * nodeDt)), 0.18 * nodeDt);
+        const fR = stepR / distR;
+        root[0] = prevRoot[0] + dxR * fR;
+        root[1] = prevRoot[1] + dyR * fR;
+        root[2] = prevRoot[2] + dzR * fR;
+      }
+    }
+
+    buildSideBasis(tw);
+
+    if (evolveOn && node.frameInit && nodeDt > 0) {
+      const prevSx = node.worldSide;
+      const proj = prevSx[0] * ax[0] + prevSx[1] * ax[1] + prevSx[2] * ax[2];
+      let px0 = prevSx[0] - proj * ax[0];
+      let py0 = prevSx[1] - proj * ax[1];
+      let pz0 = prevSx[2] - proj * ax[2];
+      const pl0 = Math.hypot(px0, py0, pz0);
+      if (pl0 > 1e-4) {
+        px0 /= pl0; py0 /= pl0; pz0 /= pl0;
+        const dotS = Math.max(-1, Math.min(1, px0 * sx[0] + py0 * sx[1] + pz0 * sx[2]));
+        const thetaS = Math.acos(dotS);
+        if (thetaS > 1e-5) {
+          const stepS = Math.min(thetaS, thetaS * (1 - Math.exp(-1.5 * nodeDt)), 0.10 * nodeDt);
+          const fS = stepS / thetaS;
+          sx[0] = px0 + (sx[0] - px0) * fS;
+          sx[1] = py0 + (sx[1] - py0) * fS;
+          sx[2] = pz0 + (sx[2] - pz0) * fS;
+          const sProj = sx[0] * ax[0] + sx[1] * ax[1] + sx[2] * ax[2];
+          sx[0] -= sProj * ax[0];
+          sx[1] -= sProj * ax[1];
+          sx[2] -= sProj * ax[2];
+          const sl = Math.hypot(sx[0], sx[1], sx[2]) || 1;
+          sx[0] /= sl; sx[1] /= sl; sx[2] /= sl;
+          sz[0] = ax[1] * sx[2] - ax[2] * sx[1];
+          sz[1] = ax[2] * sx[0] - ax[0] * sx[2];
+          sz[2] = ax[0] * sx[1] - ax[1] * sx[0];
+        }
+      }
+    }
+
+    node.frameInit = true;
 
     // Apply procedural growth scaling and continuous crystal count presence to L and r
     const L = Math.max(1e-4, baseL * gScale * presence);
@@ -3177,12 +3382,6 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
 
   cluster.crystals = Math.max(1, activeCount);
   cluster.activeVectors = cluster.crystals * CRYSTAL_PLANES;
-  for (let idx = nActive; idx < cluster.nodes.length; idx++) {
-    cluster.nodes[idx].presence = 0;
-    cluster.nodes[idx].worldL = 0;
-    cluster.nodes[idx].worldFullL = 0;
-    cluster.nodes[idx].worldR = 0;
-  }
 
   const targetCx = weightTotal > 1e-6 ? weightedSumX / weightTotal : 0;
   const targetCy = weightTotal > 1e-6 ? weightedSumY / weightTotal : (Number.isFinite(minY) ? 0.5 * (minY + maxY) : 0);
@@ -3360,6 +3559,7 @@ const ENSO_TRACKS = [
     phraseCycleSec: 15.8,
     phraseGateProb: 0.76,
     phraseLengthLfo: { enabled: true, periodSec: 180, minRatio: 0.50, maxRatio: 1.00 },
+    washInstrument: 'pad',
     chordInstrument: 'choir',
     chordRollMs: 112,
     chordVel: 0.54,
@@ -3417,7 +3617,8 @@ const ENSO_TRACKS = [
     phraseCycleSec: 17.6,
     phraseGateProb: 0.72,
     phraseLengthLfo: { enabled: false },
-    chordInstrument: 'piano',
+    washInstrument: 'choir',
+    chordInstrument: 'choir',
     chordRollMs: 168,
     chordVel: 0.48,
     voices: {
@@ -3466,7 +3667,8 @@ const ENSO_TRACKS = [
     phraseCycleSec: 19.4,
     phraseGateProb: 0.70,
     phraseLengthLfo: { enabled: false },
-    chordInstrument: 'piano',
+    washInstrument: 'drone',
+    chordInstrument: 'pad',
     chordRollMs: 208,
     chordVel: 0.48,
     voices: {
@@ -3515,6 +3717,7 @@ const ENSO_TRACKS = [
     phraseCycleSec: 17.2,
     phraseGateProb: 0.74,
     phraseLengthLfo: { enabled: false },
+    washInstrument: 'tape',
     chordInstrument: 'pad',
     chordRollMs: 152,
     chordVel: 0.50,
@@ -3568,6 +3771,7 @@ const ENSO_TRACKS = [
     phraseCycleSec: 13.8,
     phraseGateProb: 0.84,
     phraseLengthLfo: { enabled: false },
+    washInstrument: 'pad',
     chordInstrument: 'pad',
     chordRollMs: 72,
     chordVel: 0.44,
@@ -3620,6 +3824,7 @@ const ENSO_TRACKS = [
     phraseCycleSec: 14.6,
     phraseGateProb: 0.86,
     phraseLengthLfo: { enabled: false },
+    washInstrument: 'choir',
     chordInstrument: 'tape',
     chordRollMs: 136,
     chordVel: 0.48,
@@ -3657,7 +3862,16 @@ const ENSO_TRACKS = [
     ],
   },
 ];
-const ENSO_TRACK_NAMES = ENSO_TRACKS.map((t) => t.label);
+const ENSO_TRACK_NAMES = ENSO_TRACKS.map((t) => {
+  if (!t.scale) t.scale = t.intervals;
+  return t.label;
+});
+
+function midiToHz(midi) {
+  return 440 * Math.pow(2, (midi - 69) / 12);
+}
+
+const SAMPLE_SOURCE_RANK = { sync: 1, offline: 2, mp3: 3, ogg: 4 };
 function createEnsoSound({ onTrackChange, onStateChange } = {}) {
   let ctx = null;
   let masterGain = null;
@@ -3669,9 +3883,10 @@ function createEnsoSound({ onTrackChange, onStateChange } = {}) {
   let fdnNodes = [];
   let enabled = false;
   let volume = 0.75;
+  let washLevel = 0.68;
   let autoRotate = true;
   let reverbMode = ENSO_REVERB_MODES[0];
-  let trackIndex = 0;
+  let trackIndex = Math.floor(Math.random() * ENSO_TRACKS.length);
   let trackElapsedSec = 0;
   let totalListenedSec = 0;
   let phraseTimerSec = 15.0;
@@ -3685,6 +3900,21 @@ function createEnsoSound({ onTrackChange, onStateChange } = {}) {
   let offlineFallbackReady = false;
   let sampleLoadStarted = false;
   let preferredFormat = 'ogg';
+
+  // Heavenly Wash Engine (Strictly 1 single washInstrument per track, overlapping 16.5s washes every 5.8s–7.4s)
+  let washMasterGain = null;
+  let washSilkFilter = null;
+  let washWarmShelf = null;
+  let washFdnTap = null;
+  let washTimerSec = 6.2;
+  let currentWashCycleSec = 6.4;
+  let washesTriggered = 0;
+  let washColourStep = 0;
+  let lastWashChordMidis = [];
+  let lastWashTrackId = ENSO_TRACKS[0].id;
+  let lastWashInstrument = ENSO_TRACKS[0].washInstrument || 'pad';
+  let lastWashVoices = [];
+  let activeWashes = [];
 
   // Map<voice, Array<{ midi, buffer, source: 'ogg'|'mp3'|'offline' }>>
   const sampleBank = new Map();
@@ -3717,11 +3947,50 @@ function createEnsoSound({ onTrackChange, onStateChange } = {}) {
     const existingIdx = list.findIndex((x) => x.midi === midi);
     const entry = { midi, buffer, source: sourceTag };
     if (existingIdx >= 0) {
-      if (list[existingIdx].source !== 'offline' && sourceTag === 'offline') return;
+      const prevRank = SAMPLE_SOURCE_RANK[list[existingIdx].source] || 0;
+      const nextRank = SAMPLE_SOURCE_RANK[sourceTag] || 0;
+      if (nextRank < prevRank) return;
       list[existingIdx] = entry;
     } else {
       list.push(entry);
       list.sort((a, b) => a.midi - b.midi);
+    }
+  }
+
+  // Synchronous 0ms warm stereo bootstrap buffers so the very first wash & phrase play immediately
+  // even before OfflineAudioContext or network .ogg decoding completes.
+  function buildSyncBootstrapSamples(audioCtx) {
+    if (!audioCtx || sampleBank.size > 0) return;
+    const rate = 22050;
+    const dur = 3.2;
+    const frames = Math.floor(rate * dur);
+    const bootstrapZones = [
+      { voice: 'piano', midi: 60 },
+      { voice: 'pad',   midi: 55 },
+      { voice: 'choir', midi: 60 },
+      { voice: 'drone', midi: 43 },
+      { voice: 'bell',  midi: 67 },
+      { voice: 'tape',  midi: 55 },
+    ];
+    for (const z of bootstrapZones) {
+      try {
+        const buf = audioCtx.createBuffer(2, frames, rate);
+        const chL = buf.getChannelData(0);
+        const chR = buf.getChannelData(1);
+        const f0 = midiToHz(z.midi);
+        const isPerc = z.voice === 'piano' || z.voice === 'bell';
+        for (let i = 0; i < frames; i++) {
+          const t = i / rate;
+          const env = isPerc
+            ? Math.min(1, t / 0.01) * Math.exp(-1.1 * t)
+            : Math.min(1, t / 0.35) * Math.min(1, (dur - t) / 0.35);
+          const sL = 0.32 * Math.sin(2 * Math.PI * f0 * t) + 0.10 * Math.sin(2 * Math.PI * (f0 * 2.0) * t + 0.3);
+          const sR = 0.32 * Math.sin(2 * Math.PI * (f0 * 1.0012) * t + 0.6) + 0.10 * Math.sin(2 * Math.PI * (f0 * 1.9988) * t + 1.1);
+          chL[i] = sL * env;
+          chR[i] = sR * env;
+        }
+        registerSample(z.voice, z.midi, buf, 'sync');
+      } catch {}
     }
   }
 
@@ -3859,8 +4128,15 @@ function createEnsoSound({ onTrackChange, onStateChange } = {}) {
         const env = octx.createGain();
         const isPerc = z.voice === 'piano' || z.voice === 'bell';
         env.gain.setValueAtTime(0.0001, 0);
-        env.gain.linearRampToValueAtTime(0.60, isPerc ? 0.010 : 1.2);
-        env.gain.exponentialRampToValueAtTime(0.0001, z.dur - 0.15);
+        if (isPerc) {
+          env.gain.linearRampToValueAtTime(0.60, 0.010);
+          env.gain.exponentialRampToValueAtTime(0.0001, z.dur - 0.15);
+        } else {
+          // Flat sustained plateau for pad/choir/drone/tape so looped washes never decay early
+          env.gain.linearRampToValueAtTime(0.56, 0.45);
+          env.gain.setValueAtTime(0.56, z.dur - 0.40);
+          env.gain.linearRampToValueAtTime(0.0001, z.dur - 0.04);
+        }
         env.connect(octx.destination);
         env.connect(damp);
 
@@ -3970,13 +4246,277 @@ function createEnsoSound({ onTrackChange, onStateChange } = {}) {
     fdnSend = buildLiteFdnReverb(ctx, masterGain);
     syncReverbMode();
 
+    // Dedicated Heavenly Wash bus (Q = 0.5 silk lowpass + warm high-shelf -> washMasterGain)
+    washMasterGain = ctx.createGain();
+    washMasterGain.gain.value = washLevel;
+    washMasterGain.connect(dryBus);
+
+    washFdnTap = ctx.createGain();
+    washFdnTap.gain.value = 0.48;
+    washMasterGain.connect(washFdnTap);
+    if (fdnSend) washFdnTap.connect(fdnSend);
+
+    washSilkFilter = ctx.createBiquadFilter();
+    washSilkFilter.type = 'lowpass';
+    washSilkFilter.frequency.value = Math.max(920, Math.min(1220, (track.pianoCutoffHz || 1050) * 1.02));
+    washSilkFilter.Q.value = 0.5;
+
+    washWarmShelf = ctx.createBiquadFilter();
+    washWarmShelf.type = 'highshelf';
+    washWarmShelf.frequency.value = 1380;
+    washWarmShelf.Q.value = 0.5;
+    washWarmShelf.gain.value = -6.5;
+
+    washSilkFilter.connect(washWarmShelf);
+    washWarmShelf.connect(washMasterGain);
+
+    buildSyncBootstrapSamples(ctx);
     buildOfflineStampedFallback();
     loadServerSamples();
     return ctx;
   }
 
+  function syncTrackWashFilter(track) {
+    if (!ctx || !washSilkFilter) return;
+    const now = ctx.currentTime;
+    const targetCutoff = Math.max(920, Math.min(1220, (track.pianoCutoffHz || 1050) * 1.02));
+    washSilkFilter.frequency.setTargetAtTime(targetCutoff, now, 0.85);
+  }
+
+  // Heavenly Wash Engine: Uses strictly ONE instrument per track (track.washInstrument: 'pad' | 'choir' | 'drone' | 'tape')
+  // Fires every 5.8s–7.4s with a 5.0s cosine fade-in, 5.0s sustain, and 6.5s cosine fade-out (~16.5s total)
+  // so 2–3 overlapping washes in the active track's modal key are always sustaining with zero silence gaps.
+  function pickModalColourSemitones(track, stepIdx) {
+    const scale = track.scale || track.intervals || [0, 2, 4, 5, 7, 9, 11];
+    const third = (scale[2] ?? 4) + 12;
+    const fourth = (scale[3] ?? 5) + 12; // Lydian #11 (+18st) on C Lydian & F Lydian
+    const sixth = scale[5] ?? 9;
+    const seventh = scale[6] ?? 11;
+    const ninth = (scale[1] ?? 2) + 12;
+    const isLydian = (scale[3] ?? 5) === 6;
+    const palette = isLydian
+      ? [third, fourth, seventh, ninth, sixth + 12]
+      : [third, seventh, ninth, sixth, fourth];
+    return palette[stepIdx % palette.length];
+  }
+
+  function triggerHeavenlyWash(track = ENSO_TRACKS[trackIndex], { initial = false, crossfadeInSec = 5.0 } = {}) {
+    if (!enabled) return false;
+    const audioCtx = ensureContext();
+    if (!audioCtx || !washSilkFilter) return false;
+    if (audioCtx.state === 'suspended') {
+      audioCtx.resume().catch(() => {});
+    }
+
+    // Strictly ONE sustained non-piano instrument per track ('pad' | 'choir' | 'drone' | 'tape')
+    const rawInst = track.washInstrument || 'pad';
+    const washVoice = (rawInst === 'piano' || rawInst === 'bell') ? 'pad' : rawInst;
+    const scale = track.scale || track.intervals || [0, 2, 4, 5, 7, 9, 11];
+    const rootMidi = track.rootMidi || 48;
+    const fifthMidi = rootMidi + (scale[4] ?? 7);
+    const octaveMidi = rootMidi + 12;
+    const colourSemitones = pickModalColourSemitones(track, washColourStep++);
+    const colourMidi = rootMidi + colourSemitones;
+
+    const isDroneWash = washVoice === 'drone';
+    const voiceSpecs = isDroneWash
+      ? [
+          { voice: washVoice, midi: rootMidi - 12,    gain: 0.088, pan: -0.12 },
+          { voice: washVoice, midi: rootMidi,         gain: 0.082, pan: -0.32 },
+          { voice: washVoice, midi: fifthMidi - 12,   gain: 0.070, pan: +0.32 },
+          { voice: washVoice, midi: colourMidi - 12,  gain: 0.058, pan: +0.20 },
+        ]
+      : [
+          { voice: washVoice, midi: rootMidi,         gain: 0.086, pan: -0.34 },
+          { voice: washVoice, midi: fifthMidi,        gain: 0.072, pan: +0.34 },
+          { voice: washVoice, midi: octaveMidi,       gain: 0.060, pan: -0.22 },
+          { voice: washVoice, midi: colourMidi,       gain: 0.056, pan: +0.24 },
+        ];
+
+    const now = audioCtx.currentTime;
+    const attackSec = Math.max(4.0, Math.min(5.5, crossfadeInSec || 5.0));
+    const sustainSec = 6.0;
+    const releaseSec = 6.0;
+    const totalDur = attackSec + sustainSec + releaseSec; // 17.0s long sustained wash
+
+    // Smooth 64-point cosine attack (5s) -> full sustained plateau (6s) -> cosine release (6s)
+    const washEnv = audioCtx.createGain();
+    const curveLen = 64;
+    const curve = new Float32Array(curveLen);
+    const startFloor = initial ? 0.22 : 0.0002;
+    for (let i = 0; i < curveLen; i++) {
+      const t = (i / (curveLen - 1)) * totalDur;
+      if (t <= attackSec) {
+        const u = t / attackSec;
+        curve[i] = startFloor + (1.0 - startFloor) * 0.5 * (1.0 - Math.cos(Math.PI * u));
+      } else if (t <= attackSec + sustainSec) {
+        // Steady full sustained plateau
+        curve[i] = 1.0;
+      } else {
+        const u = Math.min(1.0, (t - attackSec - sustainSec) / releaseSec);
+        curve[i] = Math.max(0.0001, 0.5 * (1.0 + Math.cos(Math.PI * u)));
+      }
+    }
+    try {
+      washEnv.gain.setValueCurveAtTime(curve, now, totalDur);
+    } catch {
+      washEnv.gain.setValueAtTime(startFloor, now);
+      washEnv.gain.linearRampToValueAtTime(1.0, now + attackSec);
+      washEnv.gain.setValueAtTime(1.0, now + attackSec + sustainSec);
+      washEnv.gain.linearRampToValueAtTime(0.0001, now + totalDur);
+    }
+
+    // Separate track-transition crossfade gain node so track changes never collide with washEnv's curve
+    const washTrackFadeGain = audioCtx.createGain();
+    washTrackFadeGain.gain.setValueAtTime(1.0, now);
+
+    // Dedicated 680 Hz Q = 0.5 silk lowpass filter per wash so sustained tones are warm, smooth, and velvety
+    const washVoiceLp = audioCtx.createBiquadFilter();
+    washVoiceLp.type = 'lowpass';
+    washVoiceLp.frequency.setValueAtTime(washVoice === 'drone' ? 540 : 680, now);
+    washVoiceLp.Q.value = 0.5;
+
+    washVoiceLp.connect(washEnv);
+    washEnv.connect(washTrackFadeGain);
+    washTrackFadeGain.connect(washSilkFilter);
+
+    const sources = [];
+    const triggeredVoices = [];
+    const chordMidis = [];
+    for (let i = 0; i < voiceSpecs.length; i++) {
+      const sp = voiceSpecs[i];
+      const match = findClosestSample(sp.voice, sp.midi);
+      if (!match || !match.buffer) continue;
+
+      const src = audioCtx.createBufferSource();
+      src.buffer = match.buffer;
+      const rate = Math.max(0.45, Math.min(1.65, Math.pow(2, (sp.midi - match.midi) / 12)));
+      src.playbackRate.setValueAtTime(rate, now);
+
+      // Loop the sustain plateau of the reverb-stamped buffer (0.85s .. dur - 1.2s)
+      const bufDur = match.buffer.duration;
+      if (bufDur > 1.8) {
+        src.loop = true;
+        src.loopStart = 0.85;
+        src.loopEnd = Math.max(2.2, bufDur - 1.2);
+      }
+
+      const vGain = audioCtx.createGain();
+      vGain.gain.setValueAtTime(sp.gain, now);
+
+      // Pair with a continuous, non-decaying sustained harmonic tone voiced for washVoice
+      // so the 17-second wash holds a true, unbroken sustained plateau even when the sample tail dips.
+      const freq = midiToHz(sp.midi);
+      const susOsc1 = audioCtx.createOscillator();
+      susOsc1.type = (washVoice === 'pad' || washVoice === 'tape') ? 'triangle' : 'sine';
+      susOsc1.frequency.setValueAtTime(freq, now);
+      susOsc1.detune.setValueAtTime(i % 2 === 0 ? -4 : 4, now);
+
+      const susOsc2 = audioCtx.createOscillator();
+      susOsc2.type = 'sine';
+      susOsc2.frequency.setValueAtTime(washVoice === 'choir' ? freq * 2.0 : freq, now);
+      susOsc2.detune.setValueAtTime(i % 2 === 0 ? 5 : -5, now);
+
+      const susGain = audioCtx.createGain();
+      susGain.gain.setValueAtTime(sp.gain * 0.58, now);
+      susOsc1.connect(susGain);
+      susOsc2.connect(susGain);
+
+      if (audioCtx.createStereoPanner) {
+        const panner = audioCtx.createStereoPanner();
+        panner.pan.setValueAtTime(Math.max(-1, Math.min(1, sp.pan)), now);
+        src.connect(vGain);
+        vGain.connect(panner);
+        susGain.connect(panner);
+        panner.connect(washVoiceLp);
+      } else {
+        src.connect(vGain);
+        vGain.connect(washVoiceLp);
+        susGain.connect(washVoiceLp);
+      }
+
+      const offset = bufDur > 2.4 ? 0.85 + ((i * 0.17) % 0.65) : 0;
+      src.start(now, offset);
+      src.stop(now + totalDur + 0.08);
+      susOsc1.start(now);
+      susOsc2.start(now);
+      susOsc1.stop(now + totalDur + 0.08);
+      susOsc2.stop(now + totalDur + 0.08);
+
+      sources.push(src, susOsc1, susOsc2);
+      triggeredVoices.push(sp.voice);
+      chordMidis.push(sp.midi);
+    }
+
+    if (!sources.length) return false;
+
+    lastWashChordMidis = chordMidis;
+    lastWashTrackId = track.id;
+    lastWashInstrument = washVoice;
+    lastWashVoices = triggeredVoices;
+    washesTriggered++;
+
+    activeWashes = activeWashes.filter((w) => w.remainingSec > 0.05);
+    activeWashes.push({
+      id: washesTriggered,
+      trackId: track.id,
+      instrument: washVoice,
+      fadeGain: washTrackFadeGain,
+      sources,
+      remainingSec: totalDur,
+      totalDur,
+      chordMidis,
+    });
+
+    return true;
+  }
+
+  // Smoothly crossfade all active washes into the new track's tonic key and washInstrument over 4.8s
+  function crossfadeWashesToTrack(nextTrackObj, fadeSec = 4.8) {
+    syncTrackWashFilter(nextTrackObj);
+    if (ctx && activeWashes.length > 0) {
+      const now = ctx.currentTime;
+      for (const w of activeWashes) {
+        if (w.trackId !== nextTrackObj.id && w.fadeGain) {
+          try {
+            w.fadeGain.gain.cancelScheduledValues(now);
+            w.fadeGain.gain.setValueAtTime(Math.max(0.0001, w.fadeGain.gain.value), now);
+            w.fadeGain.gain.linearRampToValueAtTime(0.0001, now + fadeSec);
+            w.remainingSec = Math.min(w.remainingSec, fadeSec);
+          } catch {}
+        }
+      }
+    }
+    if (enabled) {
+      currentWashCycleSec = 6.2 + Math.random() * 0.8;
+      washTimerSec = currentWashCycleSec;
+      triggerHeavenlyWash(nextTrackObj, { initial: false, crossfadeInSec: fadeSec });
+    }
+  }
+
+  function tickWash(dt, track) {
+    if (activeWashes.length > 0) {
+      for (let i = activeWashes.length - 1; i >= 0; i--) {
+        activeWashes[i].remainingSec -= dt;
+        if (activeWashes[i].remainingSec <= 0) {
+          activeWashes.splice(i, 1);
+        }
+      }
+    }
+    washTimerSec -= dt;
+    if (washTimerSec <= 0) {
+      currentWashCycleSec = 6.2 + Math.random() * 0.8; // Regular ~6.5s overlapping sustained wash cadence
+      washTimerSec = currentWashCycleSec;
+      triggerHeavenlyWash(track, { initial: false, crossfadeInSec: 5.0 });
+    }
+  }
+
   function findClosestSample(voice, midiNote) {
-    const list = sampleBank.get(voice) || sampleBank.get('piano');
+    const list = sampleBank.get(voice) || (
+      voice === 'piano'
+        ? null
+        : (sampleBank.get('pad') || sampleBank.get('choir') || sampleBank.get('drone') || sampleBank.get('tape'))
+    );
     if (!list || !list.length) return null;
     let best = list[0];
     let bestDist = Math.abs(midiNote - best.midi);
@@ -4246,7 +4786,6 @@ function createEnsoSound({ onTrackChange, onStateChange } = {}) {
     if (bgVoiceTimers.length > 0) {
       bgVoiceTimers = bgVoiceTimers.map((t) => t - clampedDt).filter((t) => t > 0);
     }
-    const track = ENSO_TRACKS[trackIndex];
 
     // 1. 3-Minute (180s) Circle-of-Fifths Automatic Track Rotation
     if (autoRotate) {
@@ -4258,12 +4797,18 @@ function createEnsoSound({ onTrackChange, onStateChange } = {}) {
         chordStepIdx = 0;
         const nextT = ENSO_TRACKS[trackIndex];
         syncTrackPianoFilter(nextT);
+        crossfadeWashesToTrack(nextT, 4.8);
         onTrackChange?.(nextT.label, nextT);
         phraseTimerSec = 2.4;
       }
     }
 
-    // 2. Enso Felt Piano Phrase Engine (spacious 14s–24s breathing room, never overlapping)
+    const track = ENSO_TRACKS[trackIndex];
+
+    // 2. Heavenly Wash Engine: regular, smooth overlapping single-instrument washes in the track's key
+    tickWash(clampedDt, track);
+
+    // 3. Enso Felt Piano Phrase Engine (spacious 14s–24s breathing room, never overlapping)
     phraseTimerSec -= clampedDt;
     if (phraseTimerSec <= 0) {
       const baseCycle = (track.phraseCycleSec || 16.0) / Math.max(0.6, track.rotationSpeed || 1.0);
@@ -4273,7 +4818,7 @@ function createEnsoSound({ onTrackChange, onStateChange } = {}) {
       }
     }
 
-    // 3. Asynchronous Prime-Length Loops for Background Voices (pad, bell, choir, tape, drone)
+    // 4. Asynchronous Prime-Length Loops for Background Voices (pad, bell, choir, tape, drone)
     //    Matches eno_soundscape/js/probability-engine.js:
     //    - Piano never fires random single notes (handled exclusively by the Phrase Engine above)
     //    - When voiceId === track.chordInstrument (and !== 'piano'), its cycle triggers 1 gentle chord
@@ -4316,11 +4861,18 @@ function createEnsoSound({ onTrackChange, onStateChange } = {}) {
         if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
         masterGain.gain.cancelScheduledValues(audioCtx.currentTime);
         masterGain.gain.setTargetAtTime(volume, audioCtx.currentTime, 0.10);
+        if (washMasterGain) {
+          washMasterGain.gain.cancelScheduledValues(audioCtx.currentTime);
+          washMasterGain.gain.setTargetAtTime(washLevel, audioCtx.currentTime, 0.12);
+        }
       }
       // Reset timers & phases so the opening phrase has a full 16s+ breathing window after it plays
       const track = ENSO_TRACKS[trackIndex];
       syncTrackPianoFilter(track);
+      syncTrackWashFilter(track);
       phraseTimerSec = (track.phraseCycleSec || 16.0) * 1.05;
+      currentWashCycleSec = 6.2;
+      washTimerSec = currentWashCycleSec;
       voicePhases.pad = 0.45;
       voicePhases.bell = 0.10;
       voicePhases.choir = 0.30;
@@ -4330,9 +4882,10 @@ function createEnsoSound({ onTrackChange, onStateChange } = {}) {
       const fireInitial = () => {
         if (!enabled) return;
         const curTrack = ENSO_TRACKS[trackIndex];
-        // Soft foundational pad swell + the track's opening felt piano phrase (never overlapping two phrases!)
+        // Immediate heavenly wash in the track's single washInstrument + the track's opening felt piano phrase
+        triggerHeavenlyWash(curTrack, { initial: true, crossfadeInSec: 4.8 });
         const rootMidi = scaleDegreeToMidi(curTrack, 0, 0);
-        triggerVoice('pad', rootMidi, 0.45, -0.22, 0.90);
+        triggerVoice(curTrack.washInstrument || 'pad', rootMidi, 0.45, -0.22, 0.90);
         scheduleDelayed(() => {
           if (enabled) triggerTrackPhrase(curTrack, { forceFull: true });
         }, 280);
@@ -4344,6 +4897,7 @@ function createEnsoSound({ onTrackChange, onStateChange } = {}) {
       }
     } else {
       clearScheduledTimers();
+      activeWashes = [];
       if (ctx && masterGain) {
         masterGain.gain.cancelScheduledValues(ctx.currentTime);
         masterGain.gain.setTargetAtTime(0.0001, ctx.currentTime, 0.15);
@@ -4361,6 +4915,15 @@ function createEnsoSound({ onTrackChange, onStateChange } = {}) {
     return volume;
   }
 
+  function setWashLevel(nextLevel) {
+    const parsed = Number(nextLevel);
+    washLevel = Number.isFinite(parsed) ? Math.max(0, Math.min(1, parsed)) : 0.68;
+    if (ctx && washMasterGain) {
+      washMasterGain.gain.setTargetAtTime(washLevel, ctx.currentTime, 0.06);
+    }
+    return washLevel;
+  }
+
   function setTrack(labelOrId) {
     const q = String(labelOrId || '').trim().toLowerCase();
     const idx = ENSO_TRACKS.findIndex(
@@ -4374,10 +4937,12 @@ function createEnsoSound({ onTrackChange, onStateChange } = {}) {
       chordStepIdx = 0;
       const track = ENSO_TRACKS[trackIndex];
       syncTrackPianoFilter(track);
+      crossfadeWashesToTrack(track, 4.8);
       phraseTimerSec = (track.phraseCycleSec || 16.0) * 1.05;
+      onTrackChange?.(track.label, track);
       if (enabled) {
         const rootMidi = scaleDegreeToMidi(track, 0, 0);
-        triggerVoice('pad', rootMidi, 0.42, -0.20, 0.85);
+        triggerVoice(track.washInstrument || 'pad', rootMidi, 0.42, -0.20, 0.85);
         scheduleDelayed(() => {
           if (enabled) triggerTrackPhrase(track, { forceFull: true });
         }, 260);
@@ -4407,11 +4972,12 @@ function createEnsoSound({ onTrackChange, onStateChange } = {}) {
     chordStepIdx = 0;
     const track = ENSO_TRACKS[trackIndex];
     syncTrackPianoFilter(track);
+    crossfadeWashesToTrack(track, 4.8);
     phraseTimerSec = (track.phraseCycleSec || 16.0) * 1.05;
     onTrackChange?.(track.label, track);
     if (enabled) {
       const rootMidi = scaleDegreeToMidi(track, 0, 0);
-      triggerVoice('pad', rootMidi, 0.42, -0.20, 0.85);
+      triggerVoice(track.washInstrument || 'pad', rootMidi, 0.42, -0.20, 0.85);
       scheduleDelayed(() => {
         if (enabled) triggerTrackPhrase(track, { forceFull: true });
       }, 260);
@@ -4422,6 +4988,7 @@ function createEnsoSound({ onTrackChange, onStateChange } = {}) {
   return {
     get enabled() { return enabled; },
     get volume() { return volume; },
+    get washLevel() { return washLevel; },
     get autoRotate() { return autoRotate; },
     get reverbMode() { return reverbMode; },
     get rotateIntervalSec() { return TRACK_ROTATE_SECONDS; },
@@ -4429,6 +4996,14 @@ function createEnsoSound({ onTrackChange, onStateChange } = {}) {
     get currentTrack() { return ENSO_TRACKS[trackIndex]; },
     get trackElapsedSec() { return trackElapsedSec; },
     get notesTriggered() { return notesTriggered; },
+    get washesTriggered() { return washesTriggered; },
+    get activeWashCount() { return activeWashes.length; },
+    get washCycleSec() { return currentWashCycleSec; },
+    get washInstrument() { return ENSO_TRACKS[trackIndex]?.washInstrument || 'pad'; },
+    get lastWashInstrument() { return lastWashInstrument; },
+    get lastWashVoices() { return lastWashVoices.slice(); },
+    get lastWashChordMidis() { return lastWashChordMidis.slice(); },
+    get lastWashTrackId() { return lastWashTrackId; },
     get oggSamplesLoaded() { return oggSamplesLoaded; },
     get offlineFallbackReady() { return offlineFallbackReady; },
     get preferredFormat() { return preferredFormat; },
@@ -4442,11 +5017,13 @@ function createEnsoSound({ onTrackChange, onStateChange } = {}) {
     setEnabled,
     toggle() { return setEnabled(!enabled); },
     setVolume,
+    setWashLevel,
     setTrack,
     setAutoRotate,
     setReverbMode,
     nextTrack,
     triggerVoice,
+    triggerHeavenlyWash,
     tick,
   };
 }
@@ -4479,7 +5056,7 @@ const NON_MORPH_KEYS = new Set([
   'evolve', 'evolveSpeed', 'morphPresets', 'morphTime', 'autoGrow', 'growth', 'growSpeed',
   'graduallyShift', 'complementaryBg', 'hueShift', 'studioEdge',
   'seed', 'filmFps', 'fireSamples', 'bounces', 'depth', 'bloom', 'faceGlare',
-  'sound', 'soundVolume', 'soundTrack', 'soundRotate', 'soundReverbMode',
+  'sound', 'soundVolume', 'washLevel', 'soundTrack', 'soundRotate', 'soundReverbMode',
 ]);
 function computeDeviceDpr() {
   const isMobile = window.innerWidth <= 820 || (window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
@@ -4782,6 +5359,7 @@ function run(slug, { manifest, params, presets, randomize, sketch }) {
   const soundBtn = document.getElementById('sound-btn');
   const soundIconOn = document.getElementById('sound-icon-on');
   const soundIconOff = document.getElementById('sound-icon-off');
+  const unmuteCenterBtn = document.getElementById('unmute-center-btn');
 
   const sound = createEnsoSound({
     onTrackChange(nextLabel) {
@@ -4798,8 +5376,17 @@ function run(slug, { manifest, params, presets, randomize, sketch }) {
     },
   });
 
+  // Randomize the Enso track that the app starts with on every page load
+  if (P.soundTrack && !sp.has('soundTrack')) {
+    const startLabel = sound.currentTrack.label;
+    store.setValue(P.soundTrack, startLabel);
+    P.soundTrack.default = startLabel;
+    P.soundTrack.base = startLabel;
+  }
+
   function syncSoundFromParams(changedKey) {
     if (P.soundVolume) sound.setVolume(P.soundVolume.value);
+    if (P.washLevel) sound.setWashLevel(P.washLevel.value);
     if (P.soundRotate) sound.setAutoRotate(P.soundRotate.value);
     if (P.soundReverbMode) sound.setReverbMode(P.soundReverbMode.value);
     if (P.soundTrack && (changedKey === 'soundTrack' || !changedKey)) {
@@ -4855,6 +5442,7 @@ function run(slug, { manifest, params, presets, randomize, sketch }) {
     presets,
     onPreset: (name) => applyPreset(name),
     onRandomize: doRandomize,
+    onSkipTrack: () => sound.nextTrack(1),
     onEdited(changedKey) {
       if (changedKey === 'defaultZoom') {
         syncDefaultZoomToCamera(true);
@@ -4863,7 +5451,7 @@ function run(slug, { manifest, params, presets, randomize, sketch }) {
         resetEvolution(P, { startFromSeed: !!P.evolve?.value });
         resetMorphFromPreset(store.preset || standardPresetNames[0]);
         syncSoundFromParams('reset');
-      } else if (changedKey && changedKey.startsWith('sound')) {
+      } else if (changedKey && (changedKey.startsWith('sound') || changedKey === 'washLevel')) {
         syncSoundFromParams(changedKey);
       } else if (changedKey) {
         cluster.applyManualParam?.(changedKey, P);
@@ -4909,9 +5497,17 @@ function run(slug, { manifest, params, presets, randomize, sketch }) {
       if (soundIconOn) soundIconOn.style.display = isPlaying ? 'block' : 'none';
       if (soundIconOff) soundIconOff.style.display = isPlaying ? 'none' : 'block';
     }
+    if (unmuteCenterBtn) {
+      const hidePrompt = capture || !!sound.enabled;
+      unmuteCenterBtn.classList.toggle('is-unmuted', hidePrompt);
+      unmuteCenterBtn.setAttribute('aria-hidden', String(hidePrompt));
+    }
   }
 
   soundBtn?.addEventListener('click', toggleSound);
+  unmuteCenterBtn?.addEventListener('click', () => {
+    if (!sound.enabled) toggleSound();
+  });
   growBtn?.addEventListener('click', growMore);
   randHudBtn?.addEventListener('click', () => doRandomize(10.0));
   syncSoundFromParams();
@@ -5207,7 +5803,7 @@ function run(slug, { manifest, params, presets, randomize, sketch }) {
     set: (key, value) => {
       if (P[key]) {
         store.setValue(P[key], value);
-        if (key.startsWith('sound')) {
+        if (key.startsWith('sound') || key === 'washLevel') {
           syncSoundFromParams(key);
         } else {
           cluster.applyManualParam?.(key, P);
@@ -5254,7 +5850,7 @@ const __default_manifest = {
   name: 'Crystal Transformer',
   year: 2026,
   pageColour: 'studioEdge',
-  presetSeconds: 0.65,
+  presetSeconds: 6.5,
   capture: { seconds: 1, crf: 16, tune: 'grain' },
 };
 
@@ -5438,7 +6034,8 @@ vec3 env(vec3 dc, float rough) {
 vec3 spectralRainbow(float t) {
   vec3 x = fract(t + vec3(0.0, 0.66667, 0.33333));
   vec3 wave = clamp(abs(x * 6.0 - 3.0) - 1.0, 0.0, 1.0);
-  return wave * wave * (3.0 - 2.0 * wave);
+  vec3 raw = wave * wave * (3.0 - 2.0 * wave);
+  return mix(vec3(0.92, 0.94, 0.98), raw, 0.38);
 }
 vec4 encodeHdr(vec3 c) { return vec4(c / (1.0 + c), 1.0); }
 vec3 decodeHdr(vec4 e) { return e.rgb / max(1.0 - e.rgb, 1e-4); }
@@ -5647,10 +6244,10 @@ vec3 inside(int id, vec3 ro, vec3 rd, float len, float travelled, float jitter, 
     }
 
     if (u_iridescence > 0.01) {
-      float iridPhase = hgt * 1.85 + radFrac * 1.25 + dot(rd, axis) * 1.15 + hueOff + v.b * 0.75;
+      float iridPhase = hgt * 1.45 + radFrac * 0.95 + dot(rd, axis) * 0.95 + hueOff + v.b * 0.55;
       vec3 iridWave = spectralRainbow(iridPhase);
-      float veilBand = (0.03 + 0.14 * v.g + 0.06 * v.r) * clamp(u_iridescence * 0.48, 0.0, 1.3);
-      scat += T * iridWave * tintedLightIn * veilBand * dt * 2.1;
+      float veilBand = (0.015 + 0.07 * v.g + 0.03 * v.r) * clamp(u_iridescence * 0.24, 0.0, 0.45);
+      scat += T * iridWave * tintedLightIn * veilBand * dt * 1.1;
     }
 
     vec3 sigma = baseSigma * opticalScale * (1.0 + u_colourZoning * (2.0 * hgt - 1.0)) * (0.75 + 0.5 * v.b);
@@ -5748,13 +6345,14 @@ vec3 inside(int id, vec3 ro, vec3 rd, float len, float travelled, float jitter, 
           float extent = length(hp - fc) / (r * (1.6 + 0.35 * u_iridescence));
           float mask = fracW * (1.0 - smoothstep(0.55, 0.78, extent + 0.45 * (v.b - 0.5) + 0.25 * v.r));
           if (mask > 0.0) {
-            float film = v.b * 2.5 + length(hp - fc) * 6.0 + hueOff + abs(dn) * 2.2;
-            vec3 irid = spectralRainbow(film);
-            float fr = 0.18 + 0.82 * pow(1.0 - abs(dn), 3.2);
-            vec3 refl = env(reflect(rd, fn), 0.03) + f_ambient * (0.35 * u_flash + 0.2 * u_iridescence);
-            float glowBoost = u_fractureGlow * (1.0 + u_iridescence * 1.2 + u_flash * 1.45);
+            float film = v.b * 0.85 + length(hp - fc) * 1.4 + hueOff + abs(dn) * 1.2;
+            vec3 irid = mix(vec3(0.96, 0.97, 1.0), spectralRainbow(film), clamp(u_iridescence * 0.42, 0.0, 0.48));
+            float fr = 0.10 + 0.65 * pow(1.0 - abs(dn), 3.6);
+            vec3 rawRefl = env(reflect(rd, fn), 0.05);
+            vec3 refl = (rawRefl / (1.0 + 1.2 * max(rawRefl.r, max(rawRefl.g, rawRefl.b)))) + f_ambient * (0.14 * u_flash + 0.08 * u_iridescence);
+            float glowBoost = min(u_fractureGlow, 1.8) * 0.42;
             scat += T * mask * glowBoost * fr * irid * refl;
-            T *= 1.0 - 0.55 * mask * fr;
+            T *= 1.0 - 0.35 * mask * fr;
           }
         }
       }
@@ -5845,8 +6443,8 @@ vec3 facetIridescence(int id, int k, vec3 p, vec3 rd, vec3 n, float dEdge, vec3 
   vec3 specCol = normalize(mix(irid1, irid2, 0.32) + vec3(1e-4)) * 1.35;
   float fresRim = pow(1.0 - cosV, 2.0);
   float s = u_iridescence;
-  vec3 tinted = mix(baseRefl, baseRefl * specCol * 1.85, clamp(s * 0.75, 0.0, 1.0));
-  vec3 sheen = specCol * f_ambient * (0.28 + 0.85 * fresRim) * min(s, 3.0) * 0.35;
+  vec3 tinted = mix(baseRefl, baseRefl * specCol * 1.15, clamp(s * 0.38, 0.0, 0.55));
+  vec3 sheen = specCol * f_ambient * (0.12 + 0.42 * fresRim) * min(s, 1.5) * 0.14;
   return tinted + sheen;
 }
 
@@ -5998,7 +6596,7 @@ void main() {
   }
 
   if (dot(thr, thr) > 0.0) {
-    float effFire = u_fire + u_iridescence * 0.075;
+    float effFire = u_fire + u_iridescence * 0.018;
     if (lastRefracted && effFire > 0.005 && lastFireAlpha > 1e-4) {
       int ns = int(u_fireSamples + 0.5);
       vec3 acc = vec3(0.0), wsum = vec3(0.0);
@@ -6016,7 +6614,7 @@ void main() {
         if (u_iridescence > 0.0) {
           float defl = length(sampleDir - initialRd);
           vec3 prism = spectralRainbow(defl * 2.4 + x * 0.85);
-          eCol += prism * f_ambient * u_iridescence * 0.45 * lastFireAlpha * smoothstep(0.04, 0.45, defl);
+          eCol += prism * f_ambient * u_iridescence * 0.14 * lastFireAlpha * smoothstep(0.06, 0.48, defl);
         }
         acc += w * eCol;
       }
@@ -6115,6 +6713,7 @@ const __default_params = [
     params: [
       { key: 'sound', label: 'Ambient sound', type: 'bool', value: false, default: false, randomize: false, noPreset: true, uniform: false, desc: 'Generative Brian Eno / Enso ambient piano & synth soundscape using 320 kbps OGG reverb-stamped instrument samples (shortcut: M).' },
       { key: 'soundVolume', label: 'Volume', type: 'range', value: 0.75, default: 0.75, min: 0, max: 1, step: 0.01, randomize: false, noPreset: true, uniform: false, desc: 'Master ambient soundscape volume.' },
+      { key: 'washLevel', label: 'Heavenly wash', type: 'range', value: 0.68, default: 0.68, min: 0, max: 1, step: 0.01, randomize: false, noPreset: true, uniform: false, desc: 'Continuous overlapping drone, choir, and ribbon-pad harmonic washes in the key of the active track.' },
       { key: 'soundTrack', label: 'Enso track', type: 'select', options: ENSO_TRACK_NAMES, value: ENSO_TRACK_NAMES[0], default: ENSO_TRACK_NAMES[0], randomize: false, noPreset: true, uniform: false, desc: 'Active Enso modal ambient track (cycles around the Circle of Fifths).' },
       { key: 'soundRotate', label: 'Rotate tracks (3m)', type: 'bool', value: true, default: true, randomize: false, noPreset: true, uniform: false, desc: 'Automatically rotate to the next Enso track on the Circle of Fifths every 3 minutes (180s).' },
       { key: 'soundReverbMode', label: 'Reverb engine', type: 'select', options: ENSO_REVERB_MODES, value: ENSO_REVERB_MODES[0], default: ENSO_REVERB_MODES[0], randomize: false, noPreset: true, uniform: false, desc: 'Stamped OGG plays pre-baked 320 kbps stereo convolution-reverb samples with zero live reverb CPU; Lite FDN adds a lightweight 4-tap non-convolution delay network.' },
@@ -6145,7 +6744,7 @@ const __default_params = [
       { key: 'evolveSpeed', label: 'Evolve speed', type: 'range', value: 1, default: 1, min: 0.02, max: 2, step: 0.01, randomize: false, noPreset: true, uniform: false, desc: 'Speed of crystal seed growth, frontier branching, and old-segment dissolving (lower = calm glacial drift, higher = brisk evolution).' },
       { key: 'morphPresets', label: 'Morph presets', type: 'bool', value: true, default: true, uniform: false, desc: 'Secondary evolve setting: very gradually morphs parameters across the standard presets in sequence and then rolls random dice for endless new variations.' },
       { key: 'morphTime', label: 'Morph time (s)', type: 'range', value: 60, default: 60, min: 5, max: 600, step: 5, uniform: false, desc: 'Seconds for each gradual parameter transition between presets and random variations (60s default, up to 10 min / 600s).' },
-      { key: 'iridescence', label: 'Iridescence', value: 0.35, default: 0.35, min: 0, max: 3, step: 0.01, desc: 'Thin-film spectral interference and chromatic rainbow dispersion across crystal facets, bevels, and internal growth zones (crank up to 3 for ridiculously strong hyper-prismatic rainbows).' },
+      { key: 'iridescence', label: 'Iridescence', value: 0.22, default: 0.22, min: 0, max: 1.5, step: 0.01, desc: 'Subtle thin-film spectral interference and chromatic dispersion across crystal facets, bevels, and internal growth zones.' },
       { key: 'flash', label: 'Flash', value: 0.5, default: 0.5, min: 0, max: 2, step: 0.01, desc: 'Subtle, occasional deep internal glow that lights up inside the heart of select crystals as they turn.' },
       { key: 'habit', label: 'Crystal habit', type: 'select', options: HABITS, value: 'Quartz Cluster', uniform: false, desc: 'Mineralogical growth architecture: radial quartz, cathedral parallel towers, penetration twins, scepter caps, isometric octahedra, tabular beryl, druzy geode bowl, or dendritic starburst.' },
       { key: 'autoGrow', label: 'Auto grow', type: 'bool', value: false, default: false, uniform: false, desc: 'Automatically grow the crystals sideways (on wide screens) or upwards (on tall screens) until they fill the viewport, then slow down.' },
@@ -6292,7 +6891,7 @@ const presets = {
     needles: 0,
     fractures: 0.45,
     hueShift: 180,
-    iridescence: 0.35,
+    iridescence: 0.22,
     flash: 0.5,
   },
   'Glacial Ice': {
@@ -6330,7 +6929,7 @@ const presets = {
     fractures: 0.65,
     fractureGlow: 1.9,
     hueShift: 180,
-    iridescence: 0.55,
+    iridescence: 0.25,
     flash: 0.45,
   },
   'Phantom Emerald Twin': {
@@ -6371,7 +6970,7 @@ const presets = {
     needleColour: '#a7f3d0',
     fractures: 0.55,
     hueShift: 180,
-    iridescence: 0.28,
+    iridescence: 0.2,
     flash: 0.5,
   },
   'Stepped Bismuth Hopper': {
@@ -6400,7 +6999,7 @@ const presets = {
     biColour: 0.85,
     coreColour: '#38bdf8',
     ior: 2.15,
-    fire: 0.095,
+    fire: 0.065,
     striations: 0.65,
     striationScale: 55,
     frostShare: 0.1,
@@ -6410,11 +7009,11 @@ const presets = {
     phantom: 0.9,
     phantomRate: 0.75,
     phantomLayers: 3,
-    fractures: 0.85,
-    fractureGlow: 2.8,
+    fractures: 0.55,
+    fractureGlow: 1.4,
     hueShift: 180,
     rimLight: 16,
-    iridescence: 1.65,
+    iridescence: 0.42,
     flash: 0.55,
   },
   'High-Dispersion Diamond': {
@@ -6442,7 +7041,7 @@ const presets = {
     colourZoning: 0.1,
     biColour: 0,
     ior: 2.417,
-    fire: 0.135,
+    fire: 0.045,
     fireSamples: 8,
     bounces: 8,
     depth: 4,
@@ -6455,12 +7054,12 @@ const presets = {
     phantomRate: 0.35,
     phantomLayers: 2,
     needles: 0,
-    fractures: 0.35,
-    fractureGlow: 2.2,
+    fractures: 0.12,
+    fractureGlow: 0.9,
     hueShift: 180,
     keyLight: 11,
     rimLight: 18,
-    iridescence: 0.78,
+    iridescence: 0.14,
     flash: 0.45,
   },
   'Ruby Druzy Spire': {
@@ -6496,7 +7095,7 @@ const presets = {
     fractures: 0.5,
     hueShift: 180,
     rimLight: 14,
-    iridescence: 0.35,
+    iridescence: 0.22,
     flash: 0.5,
   },
   'Watermelon Tourmaline': {
@@ -6539,7 +7138,7 @@ const presets = {
     fractures: 0.4066,
     fractureGlow: 1.4131,
     hueShift: 180,
-    iridescence: 0.4234,
+    iridescence: 0.24,
     flash: 0.45,
   },
   'Rutilated Smoky Scepter': {
@@ -6576,7 +7175,7 @@ const presets = {
     needleColour: '#fbbf24',
     fractures: 0.35,
     hueShift: 180,
-    iridescence: 0.3,
+    iridescence: 0.2,
     flash: 0.5,
   },
   'Tabular Aquamarine': {
@@ -6617,7 +7216,7 @@ const presets = {
     needleColour: '#e0f2fe',
     fractures: 0.3,
     hueShift: 180,
-    iridescence: 0.45,
+    iridescence: 0.24,
     flash: 0.5,
   },
   'Classic Quartz Prism': {
@@ -6656,7 +7255,7 @@ const presets = {
     fractures: 0.3,
     hueShift: 180,
     backdropLight: 0.095,
-    iridescence: 0.22,
+    iridescence: 0.16,
     flash: 0.4,
   },
 };
@@ -6689,7 +7288,7 @@ function randomize(store) {
   return {
     seed: Math.floor(r() * 100),
     habit,
-    iridescence: r() < 0.15 ? range(0.08, 0.28) : range(0.28, 1.85),
+    iridescence: r() < 0.25 ? range(0.06, 0.18) : range(0.18, 0.42),
     flash: r() < 0.2 ? range(0.15, 0.35) : range(0.35, 0.95),
     symmetry,
     taper: habit === 'Scepter Overgrowth' ? range(-0.28, -0.05) : range(-0.15, 0.28),
@@ -6714,7 +7313,7 @@ function randomize(store) {
     biColour: r() < 0.68 ? range(0.28, 0.9) : 0,
     coreColour,
     ior,
-    fire: ior > 2.0 ? range(0.075, 0.135, 0.001) : range(0.02, 0.075, 0.001),
+    fire: ior > 2.0 ? range(0.035, 0.065, 0.001) : range(0.018, 0.045, 0.001),
     fireSamples: ior > 2.0 ? 7 : 5,
     bounces: 6,
     depth: 3,
@@ -6733,8 +7332,8 @@ function randomize(store) {
     needles: r() < 0.45 ? Math.floor(range(2, 9, 1)) : 0,
     needleWidth: range(0.0018, 0.004, 0.0001),
     needleColour,
-    fractures: range(0.25, 0.75),
-    fractureGlow: range(1.1, 2.6, 0.05),
+    fractures: range(0.15, 0.48),
+    fractureGlow: range(0.8, 1.5, 0.05),
     hueShift: 180,
     studioEdge,
     backdropSat: range(0.48, 0.75),

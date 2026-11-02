@@ -107,12 +107,24 @@ function centeredPlane(row, k, L, lx, ly, lz, offsetFromMid) {
 }
 
 function buildSideBasis(twistAngle) {
-  let px = -ax[2], pz = ax[0], pl = Math.hypot(px, pz);
-  if (pl < 1e-4) { px = 1; pz = 0; pl = 1; }
-  px /= pl; pz /= pl;
-  const qx = ax[1] * pz, qy = ax[2] * px - ax[0] * pz, qz = -ax[1] * px;
+  // Singularity-free quaternion half-angle orthonormal basis around +Y = (0, 1, 0).
+  // Unlike cross([0, 1, 0], ax), which has a pole singularity right at ax = (0, 1, 0)
+  // where upright crystals point (causing a 180-degree azimuth pirouette when a crystal
+  // tilts across vertical), this shortest-arc mapping is C-infinity smooth across +Y.
+  const ax0 = ax[0], ay0 = ax[1], az0 = ax[2];
+  const denom = Math.max(1e-4, 1.0 + ay0);
+  const ux0 = 1.0 - (ax0 * ax0) / denom;
+  const uy0 = -ax0;
+  const uz0 = -(ax0 * az0) / denom;
+  const vx0 = -(ax0 * az0) / denom;
+  const vy0 = -az0;
+  const vz0 = 1.0 - (az0 * az0) / denom;
   const c = Math.cos(twistAngle), s = Math.sin(twistAngle);
-  sx[0] = c * px + s * qx; sx[1] = s * qy; sx[2] = c * pz + s * qz;
+  sx[0] = c * ux0 + s * vx0;
+  sx[1] = c * uy0 + s * vy0;
+  sx[2] = c * uz0 + s * vz0;
+  const sl = Math.hypot(sx[0], sx[1], sx[2]) || 1;
+  sx[0] /= sl; sx[1] /= sl; sx[2] /= sl;
   sz[0] = ax[1] * sx[2] - ax[2] * sx[1];
   sz[1] = ax[2] * sx[0] - ax[0] * sx[2];
   sz[2] = ax[0] * sx[1] - ax[1] * sx[0];
@@ -183,7 +195,13 @@ function createInitialCohortNode(i, nBase, nPrimary, parentNode, startFromSeed, 
     parentUid: parentNode ? parentNode.uid : (parentIdx >= 0 ? parentIdx + 1 : -1),
     twinRoll,
     twinW: 0,
+    smoothTwinW: 0,
+    velTwinW: 0,
     presence: 1,
+    smoothPresence: 1,
+    velPresence: 0,
+    smoothInit: false,
+    frameInit: false,
     birthHabit: habit,
     birthSymmetry: symmetry,
     birthNPrimary: nPrimary,
@@ -450,7 +468,7 @@ export function resetEvolution(P, _opts = {}) {
 }
 
 export function triggerGrowBurst(_P) {
-  cluster.evoBurstVel = Math.min(2.4, (cluster.evoBurstVel || 0) + 0.65);
+  cluster.evoBurstVel = Math.min(0.35, (cluster.evoBurstVel || 0) + 0.14);
   cluster.version++;
 }
 
@@ -461,6 +479,7 @@ export function stepEvolution(P, dt, viewportW = 0, viewportH = 0) {
 
   const safeDt = Math.max(0, Math.min(Number(dt) || 0, 30));
   cluster.pendingCenterDt = (cluster.pendingCenterDt || 0) + safeDt;
+  cluster.pendingNodeDt = (cluster.pendingNodeDt || 0) + safeDt;
 
   const evolveOn = P?.evolve ? !!P.evolve.value : true;
   if (!evolveOn) {
@@ -555,23 +574,72 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
   let minY = Infinity, maxY = -Infinity, maxR2 = 0;
   let weightedSumX = 0, weightedSumY = 0, weightedSumZ = 0, weightTotal = 0;
 
-  const effPrimaryCount = Math.max(1.8, floatC * (1.0 - 0.38 * twinShare));
+  const rawEffPrimaryCount = Math.max(1.8, floatC * (1.0 - 0.38 * twinShare));
+  const nodeDt = evolveOn ? Math.max(0, Math.min(cluster.pendingNodeDt || 0, 10)) : 0;
+  cluster.pendingNodeDt = 0;
+  if (!Number.isFinite(cluster.smoothEffPrimaryCount) || !evolveOn) {
+    cluster.smoothEffPrimaryCount = rawEffPrimaryCount;
+  } else if (nodeDt > 0) {
+    cluster.smoothEffPrimaryCount += (rawEffPrimaryCount - cluster.smoothEffPrimaryCount) * (1 - Math.exp(-0.65 * nodeDt));
+  }
+  const effPrimaryCount = cluster.smoothEffPrimaryCount;
   let activeCount = 0;
 
-  for (let idx = 0; idx < nActive; idx++) {
+  for (let idx = 0; idx < cluster.nodes.length; idx++) {
     if (activeCount >= MAX_CRYSTALS) break;
     const node = cluster.nodes[idx];
     const i = node.cohortIdx;
     const nodeSymmetry = symmetry;
 
-    // Continuous presence factor for crystal idx: smoothly emerges from 0 out of the core
-    // as floatC crosses idx..idx+1, and smoothly shrinks back to 0 before removal.
-    const presence = smooth01(Math.max(0.0, Math.min(1.0, floatC - i)));
+    // Continuous presence & twinW with slow 2nd-order critically-damped spring (omega = 0.65 rad/s,
+    // max velocity <= 0.20/s) so budding crystals and twin branches emerge at the exact same
+    // slow, meditative pace as the rest of the crystal transformation.
+    const rawPresence = idx < nActive ? smooth01(Math.max(0.0, Math.min(1.0, floatC - i))) : 0.0;
+    const rawTwinW = i < 2 ? 0.0 : smooth01(Math.max(0.0, Math.min(1.0, (twinShare - node.twinRoll + 0.44) / 0.88)));
+    if (!node.smoothInit || !evolveOn) {
+      node.smoothPresence = rawPresence;
+      node.velPresence = 0;
+      node.smoothTwinW = rawTwinW;
+      node.velTwinW = 0;
+      node.smoothInit = true;
+    } else if (nodeDt > 0) {
+      let remN = nodeDt;
+      const omegaN = 0.65;
+      const omegaN2 = omegaN * omegaN;
+      const dampN = 2.0 * omegaN;
+      const maxVelN = 0.20;
+      while (remN > 1e-6) {
+        const ndt = Math.min(remN, 0.05);
+        remN -= ndt;
+        node.velPresence += ((rawPresence - node.smoothPresence) * omegaN2 - dampN * node.velPresence) * ndt;
+        if (node.velPresence > maxVelN) node.velPresence = maxVelN;
+        else if (node.velPresence < -maxVelN) node.velPresence = -maxVelN;
+        node.smoothPresence = Math.max(0, Math.min(1, node.smoothPresence + node.velPresence * ndt));
+
+        node.velTwinW += ((rawTwinW - node.smoothTwinW) * omegaN2 - dampN * node.velTwinW) * ndt;
+        if (node.velTwinW > maxVelN) node.velTwinW = maxVelN;
+        else if (node.velTwinW < -maxVelN) node.velTwinW = -maxVelN;
+        node.smoothTwinW = Math.max(0, Math.min(1, node.smoothTwinW + node.velTwinW * ndt));
+      }
+      if (rawPresence <= 1e-4 && node.smoothPresence < 1e-3) {
+        node.smoothPresence = 0;
+        node.velPresence = 0;
+      } else if (rawPresence >= 1 - 1e-4 && node.smoothPresence > 1 - 1e-3) {
+        node.smoothPresence = 1;
+        node.velPresence = 0;
+      }
+    }
+
+    const presence = evolveOn ? node.smoothPresence : rawPresence;
+    const twinW = evolveOn ? node.smoothTwinW : rawTwinW;
     node.presence = presence;
+    node.twinW = twinW;
+    node.isSecondary = twinW >= 0.5;
     if (presence < 1e-3) {
       node.worldL = 0;
       node.worldFullL = 0;
       node.worldR = 0;
+      node.frameInit = false;
       continue;
     }
 
@@ -606,12 +674,12 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
     // 1. Compute Primary Root Transform (primRoot, primAx, primBaseL, primBaseR, primTw)
     const rho = i === 0 ? 0.12 * node.uRho : Math.min(1.0, Math.sqrt((i + 0.5 * node.uRho) / effPrimaryCount));
     node.rho = rho;
-    const az = i * GOLDEN + 0.55 * node.uAz + 0.14 * azWave;
+    const az = i * GOLDEN + 0.55 * node.uAz + 0.04 * azWave;
     let lean = fan * Math.min(1, rho + 0.28 * node.uLean * (i > 0 ? 1 : 0.25));
     const smoothAbsTilt = Math.sqrt(tiltWave * tiltWave + 0.01) - 0.1;
     lean = i === 0
-      ? Math.max(0.02, lean * (1 + 0.18 * tiltWave) + 0.10 * fan * smoothAbsTilt)
-      : lean * (1 + 0.18 * tiltWave);
+      ? Math.max(0.02, lean * (1 + 0.08 * tiltWave) + 0.06 * fan * smoothAbsTilt)
+      : lean * (1 + 0.08 * tiltWave);
 
     if (growSideways) {
       if (i > 0) {
@@ -622,7 +690,7 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
       lean = lean * (1 - 0.58 * dirProgress);
     }
 
-    const leanAz = az + 0.35 * node.uLeanAz + 0.14 * tiltWave;
+    const leanAz = az + 0.35 * node.uLeanAz + 0.04 * tiltWave;
     primAx[0] = Math.sin(lean) * Math.cos(leanAz);
     primAx[1] = Math.cos(lean);
     primAx[2] = Math.sin(lean) * Math.sin(leanAz);
@@ -637,7 +705,7 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
     }
 
     const primBaseR = P.thickness.value * Math.pow(primBaseL, 0.65) * Math.max(0.25, 1 + P.thicknessJitter.value * 0.55 * node.uRadSym) * radMod;
-    const primTw = node.uTwist + 0.22 * w4;
+    const primTw = node.uTwist + 0.03 * w3;
 
     ax[0] = primAx[0]; ax[1] = primAx[1]; ax[2] = primAx[2];
     buildSideBasis(primTw);
@@ -682,10 +750,6 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
 
     // 2. Continuous twinShare transition (twinW in [0, 1]): smoothly blends between
     // primary root crystal and secondary twin branch with zero discrete jumps.
-    const twinW = i < 2 ? 0.0 : smooth01(Math.max(0.0, Math.min(1.0, (twinShare - node.twinRoll + 0.18) / 0.36)));
-    node.twinW = twinW;
-    node.isSecondary = twinW >= 0.5;
-
     let baseL = primBaseL;
     let baseR = primBaseR;
     let tw = primTw;
@@ -695,7 +759,6 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
         root[k] = primRoot[k];
         ax[k] = primAx[k];
       }
-      buildSideBasis(tw);
     } else {
       const pNode = cluster.nodes[node.parentIdx >= 0 ? node.parentIdx : 0];
       if (pNode && pNode.worldL > 0.005) {
@@ -716,8 +779,8 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
       const pR = node.savedParentR;
       const pTwist = node.savedParentTwist;
 
-      const branchAz = i * GOLDEN + 0.35 * node.uBranchAz + 0.14 * azWave;
-      const bAngle = twinAngle * (0.85 + 0.3 * node.uBranchAngle) * (1 + 0.18 * tiltWave);
+      const branchAz = i * GOLDEN + 0.35 * node.uBranchAz + 0.04 * azWave;
+      const bAngle = twinAngle * (0.85 + 0.3 * node.uBranchAngle) * (1 + 0.06 * tiltWave);
       const cosB = Math.cos(bAngle), sinB = Math.sin(bAngle);
 
       for (let k = 0; k < 3; k++) ax[k] = pAxis[k];
@@ -762,7 +825,8 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
       const tal = Math.hypot(twinAx[0], twinAx[1], twinAx[2]) || 1;
       twinAx[0] /= tal; twinAx[1] /= tal; twinAx[2] /= tal;
 
-      const twinTw = pTwist + branchAz + 0.22 * w4;
+      // Keep axial twist identical between primary and twin so twinW blending never spins the shaft
+      const twinTw = primTw;
       const twinBaseL = pFullL * (0.44 + 0.32 * node.uBranchLen) * (1 + 0.32 * dirProgress) * lenMod;
       const twinBaseR = Math.max(0.035, P.thickness.value * 0.85) * (0.68 + 0.28 * node.uBranchRad) * radMod;
 
@@ -774,9 +838,71 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
       ax[0] /= al; ax[1] /= al; ax[2] /= al;
       baseL = primBaseL + (twinBaseL - primBaseL) * twinW;
       baseR = primBaseR + (twinBaseR - primBaseR) * twinW;
-      tw = primTw + (twinTw - primTw) * twinW;
-      buildSideBasis(tw);
+      tw = twinTw;
     }
+
+    // Per-crystal world-space angular velocity clamp & smooth damping so no crystal ever spins or whips rapidly
+    if (evolveOn && node.frameInit && nodeDt > 0) {
+      const prevAx = node.worldAxis;
+      const dotA = Math.max(-1, Math.min(1, prevAx[0] * ax[0] + prevAx[1] * ax[1] + prevAx[2] * ax[2]));
+      const thetaA = Math.acos(dotA);
+      if (thetaA > 1e-5) {
+        const stepA = Math.min(thetaA, thetaA * (1 - Math.exp(-1.5 * nodeDt)), 0.11 * nodeDt);
+        const fA = stepA / thetaA;
+        ax[0] = prevAx[0] + (ax[0] - prevAx[0]) * fA;
+        ax[1] = prevAx[1] + (ax[1] - prevAx[1]) * fA;
+        ax[2] = prevAx[2] + (ax[2] - prevAx[2]) * fA;
+        const al = Math.hypot(ax[0], ax[1], ax[2]) || 1;
+        ax[0] /= al; ax[1] /= al; ax[2] /= al;
+      }
+
+      const prevRoot = node.worldRoot;
+      const dxR = root[0] - prevRoot[0];
+      const dyR = root[1] - prevRoot[1];
+      const dzR = root[2] - prevRoot[2];
+      const distR = Math.hypot(dxR, dyR, dzR);
+      if (distR > 1e-5) {
+        const stepR = Math.min(distR, distR * (1 - Math.exp(-1.8 * nodeDt)), 0.18 * nodeDt);
+        const fR = stepR / distR;
+        root[0] = prevRoot[0] + dxR * fR;
+        root[1] = prevRoot[1] + dyR * fR;
+        root[2] = prevRoot[2] + dzR * fR;
+      }
+    }
+
+    buildSideBasis(tw);
+
+    if (evolveOn && node.frameInit && nodeDt > 0) {
+      const prevSx = node.worldSide;
+      const proj = prevSx[0] * ax[0] + prevSx[1] * ax[1] + prevSx[2] * ax[2];
+      let px0 = prevSx[0] - proj * ax[0];
+      let py0 = prevSx[1] - proj * ax[1];
+      let pz0 = prevSx[2] - proj * ax[2];
+      const pl0 = Math.hypot(px0, py0, pz0);
+      if (pl0 > 1e-4) {
+        px0 /= pl0; py0 /= pl0; pz0 /= pl0;
+        const dotS = Math.max(-1, Math.min(1, px0 * sx[0] + py0 * sx[1] + pz0 * sx[2]));
+        const thetaS = Math.acos(dotS);
+        if (thetaS > 1e-5) {
+          const stepS = Math.min(thetaS, thetaS * (1 - Math.exp(-1.5 * nodeDt)), 0.10 * nodeDt);
+          const fS = stepS / thetaS;
+          sx[0] = px0 + (sx[0] - px0) * fS;
+          sx[1] = py0 + (sx[1] - py0) * fS;
+          sx[2] = pz0 + (sx[2] - pz0) * fS;
+          const sProj = sx[0] * ax[0] + sx[1] * ax[1] + sx[2] * ax[2];
+          sx[0] -= sProj * ax[0];
+          sx[1] -= sProj * ax[1];
+          sx[2] -= sProj * ax[2];
+          const sl = Math.hypot(sx[0], sx[1], sx[2]) || 1;
+          sx[0] /= sl; sx[1] /= sl; sx[2] /= sl;
+          sz[0] = ax[1] * sx[2] - ax[2] * sx[1];
+          sz[1] = ax[2] * sx[0] - ax[0] * sx[2];
+          sz[2] = ax[0] * sx[1] - ax[1] * sx[0];
+        }
+      }
+    }
+
+    node.frameInit = true;
 
     // Apply procedural growth scaling and continuous crystal count presence to L and r
     const L = Math.max(1e-4, baseL * gScale * presence);
@@ -898,12 +1024,6 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
 
   cluster.crystals = Math.max(1, activeCount);
   cluster.activeVectors = cluster.crystals * CRYSTAL_PLANES;
-  for (let idx = nActive; idx < cluster.nodes.length; idx++) {
-    cluster.nodes[idx].presence = 0;
-    cluster.nodes[idx].worldL = 0;
-    cluster.nodes[idx].worldFullL = 0;
-    cluster.nodes[idx].worldR = 0;
-  }
 
   const targetCx = weightTotal > 1e-6 ? weightedSumX / weightTotal : 0;
   const targetCy = weightTotal > 1e-6 ? weightedSumY / weightTotal : (Number.isFinite(minY) ? 0.5 * (minY + maxY) : 0);

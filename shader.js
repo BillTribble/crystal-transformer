@@ -174,7 +174,8 @@ vec3 env(vec3 dc, float rough) {
 vec3 spectralRainbow(float t) {
   vec3 x = fract(t + vec3(0.0, 0.66667, 0.33333));
   vec3 wave = clamp(abs(x * 6.0 - 3.0) - 1.0, 0.0, 1.0);
-  return wave * wave * (3.0 - 2.0 * wave);
+  vec3 raw = wave * wave * (3.0 - 2.0 * wave);
+  return mix(vec3(0.92, 0.94, 0.98), raw, 0.38);
 }
 vec4 encodeHdr(vec3 c) { return vec4(c / (1.0 + c), 1.0); }
 vec3 decodeHdr(vec4 e) { return e.rgb / max(1.0 - e.rgb, 1e-4); }
@@ -383,10 +384,10 @@ vec3 inside(int id, vec3 ro, vec3 rd, float len, float travelled, float jitter, 
     }
 
     if (u_iridescence > 0.01) {
-      float iridPhase = hgt * 1.85 + radFrac * 1.25 + dot(rd, axis) * 1.15 + hueOff + v.b * 0.75;
+      float iridPhase = hgt * 1.45 + radFrac * 0.95 + dot(rd, axis) * 0.95 + hueOff + v.b * 0.55;
       vec3 iridWave = spectralRainbow(iridPhase);
-      float veilBand = (0.03 + 0.14 * v.g + 0.06 * v.r) * clamp(u_iridescence * 0.48, 0.0, 1.3);
-      scat += T * iridWave * tintedLightIn * veilBand * dt * 2.1;
+      float veilBand = (0.015 + 0.07 * v.g + 0.03 * v.r) * clamp(u_iridescence * 0.24, 0.0, 0.45);
+      scat += T * iridWave * tintedLightIn * veilBand * dt * 1.1;
     }
 
     vec3 sigma = baseSigma * opticalScale * (1.0 + u_colourZoning * (2.0 * hgt - 1.0)) * (0.75 + 0.5 * v.b);
@@ -484,13 +485,14 @@ vec3 inside(int id, vec3 ro, vec3 rd, float len, float travelled, float jitter, 
           float extent = length(hp - fc) / (r * (1.6 + 0.35 * u_iridescence));
           float mask = fracW * (1.0 - smoothstep(0.55, 0.78, extent + 0.45 * (v.b - 0.5) + 0.25 * v.r));
           if (mask > 0.0) {
-            float film = v.b * 2.5 + length(hp - fc) * 6.0 + hueOff + abs(dn) * 2.2;
-            vec3 irid = spectralRainbow(film);
-            float fr = 0.18 + 0.82 * pow(1.0 - abs(dn), 3.2);
-            vec3 refl = env(reflect(rd, fn), 0.03) + f_ambient * (0.35 * u_flash + 0.2 * u_iridescence);
-            float glowBoost = u_fractureGlow * (1.0 + u_iridescence * 1.2 + u_flash * 1.45);
+            float film = v.b * 0.85 + length(hp - fc) * 1.4 + hueOff + abs(dn) * 1.2;
+            vec3 irid = mix(vec3(0.96, 0.97, 1.0), spectralRainbow(film), clamp(u_iridescence * 0.42, 0.0, 0.48));
+            float fr = 0.10 + 0.65 * pow(1.0 - abs(dn), 3.6);
+            vec3 rawRefl = env(reflect(rd, fn), 0.05);
+            vec3 refl = (rawRefl / (1.0 + 1.2 * max(rawRefl.r, max(rawRefl.g, rawRefl.b)))) + f_ambient * (0.14 * u_flash + 0.08 * u_iridescence);
+            float glowBoost = min(u_fractureGlow, 1.8) * 0.42;
             scat += T * mask * glowBoost * fr * irid * refl;
-            T *= 1.0 - 0.55 * mask * fr;
+            T *= 1.0 - 0.35 * mask * fr;
           }
         }
       }
@@ -581,8 +583,8 @@ vec3 facetIridescence(int id, int k, vec3 p, vec3 rd, vec3 n, float dEdge, vec3 
   vec3 specCol = normalize(mix(irid1, irid2, 0.32) + vec3(1e-4)) * 1.35;
   float fresRim = pow(1.0 - cosV, 2.0);
   float s = u_iridescence;
-  vec3 tinted = mix(baseRefl, baseRefl * specCol * 1.85, clamp(s * 0.75, 0.0, 1.0));
-  vec3 sheen = specCol * f_ambient * (0.28 + 0.85 * fresRim) * min(s, 3.0) * 0.35;
+  vec3 tinted = mix(baseRefl, baseRefl * specCol * 1.15, clamp(s * 0.38, 0.0, 0.55));
+  vec3 sheen = specCol * f_ambient * (0.12 + 0.42 * fresRim) * min(s, 1.5) * 0.14;
   return tinted + sheen;
 }
 
@@ -734,7 +736,7 @@ void main() {
   }
 
   if (dot(thr, thr) > 0.0) {
-    float effFire = u_fire + u_iridescence * 0.075;
+    float effFire = u_fire + u_iridescence * 0.018;
     if (lastRefracted && effFire > 0.005 && lastFireAlpha > 1e-4) {
       int ns = int(u_fireSamples + 0.5);
       vec3 acc = vec3(0.0), wsum = vec3(0.0);
@@ -752,7 +754,7 @@ void main() {
         if (u_iridescence > 0.0) {
           float defl = length(sampleDir - initialRd);
           vec3 prism = spectralRainbow(defl * 2.4 + x * 0.85);
-          eCol += prism * f_ambient * u_iridescence * 0.45 * lastFireAlpha * smoothstep(0.04, 0.45, defl);
+          eCol += prism * f_ambient * u_iridescence * 0.14 * lastFireAlpha * smoothstep(0.06, 0.48, defl);
         }
         acc += w * eCol;
       }

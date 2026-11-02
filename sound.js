@@ -86,6 +86,7 @@ export const ENSO_TRACKS = [
     phraseCycleSec: 15.8,
     phraseGateProb: 0.76,
     phraseLengthLfo: { enabled: true, periodSec: 180, minRatio: 0.50, maxRatio: 1.00 },
+    washInstrument: 'pad',
     chordInstrument: 'choir',
     chordRollMs: 112,
     chordVel: 0.54,
@@ -143,7 +144,8 @@ export const ENSO_TRACKS = [
     phraseCycleSec: 17.6,
     phraseGateProb: 0.72,
     phraseLengthLfo: { enabled: false },
-    chordInstrument: 'piano',
+    washInstrument: 'choir',
+    chordInstrument: 'choir',
     chordRollMs: 168,
     chordVel: 0.48,
     voices: {
@@ -192,7 +194,8 @@ export const ENSO_TRACKS = [
     phraseCycleSec: 19.4,
     phraseGateProb: 0.70,
     phraseLengthLfo: { enabled: false },
-    chordInstrument: 'piano',
+    washInstrument: 'drone',
+    chordInstrument: 'pad',
     chordRollMs: 208,
     chordVel: 0.48,
     voices: {
@@ -241,6 +244,7 @@ export const ENSO_TRACKS = [
     phraseCycleSec: 17.2,
     phraseGateProb: 0.74,
     phraseLengthLfo: { enabled: false },
+    washInstrument: 'tape',
     chordInstrument: 'pad',
     chordRollMs: 152,
     chordVel: 0.50,
@@ -294,6 +298,7 @@ export const ENSO_TRACKS = [
     phraseCycleSec: 13.8,
     phraseGateProb: 0.84,
     phraseLengthLfo: { enabled: false },
+    washInstrument: 'pad',
     chordInstrument: 'pad',
     chordRollMs: 72,
     chordVel: 0.44,
@@ -346,6 +351,7 @@ export const ENSO_TRACKS = [
     phraseCycleSec: 14.6,
     phraseGateProb: 0.86,
     phraseLengthLfo: { enabled: false },
+    washInstrument: 'choir',
     chordInstrument: 'tape',
     chordRollMs: 136,
     chordVel: 0.48,
@@ -384,7 +390,16 @@ export const ENSO_TRACKS = [
   },
 ];
 
-export const ENSO_TRACK_NAMES = ENSO_TRACKS.map((t) => t.label);
+export const ENSO_TRACK_NAMES = ENSO_TRACKS.map((t) => {
+  if (!t.scale) t.scale = t.intervals;
+  return t.label;
+});
+
+function midiToHz(midi) {
+  return 440 * Math.pow(2, (midi - 69) / 12);
+}
+
+const SAMPLE_SOURCE_RANK = { sync: 1, offline: 2, mp3: 3, ogg: 4 };
 
 export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
   let ctx = null;
@@ -397,9 +412,10 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
   let fdnNodes = [];
   let enabled = false;
   let volume = 0.75;
+  let washLevel = 0.68;
   let autoRotate = true;
   let reverbMode = ENSO_REVERB_MODES[0];
-  let trackIndex = 0;
+  let trackIndex = Math.floor(Math.random() * ENSO_TRACKS.length);
   let trackElapsedSec = 0;
   let totalListenedSec = 0;
   let phraseTimerSec = 15.0;
@@ -413,6 +429,21 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
   let offlineFallbackReady = false;
   let sampleLoadStarted = false;
   let preferredFormat = 'ogg';
+
+  // Heavenly Wash Engine (Strictly 1 single washInstrument per track, overlapping 16.5s washes every 5.8s–7.4s)
+  let washMasterGain = null;
+  let washSilkFilter = null;
+  let washWarmShelf = null;
+  let washFdnTap = null;
+  let washTimerSec = 6.2;
+  let currentWashCycleSec = 6.4;
+  let washesTriggered = 0;
+  let washColourStep = 0;
+  let lastWashChordMidis = [];
+  let lastWashTrackId = ENSO_TRACKS[0].id;
+  let lastWashInstrument = ENSO_TRACKS[0].washInstrument || 'pad';
+  let lastWashVoices = [];
+  let activeWashes = [];
 
   // Map<voice, Array<{ midi, buffer, source: 'ogg'|'mp3'|'offline' }>>
   const sampleBank = new Map();
@@ -445,11 +476,50 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
     const existingIdx = list.findIndex((x) => x.midi === midi);
     const entry = { midi, buffer, source: sourceTag };
     if (existingIdx >= 0) {
-      if (list[existingIdx].source !== 'offline' && sourceTag === 'offline') return;
+      const prevRank = SAMPLE_SOURCE_RANK[list[existingIdx].source] || 0;
+      const nextRank = SAMPLE_SOURCE_RANK[sourceTag] || 0;
+      if (nextRank < prevRank) return;
       list[existingIdx] = entry;
     } else {
       list.push(entry);
       list.sort((a, b) => a.midi - b.midi);
+    }
+  }
+
+  // Synchronous 0ms warm stereo bootstrap buffers so the very first wash & phrase play immediately
+  // even before OfflineAudioContext or network .ogg decoding completes.
+  function buildSyncBootstrapSamples(audioCtx) {
+    if (!audioCtx || sampleBank.size > 0) return;
+    const rate = 22050;
+    const dur = 3.2;
+    const frames = Math.floor(rate * dur);
+    const bootstrapZones = [
+      { voice: 'piano', midi: 60 },
+      { voice: 'pad',   midi: 55 },
+      { voice: 'choir', midi: 60 },
+      { voice: 'drone', midi: 43 },
+      { voice: 'bell',  midi: 67 },
+      { voice: 'tape',  midi: 55 },
+    ];
+    for (const z of bootstrapZones) {
+      try {
+        const buf = audioCtx.createBuffer(2, frames, rate);
+        const chL = buf.getChannelData(0);
+        const chR = buf.getChannelData(1);
+        const f0 = midiToHz(z.midi);
+        const isPerc = z.voice === 'piano' || z.voice === 'bell';
+        for (let i = 0; i < frames; i++) {
+          const t = i / rate;
+          const env = isPerc
+            ? Math.min(1, t / 0.01) * Math.exp(-1.1 * t)
+            : Math.min(1, t / 0.35) * Math.min(1, (dur - t) / 0.35);
+          const sL = 0.32 * Math.sin(2 * Math.PI * f0 * t) + 0.10 * Math.sin(2 * Math.PI * (f0 * 2.0) * t + 0.3);
+          const sR = 0.32 * Math.sin(2 * Math.PI * (f0 * 1.0012) * t + 0.6) + 0.10 * Math.sin(2 * Math.PI * (f0 * 1.9988) * t + 1.1);
+          chL[i] = sL * env;
+          chR[i] = sR * env;
+        }
+        registerSample(z.voice, z.midi, buf, 'sync');
+      } catch {}
     }
   }
 
@@ -587,8 +657,15 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
         const env = octx.createGain();
         const isPerc = z.voice === 'piano' || z.voice === 'bell';
         env.gain.setValueAtTime(0.0001, 0);
-        env.gain.linearRampToValueAtTime(0.60, isPerc ? 0.010 : 1.2);
-        env.gain.exponentialRampToValueAtTime(0.0001, z.dur - 0.15);
+        if (isPerc) {
+          env.gain.linearRampToValueAtTime(0.60, 0.010);
+          env.gain.exponentialRampToValueAtTime(0.0001, z.dur - 0.15);
+        } else {
+          // Flat sustained plateau for pad/choir/drone/tape so looped washes never decay early
+          env.gain.linearRampToValueAtTime(0.56, 0.45);
+          env.gain.setValueAtTime(0.56, z.dur - 0.40);
+          env.gain.linearRampToValueAtTime(0.0001, z.dur - 0.04);
+        }
         env.connect(octx.destination);
         env.connect(damp);
 
@@ -698,13 +775,277 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
     fdnSend = buildLiteFdnReverb(ctx, masterGain);
     syncReverbMode();
 
+    // Dedicated Heavenly Wash bus (Q = 0.5 silk lowpass + warm high-shelf -> washMasterGain)
+    washMasterGain = ctx.createGain();
+    washMasterGain.gain.value = washLevel;
+    washMasterGain.connect(dryBus);
+
+    washFdnTap = ctx.createGain();
+    washFdnTap.gain.value = 0.48;
+    washMasterGain.connect(washFdnTap);
+    if (fdnSend) washFdnTap.connect(fdnSend);
+
+    washSilkFilter = ctx.createBiquadFilter();
+    washSilkFilter.type = 'lowpass';
+    washSilkFilter.frequency.value = Math.max(920, Math.min(1220, (track.pianoCutoffHz || 1050) * 1.02));
+    washSilkFilter.Q.value = 0.5;
+
+    washWarmShelf = ctx.createBiquadFilter();
+    washWarmShelf.type = 'highshelf';
+    washWarmShelf.frequency.value = 1380;
+    washWarmShelf.Q.value = 0.5;
+    washWarmShelf.gain.value = -6.5;
+
+    washSilkFilter.connect(washWarmShelf);
+    washWarmShelf.connect(washMasterGain);
+
+    buildSyncBootstrapSamples(ctx);
     buildOfflineStampedFallback();
     loadServerSamples();
     return ctx;
   }
 
+  function syncTrackWashFilter(track) {
+    if (!ctx || !washSilkFilter) return;
+    const now = ctx.currentTime;
+    const targetCutoff = Math.max(920, Math.min(1220, (track.pianoCutoffHz || 1050) * 1.02));
+    washSilkFilter.frequency.setTargetAtTime(targetCutoff, now, 0.85);
+  }
+
+  // Heavenly Wash Engine: Uses strictly ONE instrument per track (track.washInstrument: 'pad' | 'choir' | 'drone' | 'tape')
+  // Fires every 5.8s–7.4s with a 5.0s cosine fade-in, 5.0s sustain, and 6.5s cosine fade-out (~16.5s total)
+  // so 2–3 overlapping washes in the active track's modal key are always sustaining with zero silence gaps.
+  function pickModalColourSemitones(track, stepIdx) {
+    const scale = track.scale || track.intervals || [0, 2, 4, 5, 7, 9, 11];
+    const third = (scale[2] ?? 4) + 12;
+    const fourth = (scale[3] ?? 5) + 12; // Lydian #11 (+18st) on C Lydian & F Lydian
+    const sixth = scale[5] ?? 9;
+    const seventh = scale[6] ?? 11;
+    const ninth = (scale[1] ?? 2) + 12;
+    const isLydian = (scale[3] ?? 5) === 6;
+    const palette = isLydian
+      ? [third, fourth, seventh, ninth, sixth + 12]
+      : [third, seventh, ninth, sixth, fourth];
+    return palette[stepIdx % palette.length];
+  }
+
+  function triggerHeavenlyWash(track = ENSO_TRACKS[trackIndex], { initial = false, crossfadeInSec = 5.0 } = {}) {
+    if (!enabled) return false;
+    const audioCtx = ensureContext();
+    if (!audioCtx || !washSilkFilter) return false;
+    if (audioCtx.state === 'suspended') {
+      audioCtx.resume().catch(() => {});
+    }
+
+    // Strictly ONE sustained non-piano instrument per track ('pad' | 'choir' | 'drone' | 'tape')
+    const rawInst = track.washInstrument || 'pad';
+    const washVoice = (rawInst === 'piano' || rawInst === 'bell') ? 'pad' : rawInst;
+    const scale = track.scale || track.intervals || [0, 2, 4, 5, 7, 9, 11];
+    const rootMidi = track.rootMidi || 48;
+    const fifthMidi = rootMidi + (scale[4] ?? 7);
+    const octaveMidi = rootMidi + 12;
+    const colourSemitones = pickModalColourSemitones(track, washColourStep++);
+    const colourMidi = rootMidi + colourSemitones;
+
+    const isDroneWash = washVoice === 'drone';
+    const voiceSpecs = isDroneWash
+      ? [
+          { voice: washVoice, midi: rootMidi - 12,    gain: 0.088, pan: -0.12 },
+          { voice: washVoice, midi: rootMidi,         gain: 0.082, pan: -0.32 },
+          { voice: washVoice, midi: fifthMidi - 12,   gain: 0.070, pan: +0.32 },
+          { voice: washVoice, midi: colourMidi - 12,  gain: 0.058, pan: +0.20 },
+        ]
+      : [
+          { voice: washVoice, midi: rootMidi,         gain: 0.086, pan: -0.34 },
+          { voice: washVoice, midi: fifthMidi,        gain: 0.072, pan: +0.34 },
+          { voice: washVoice, midi: octaveMidi,       gain: 0.060, pan: -0.22 },
+          { voice: washVoice, midi: colourMidi,       gain: 0.056, pan: +0.24 },
+        ];
+
+    const now = audioCtx.currentTime;
+    const attackSec = Math.max(4.0, Math.min(5.5, crossfadeInSec || 5.0));
+    const sustainSec = 6.0;
+    const releaseSec = 6.0;
+    const totalDur = attackSec + sustainSec + releaseSec; // 17.0s long sustained wash
+
+    // Smooth 64-point cosine attack (5s) -> full sustained plateau (6s) -> cosine release (6s)
+    const washEnv = audioCtx.createGain();
+    const curveLen = 64;
+    const curve = new Float32Array(curveLen);
+    const startFloor = initial ? 0.22 : 0.0002;
+    for (let i = 0; i < curveLen; i++) {
+      const t = (i / (curveLen - 1)) * totalDur;
+      if (t <= attackSec) {
+        const u = t / attackSec;
+        curve[i] = startFloor + (1.0 - startFloor) * 0.5 * (1.0 - Math.cos(Math.PI * u));
+      } else if (t <= attackSec + sustainSec) {
+        // Steady full sustained plateau
+        curve[i] = 1.0;
+      } else {
+        const u = Math.min(1.0, (t - attackSec - sustainSec) / releaseSec);
+        curve[i] = Math.max(0.0001, 0.5 * (1.0 + Math.cos(Math.PI * u)));
+      }
+    }
+    try {
+      washEnv.gain.setValueCurveAtTime(curve, now, totalDur);
+    } catch {
+      washEnv.gain.setValueAtTime(startFloor, now);
+      washEnv.gain.linearRampToValueAtTime(1.0, now + attackSec);
+      washEnv.gain.setValueAtTime(1.0, now + attackSec + sustainSec);
+      washEnv.gain.linearRampToValueAtTime(0.0001, now + totalDur);
+    }
+
+    // Separate track-transition crossfade gain node so track changes never collide with washEnv's curve
+    const washTrackFadeGain = audioCtx.createGain();
+    washTrackFadeGain.gain.setValueAtTime(1.0, now);
+
+    // Dedicated 680 Hz Q = 0.5 silk lowpass filter per wash so sustained tones are warm, smooth, and velvety
+    const washVoiceLp = audioCtx.createBiquadFilter();
+    washVoiceLp.type = 'lowpass';
+    washVoiceLp.frequency.setValueAtTime(washVoice === 'drone' ? 540 : 680, now);
+    washVoiceLp.Q.value = 0.5;
+
+    washVoiceLp.connect(washEnv);
+    washEnv.connect(washTrackFadeGain);
+    washTrackFadeGain.connect(washSilkFilter);
+
+    const sources = [];
+    const triggeredVoices = [];
+    const chordMidis = [];
+    for (let i = 0; i < voiceSpecs.length; i++) {
+      const sp = voiceSpecs[i];
+      const match = findClosestSample(sp.voice, sp.midi);
+      if (!match || !match.buffer) continue;
+
+      const src = audioCtx.createBufferSource();
+      src.buffer = match.buffer;
+      const rate = Math.max(0.45, Math.min(1.65, Math.pow(2, (sp.midi - match.midi) / 12)));
+      src.playbackRate.setValueAtTime(rate, now);
+
+      // Loop the sustain plateau of the reverb-stamped buffer (0.85s .. dur - 1.2s)
+      const bufDur = match.buffer.duration;
+      if (bufDur > 1.8) {
+        src.loop = true;
+        src.loopStart = 0.85;
+        src.loopEnd = Math.max(2.2, bufDur - 1.2);
+      }
+
+      const vGain = audioCtx.createGain();
+      vGain.gain.setValueAtTime(sp.gain, now);
+
+      // Pair with a continuous, non-decaying sustained harmonic tone voiced for washVoice
+      // so the 17-second wash holds a true, unbroken sustained plateau even when the sample tail dips.
+      const freq = midiToHz(sp.midi);
+      const susOsc1 = audioCtx.createOscillator();
+      susOsc1.type = (washVoice === 'pad' || washVoice === 'tape') ? 'triangle' : 'sine';
+      susOsc1.frequency.setValueAtTime(freq, now);
+      susOsc1.detune.setValueAtTime(i % 2 === 0 ? -4 : 4, now);
+
+      const susOsc2 = audioCtx.createOscillator();
+      susOsc2.type = 'sine';
+      susOsc2.frequency.setValueAtTime(washVoice === 'choir' ? freq * 2.0 : freq, now);
+      susOsc2.detune.setValueAtTime(i % 2 === 0 ? 5 : -5, now);
+
+      const susGain = audioCtx.createGain();
+      susGain.gain.setValueAtTime(sp.gain * 0.58, now);
+      susOsc1.connect(susGain);
+      susOsc2.connect(susGain);
+
+      if (audioCtx.createStereoPanner) {
+        const panner = audioCtx.createStereoPanner();
+        panner.pan.setValueAtTime(Math.max(-1, Math.min(1, sp.pan)), now);
+        src.connect(vGain);
+        vGain.connect(panner);
+        susGain.connect(panner);
+        panner.connect(washVoiceLp);
+      } else {
+        src.connect(vGain);
+        vGain.connect(washVoiceLp);
+        susGain.connect(washVoiceLp);
+      }
+
+      const offset = bufDur > 2.4 ? 0.85 + ((i * 0.17) % 0.65) : 0;
+      src.start(now, offset);
+      src.stop(now + totalDur + 0.08);
+      susOsc1.start(now);
+      susOsc2.start(now);
+      susOsc1.stop(now + totalDur + 0.08);
+      susOsc2.stop(now + totalDur + 0.08);
+
+      sources.push(src, susOsc1, susOsc2);
+      triggeredVoices.push(sp.voice);
+      chordMidis.push(sp.midi);
+    }
+
+    if (!sources.length) return false;
+
+    lastWashChordMidis = chordMidis;
+    lastWashTrackId = track.id;
+    lastWashInstrument = washVoice;
+    lastWashVoices = triggeredVoices;
+    washesTriggered++;
+
+    activeWashes = activeWashes.filter((w) => w.remainingSec > 0.05);
+    activeWashes.push({
+      id: washesTriggered,
+      trackId: track.id,
+      instrument: washVoice,
+      fadeGain: washTrackFadeGain,
+      sources,
+      remainingSec: totalDur,
+      totalDur,
+      chordMidis,
+    });
+
+    return true;
+  }
+
+  // Smoothly crossfade all active washes into the new track's tonic key and washInstrument over 4.8s
+  function crossfadeWashesToTrack(nextTrackObj, fadeSec = 4.8) {
+    syncTrackWashFilter(nextTrackObj);
+    if (ctx && activeWashes.length > 0) {
+      const now = ctx.currentTime;
+      for (const w of activeWashes) {
+        if (w.trackId !== nextTrackObj.id && w.fadeGain) {
+          try {
+            w.fadeGain.gain.cancelScheduledValues(now);
+            w.fadeGain.gain.setValueAtTime(Math.max(0.0001, w.fadeGain.gain.value), now);
+            w.fadeGain.gain.linearRampToValueAtTime(0.0001, now + fadeSec);
+            w.remainingSec = Math.min(w.remainingSec, fadeSec);
+          } catch {}
+        }
+      }
+    }
+    if (enabled) {
+      currentWashCycleSec = 6.2 + Math.random() * 0.8;
+      washTimerSec = currentWashCycleSec;
+      triggerHeavenlyWash(nextTrackObj, { initial: false, crossfadeInSec: fadeSec });
+    }
+  }
+
+  function tickWash(dt, track) {
+    if (activeWashes.length > 0) {
+      for (let i = activeWashes.length - 1; i >= 0; i--) {
+        activeWashes[i].remainingSec -= dt;
+        if (activeWashes[i].remainingSec <= 0) {
+          activeWashes.splice(i, 1);
+        }
+      }
+    }
+    washTimerSec -= dt;
+    if (washTimerSec <= 0) {
+      currentWashCycleSec = 6.2 + Math.random() * 0.8; // Regular ~6.5s overlapping sustained wash cadence
+      washTimerSec = currentWashCycleSec;
+      triggerHeavenlyWash(track, { initial: false, crossfadeInSec: 5.0 });
+    }
+  }
+
   function findClosestSample(voice, midiNote) {
-    const list = sampleBank.get(voice) || sampleBank.get('piano');
+    const list = sampleBank.get(voice) || (
+      voice === 'piano'
+        ? null
+        : (sampleBank.get('pad') || sampleBank.get('choir') || sampleBank.get('drone') || sampleBank.get('tape'))
+    );
     if (!list || !list.length) return null;
     let best = list[0];
     let bestDist = Math.abs(midiNote - best.midi);
@@ -974,7 +1315,6 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
     if (bgVoiceTimers.length > 0) {
       bgVoiceTimers = bgVoiceTimers.map((t) => t - clampedDt).filter((t) => t > 0);
     }
-    const track = ENSO_TRACKS[trackIndex];
 
     // 1. 3-Minute (180s) Circle-of-Fifths Automatic Track Rotation
     if (autoRotate) {
@@ -986,12 +1326,18 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
         chordStepIdx = 0;
         const nextT = ENSO_TRACKS[trackIndex];
         syncTrackPianoFilter(nextT);
+        crossfadeWashesToTrack(nextT, 4.8);
         onTrackChange?.(nextT.label, nextT);
         phraseTimerSec = 2.4;
       }
     }
 
-    // 2. Enso Felt Piano Phrase Engine (spacious 14s–24s breathing room, never overlapping)
+    const track = ENSO_TRACKS[trackIndex];
+
+    // 2. Heavenly Wash Engine: regular, smooth overlapping single-instrument washes in the track's key
+    tickWash(clampedDt, track);
+
+    // 3. Enso Felt Piano Phrase Engine (spacious 14s–24s breathing room, never overlapping)
     phraseTimerSec -= clampedDt;
     if (phraseTimerSec <= 0) {
       const baseCycle = (track.phraseCycleSec || 16.0) / Math.max(0.6, track.rotationSpeed || 1.0);
@@ -1001,7 +1347,7 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
       }
     }
 
-    // 3. Asynchronous Prime-Length Loops for Background Voices (pad, bell, choir, tape, drone)
+    // 4. Asynchronous Prime-Length Loops for Background Voices (pad, bell, choir, tape, drone)
     //    Matches eno_soundscape/js/probability-engine.js:
     //    - Piano never fires random single notes (handled exclusively by the Phrase Engine above)
     //    - When voiceId === track.chordInstrument (and !== 'piano'), its cycle triggers 1 gentle chord
@@ -1044,11 +1390,18 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
         if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
         masterGain.gain.cancelScheduledValues(audioCtx.currentTime);
         masterGain.gain.setTargetAtTime(volume, audioCtx.currentTime, 0.10);
+        if (washMasterGain) {
+          washMasterGain.gain.cancelScheduledValues(audioCtx.currentTime);
+          washMasterGain.gain.setTargetAtTime(washLevel, audioCtx.currentTime, 0.12);
+        }
       }
       // Reset timers & phases so the opening phrase has a full 16s+ breathing window after it plays
       const track = ENSO_TRACKS[trackIndex];
       syncTrackPianoFilter(track);
+      syncTrackWashFilter(track);
       phraseTimerSec = (track.phraseCycleSec || 16.0) * 1.05;
+      currentWashCycleSec = 6.2;
+      washTimerSec = currentWashCycleSec;
       voicePhases.pad = 0.45;
       voicePhases.bell = 0.10;
       voicePhases.choir = 0.30;
@@ -1058,9 +1411,10 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
       const fireInitial = () => {
         if (!enabled) return;
         const curTrack = ENSO_TRACKS[trackIndex];
-        // Soft foundational pad swell + the track's opening felt piano phrase (never overlapping two phrases!)
+        // Immediate heavenly wash in the track's single washInstrument + the track's opening felt piano phrase
+        triggerHeavenlyWash(curTrack, { initial: true, crossfadeInSec: 4.8 });
         const rootMidi = scaleDegreeToMidi(curTrack, 0, 0);
-        triggerVoice('pad', rootMidi, 0.45, -0.22, 0.90);
+        triggerVoice(curTrack.washInstrument || 'pad', rootMidi, 0.45, -0.22, 0.90);
         scheduleDelayed(() => {
           if (enabled) triggerTrackPhrase(curTrack, { forceFull: true });
         }, 280);
@@ -1072,6 +1426,7 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
       }
     } else {
       clearScheduledTimers();
+      activeWashes = [];
       if (ctx && masterGain) {
         masterGain.gain.cancelScheduledValues(ctx.currentTime);
         masterGain.gain.setTargetAtTime(0.0001, ctx.currentTime, 0.15);
@@ -1089,6 +1444,15 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
     return volume;
   }
 
+  function setWashLevel(nextLevel) {
+    const parsed = Number(nextLevel);
+    washLevel = Number.isFinite(parsed) ? Math.max(0, Math.min(1, parsed)) : 0.68;
+    if (ctx && washMasterGain) {
+      washMasterGain.gain.setTargetAtTime(washLevel, ctx.currentTime, 0.06);
+    }
+    return washLevel;
+  }
+
   function setTrack(labelOrId) {
     const q = String(labelOrId || '').trim().toLowerCase();
     const idx = ENSO_TRACKS.findIndex(
@@ -1102,10 +1466,12 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
       chordStepIdx = 0;
       const track = ENSO_TRACKS[trackIndex];
       syncTrackPianoFilter(track);
+      crossfadeWashesToTrack(track, 4.8);
       phraseTimerSec = (track.phraseCycleSec || 16.0) * 1.05;
+      onTrackChange?.(track.label, track);
       if (enabled) {
         const rootMidi = scaleDegreeToMidi(track, 0, 0);
-        triggerVoice('pad', rootMidi, 0.42, -0.20, 0.85);
+        triggerVoice(track.washInstrument || 'pad', rootMidi, 0.42, -0.20, 0.85);
         scheduleDelayed(() => {
           if (enabled) triggerTrackPhrase(track, { forceFull: true });
         }, 260);
@@ -1135,11 +1501,12 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
     chordStepIdx = 0;
     const track = ENSO_TRACKS[trackIndex];
     syncTrackPianoFilter(track);
+    crossfadeWashesToTrack(track, 4.8);
     phraseTimerSec = (track.phraseCycleSec || 16.0) * 1.05;
     onTrackChange?.(track.label, track);
     if (enabled) {
       const rootMidi = scaleDegreeToMidi(track, 0, 0);
-      triggerVoice('pad', rootMidi, 0.42, -0.20, 0.85);
+      triggerVoice(track.washInstrument || 'pad', rootMidi, 0.42, -0.20, 0.85);
       scheduleDelayed(() => {
         if (enabled) triggerTrackPhrase(track, { forceFull: true });
       }, 260);
@@ -1150,6 +1517,7 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
   return {
     get enabled() { return enabled; },
     get volume() { return volume; },
+    get washLevel() { return washLevel; },
     get autoRotate() { return autoRotate; },
     get reverbMode() { return reverbMode; },
     get rotateIntervalSec() { return TRACK_ROTATE_SECONDS; },
@@ -1157,6 +1525,14 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
     get currentTrack() { return ENSO_TRACKS[trackIndex]; },
     get trackElapsedSec() { return trackElapsedSec; },
     get notesTriggered() { return notesTriggered; },
+    get washesTriggered() { return washesTriggered; },
+    get activeWashCount() { return activeWashes.length; },
+    get washCycleSec() { return currentWashCycleSec; },
+    get washInstrument() { return ENSO_TRACKS[trackIndex]?.washInstrument || 'pad'; },
+    get lastWashInstrument() { return lastWashInstrument; },
+    get lastWashVoices() { return lastWashVoices.slice(); },
+    get lastWashChordMidis() { return lastWashChordMidis.slice(); },
+    get lastWashTrackId() { return lastWashTrackId; },
     get oggSamplesLoaded() { return oggSamplesLoaded; },
     get offlineFallbackReady() { return offlineFallbackReady; },
     get preferredFormat() { return preferredFormat; },
@@ -1170,11 +1546,13 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
     setEnabled,
     toggle() { return setEnabled(!enabled); },
     setVolume,
+    setWashLevel,
     setTrack,
     setAutoRotate,
     setReverbMode,
     nextTrack,
     triggerVoice,
+    triggerHeavenlyWash,
     tick,
   };
 }
