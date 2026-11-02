@@ -40,7 +40,8 @@ const CUSTOM_PRESETS_KEY = 'crystals:custom-presets';
 const STICKY_USER_KEYS = new Set([
   'timeScale', 'defaultZoom', 'evolve', 'evolveSpeed', 'morphPresets', 'morphTime',
   'autoGrow', 'growSpeed', 'growth', 'spinStart', 'spin', 'tilt', 'fov',
-  'bloom', 'faceGlare',
+  'bloom', 'faceGlare', 'mirrorMode', 'mirrorScale', 'mirrorStrength', 'mirrorComplement',
+  'occlusionStyle', 'occlusion',
 ]);
 const DISCRETE_INT_KEYS = new Set(['seed', 'fireSamples', 'bounces', 'depth', 'filmFps', 'targetFps', 'maxFps']);
 
