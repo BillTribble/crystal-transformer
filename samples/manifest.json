@@ -276,49 +276,49 @@
       "id": "tape_c4",
       "voice": "tape",
       "midi": 60,
-      "durationSec": 7.2,
+      "durationSec": 12.5,
       "sampleRate": 48000,
       "bitrateKbps": 320,
       "ogg": "samples/tape_c4.ogg",
       "mp3": "samples/tape_c4.mp3",
-      "oggBytes": 137740,
-      "mp3Bytes": 289965
+      "oggBytes": 255540,
+      "mp3Bytes": 502125
     },
     {
       "id": "drone_c2",
       "voice": "drone",
       "midi": 36,
-      "durationSec": 8.6,
+      "durationSec": 12.5,
       "sampleRate": 48000,
       "bitrateKbps": 320,
       "ogg": "samples/drone_c2.ogg",
       "mp3": "samples/drone_c2.mp3",
-      "oggBytes": 59161,
-      "mp3Bytes": 346605
+      "oggBytes": 70618,
+      "mp3Bytes": 502125
     },
     {
       "id": "drone_g2",
       "voice": "drone",
       "midi": 43,
-      "durationSec": 8.6,
+      "durationSec": 12.5,
       "sampleRate": 48000,
       "bitrateKbps": 320,
       "ogg": "samples/drone_g2.ogg",
       "mp3": "samples/drone_g2.mp3",
-      "oggBytes": 60222,
-      "mp3Bytes": 346605
+      "oggBytes": 77388,
+      "mp3Bytes": 502125
     },
     {
       "id": "drone_c3",
       "voice": "drone",
       "midi": 48,
-      "durationSec": 8.6,
+      "durationSec": 12.5,
       "sampleRate": 48000,
       "bitrateKbps": 320,
       "ogg": "samples/drone_c3.ogg",
       "mp3": "samples/drone_c3.mp3",
-      "oggBytes": 55214,
-      "mp3Bytes": 346605
+      "oggBytes": 84063,
+      "mp3Bytes": 502125
     }
   ]
 }

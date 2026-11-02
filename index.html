@@ -3498,37 +3498,37 @@ const ENSO_REVERB_MODES = [
   'Lite FDN Live',
 ];
 const SAMPLE_ZONES = [
-  { id: 'piano_c2', voice: 'piano', midi: 36, dur: 6.2 },
-  { id: 'piano_fs2', voice: 'piano', midi: 42, dur: 6.2 },
-  { id: 'piano_c3', voice: 'piano', midi: 48, dur: 6.0 },
-  { id: 'piano_fs3', voice: 'piano', midi: 54, dur: 6.0 },
-  { id: 'piano_c4', voice: 'piano', midi: 60, dur: 5.8 },
-  { id: 'piano_fs4', voice: 'piano', midi: 66, dur: 5.6 },
-  { id: 'piano_c5', voice: 'piano', midi: 72, dur: 5.4 },
-  { id: 'piano_fs5', voice: 'piano', midi: 78, dur: 5.2 },
-  { id: 'piano_c6', voice: 'piano', midi: 84, dur: 5.0 },
+  { id: 'piano_c2', voice: 'piano', midi: 36, dur: 12.0 },
+  { id: 'piano_fs2', voice: 'piano', midi: 42, dur: 12.0 },
+  { id: 'piano_c3', voice: 'piano', midi: 48, dur: 11.8 },
+  { id: 'piano_fs3', voice: 'piano', midi: 54, dur: 11.8 },
+  { id: 'piano_c4', voice: 'piano', midi: 60, dur: 11.6 },
+  { id: 'piano_fs4', voice: 'piano', midi: 66, dur: 11.5 },
+  { id: 'piano_c5', voice: 'piano', midi: 72, dur: 11.4 },
+  { id: 'piano_fs5', voice: 'piano', midi: 78, dur: 11.2 },
+  { id: 'piano_c6', voice: 'piano', midi: 84, dur: 11.0 },
 
-  { id: 'pad_c3', voice: 'pad', midi: 48, dur: 8.0 },
-  { id: 'pad_g3', voice: 'pad', midi: 55, dur: 8.0 },
-  { id: 'pad_c4', voice: 'pad', midi: 60, dur: 8.0 },
-  { id: 'pad_g4', voice: 'pad', midi: 67, dur: 8.0 },
+  { id: 'pad_c3', voice: 'pad', midi: 48, dur: 12.5 },
+  { id: 'pad_g3', voice: 'pad', midi: 55, dur: 12.5 },
+  { id: 'pad_c4', voice: 'pad', midi: 60, dur: 12.5 },
+  { id: 'pad_g4', voice: 'pad', midi: 67, dur: 12.5 },
 
   { id: 'bell_c4', voice: 'bell', midi: 60, dur: 5.8 },
   { id: 'bell_g4', voice: 'bell', midi: 67, dur: 5.8 },
   { id: 'bell_c5', voice: 'bell', midi: 72, dur: 5.5 },
   { id: 'bell_g5', voice: 'bell', midi: 79, dur: 5.5 },
 
-  { id: 'choir_c4', voice: 'choir', midi: 60, dur: 8.2 },
-  { id: 'choir_g4', voice: 'choir', midi: 67, dur: 8.2 },
-  { id: 'choir_c5', voice: 'choir', midi: 72, dur: 8.2 },
+  { id: 'choir_c4', voice: 'choir', midi: 60, dur: 12.5 },
+  { id: 'choir_g4', voice: 'choir', midi: 67, dur: 12.5 },
+  { id: 'choir_c5', voice: 'choir', midi: 72, dur: 12.5 },
 
-  { id: 'tape_c3', voice: 'tape', midi: 48, dur: 7.2 },
-  { id: 'tape_g3', voice: 'tape', midi: 55, dur: 7.2 },
-  { id: 'tape_c4', voice: 'tape', midi: 60, dur: 7.2 },
+  { id: 'tape_c3', voice: 'tape', midi: 48, dur: 12.5 },
+  { id: 'tape_g3', voice: 'tape', midi: 55, dur: 12.5 },
+  { id: 'tape_c4', voice: 'tape', midi: 60, dur: 12.5 },
 
-  { id: 'drone_c2', voice: 'drone', midi: 36, dur: 8.6 },
-  { id: 'drone_g2', voice: 'drone', midi: 43, dur: 8.6 },
-  { id: 'drone_c3', voice: 'drone', midi: 48, dur: 8.6 },
+  { id: 'drone_c2', voice: 'drone', midi: 36, dur: 12.5 },
+  { id: 'drone_g2', voice: 'drone', midi: 43, dur: 12.5 },
+  { id: 'drone_c3', voice: 'drone', midi: 48, dur: 12.5 },
 ];
 
 // Exact instrument trim & crossfade balance from eno_soundscape/js/audio-engine.js
@@ -4370,13 +4370,6 @@ function createEnsoSound({ onTrackChange, onStateChange } = {}) {
     const washTrackFadeGain = audioCtx.createGain();
     washTrackFadeGain.gain.setValueAtTime(1.0, now);
 
-    // Dedicated 680 Hz Q = 0.5 silk lowpass filter per wash so sustained tones are warm, smooth, and velvety
-    const washVoiceLp = audioCtx.createBiquadFilter();
-    washVoiceLp.type = 'lowpass';
-    washVoiceLp.frequency.setValueAtTime(washVoice === 'drone' ? 540 : 680, now);
-    washVoiceLp.Q.value = 0.5;
-
-    washVoiceLp.connect(washEnv);
     washEnv.connect(washTrackFadeGain);
     washTrackFadeGain.connect(washSilkFilter);
 
@@ -4393,57 +4386,33 @@ function createEnsoSound({ onTrackChange, onStateChange } = {}) {
       const rate = Math.max(0.45, Math.min(1.65, Math.pow(2, (sp.midi - match.midi) / 12)));
       src.playbackRate.setValueAtTime(rate, now);
 
-      // Loop the sustain plateau of the reverb-stamped buffer (0.85s .. dur - 1.2s)
+      // Pure 0%-synth-CPU sample playback looping the flat 2.0s..9.5s sustain plateau of the 12.5s sample
       const bufDur = match.buffer.duration;
       if (bufDur > 1.8) {
         src.loop = true;
-        src.loopStart = 0.85;
-        src.loopEnd = Math.max(2.2, bufDur - 1.2);
+        src.loopStart = bufDur >= 10.0 ? 2.0 : 0.65;
+        src.loopEnd = bufDur >= 10.0 ? 9.5 : Math.max(1.8, bufDur - 0.6);
       }
 
       const vGain = audioCtx.createGain();
-      vGain.gain.setValueAtTime(sp.gain, now);
-
-      // Pair with a continuous, non-decaying sustained harmonic tone voiced for washVoice
-      // so the 17-second wash holds a true, unbroken sustained plateau even when the sample tail dips.
-      const freq = midiToHz(sp.midi);
-      const susOsc1 = audioCtx.createOscillator();
-      susOsc1.type = (washVoice === 'pad' || washVoice === 'tape') ? 'triangle' : 'sine';
-      susOsc1.frequency.setValueAtTime(freq, now);
-      susOsc1.detune.setValueAtTime(i % 2 === 0 ? -4 : 4, now);
-
-      const susOsc2 = audioCtx.createOscillator();
-      susOsc2.type = 'sine';
-      susOsc2.frequency.setValueAtTime(washVoice === 'choir' ? freq * 2.0 : freq, now);
-      susOsc2.detune.setValueAtTime(i % 2 === 0 ? 5 : -5, now);
-
-      const susGain = audioCtx.createGain();
-      susGain.gain.setValueAtTime(sp.gain * 0.58, now);
-      susOsc1.connect(susGain);
-      susOsc2.connect(susGain);
+      vGain.gain.setValueAtTime(sp.gain * 1.35, now);
 
       if (audioCtx.createStereoPanner) {
         const panner = audioCtx.createStereoPanner();
         panner.pan.setValueAtTime(Math.max(-1, Math.min(1, sp.pan)), now);
         src.connect(vGain);
         vGain.connect(panner);
-        susGain.connect(panner);
-        panner.connect(washVoiceLp);
+        panner.connect(washEnv);
       } else {
         src.connect(vGain);
-        vGain.connect(washVoiceLp);
-        susGain.connect(washVoiceLp);
+        vGain.connect(washEnv);
       }
 
-      const offset = bufDur > 2.4 ? 0.85 + ((i * 0.17) % 0.65) : 0;
+      const offset = bufDur >= 10.0 ? 2.0 + ((i * 0.45) % 2.5) : 0;
       src.start(now, offset);
       src.stop(now + totalDur + 0.08);
-      susOsc1.start(now);
-      susOsc2.start(now);
-      susOsc1.stop(now + totalDur + 0.08);
-      susOsc2.stop(now + totalDur + 0.08);
 
-      sources.push(src, susOsc1, susOsc2);
+      sources.push(src);
       triggeredVoices.push(sp.voice);
       chordMidis.push(sp.midi);
     }
@@ -4602,11 +4571,12 @@ function createEnsoSound({ onTrackChange, onStateChange } = {}) {
     const peak = Math.max(0.005, Math.min(0.85, velocity * (vCfg.gain || 0.65) * instTrim * gainScale));
 
     if (isPiano) {
-      // Soft 8ms wool-felt hammer onset + natural felt decay
+      // Soft 8ms wool-felt hammer onset; hold full gain across the 11.5s–12.0s reverb-stamped sample
+      // so the pre-baked 8.8s Enso cathedral convolution + stereo delay tail rings out in full with 0% live reverb CPU!
       env.gain.setValueAtTime(0.0001, now);
       env.gain.linearRampToValueAtTime(peak, now + 0.008);
-      env.gain.setValueAtTime(peak * 0.92, now + Math.min(0.65, dur * 0.25));
-      env.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+      env.gain.setValueAtTime(peak, now + Math.max(0.5, dur - 0.30));
+      env.gain.linearRampToValueAtTime(0.0001, now + dur);
     } else if (voice === 'bell') {
       // Gentle glass chime bloom
       const att = Math.min(0.08, vCfg.attack || 0.06);
@@ -6035,7 +6005,7 @@ vec3 spectralRainbow(float t) {
   vec3 x = fract(t + vec3(0.0, 0.66667, 0.33333));
   vec3 wave = clamp(abs(x * 6.0 - 3.0) - 1.0, 0.0, 1.0);
   vec3 raw = wave * wave * (3.0 - 2.0 * wave);
-  return mix(vec3(0.92, 0.94, 0.98), raw, 0.38);
+  return mix(vec3(0.95, 0.96, 1.0), raw, 0.78);
 }
 vec4 encodeHdr(vec3 c) { return vec4(c / (1.0 + c), 1.0); }
 vec3 decodeHdr(vec4 e) { return e.rgb / max(1.0 - e.rgb, 1e-4); }
@@ -6246,8 +6216,8 @@ vec3 inside(int id, vec3 ro, vec3 rd, float len, float travelled, float jitter, 
     if (u_iridescence > 0.01) {
       float iridPhase = hgt * 1.45 + radFrac * 0.95 + dot(rd, axis) * 0.95 + hueOff + v.b * 0.55;
       vec3 iridWave = spectralRainbow(iridPhase);
-      float veilBand = (0.015 + 0.07 * v.g + 0.03 * v.r) * clamp(u_iridescence * 0.24, 0.0, 0.45);
-      scat += T * iridWave * tintedLightIn * veilBand * dt * 1.1;
+      float veilBand = (0.022 + 0.11 * v.g + 0.045 * v.r) * clamp(u_iridescence * 0.45, 0.0, 0.75);
+      scat += T * iridWave * tintedLightIn * veilBand * dt * 1.45;
     }
 
     vec3 sigma = baseSigma * opticalScale * (1.0 + u_colourZoning * (2.0 * hgt - 1.0)) * (0.75 + 0.5 * v.b);
@@ -6346,11 +6316,11 @@ vec3 inside(int id, vec3 ro, vec3 rd, float len, float travelled, float jitter, 
           float mask = fracW * (1.0 - smoothstep(0.55, 0.78, extent + 0.45 * (v.b - 0.5) + 0.25 * v.r));
           if (mask > 0.0) {
             float film = v.b * 0.85 + length(hp - fc) * 1.4 + hueOff + abs(dn) * 1.2;
-            vec3 irid = mix(vec3(0.96, 0.97, 1.0), spectralRainbow(film), clamp(u_iridescence * 0.42, 0.0, 0.48));
-            float fr = 0.10 + 0.65 * pow(1.0 - abs(dn), 3.6);
+            vec3 irid = mix(vec3(0.96, 0.97, 1.0), spectralRainbow(film), clamp(u_iridescence * 0.72, 0.0, 0.85));
+            float fr = 0.12 + 0.78 * pow(1.0 - abs(dn), 3.4);
             vec3 rawRefl = env(reflect(rd, fn), 0.05);
-            vec3 refl = (rawRefl / (1.0 + 1.2 * max(rawRefl.r, max(rawRefl.g, rawRefl.b)))) + f_ambient * (0.14 * u_flash + 0.08 * u_iridescence);
-            float glowBoost = min(u_fractureGlow, 1.8) * 0.42;
+            vec3 refl = (rawRefl / (1.0 + 1.1 * max(rawRefl.r, max(rawRefl.g, rawRefl.b)))) + f_ambient * (0.16 * u_flash + 0.18 * u_iridescence);
+            float glowBoost = min(u_fractureGlow, 2.2) * 0.65;
             scat += T * mask * glowBoost * fr * irid * refl;
             T *= 1.0 - 0.35 * mask * fr;
           }
@@ -6388,16 +6358,32 @@ vec3 faceNormal(int id, int k, vec3 n, vec3 p, float rough, float footprint, flo
   return n;
 }
 
-float edgeDist(int id, int k, vec3 p) {
+float n3(vec3 p) {
+  vec3 i = floor(p), f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  return mix(
+    mix(mix(hash(i), hash(i + vec3(1, 0, 0)), f.x),
+        mix(hash(i + vec3(0, 1, 0)), hash(i + vec3(1, 1, 0)), f.x), f.y),
+    mix(mix(hash(i + vec3(0, 0, 1)), hash(i + vec3(1, 0, 1)), f.x),
+        mix(hash(i + vec3(0, 1, 1)), hash(i + vec3(1, 1, 1)), f.x), f.y),
+    f.z);
+}
+
+float edgeDist(int id, int k, vec3 p, out vec3 adjN) {
   float dmin = 1e9;
   vec3 nk = body(id, PA + k).xyz;
+  adjN = nk;
   for (int j = 0; j < CP; j++) {
     if (j == k) continue;
     vec4 pl = body(id, PA + j);
     float cosAng = dot(pl.xyz, nk);
     if (cosAng > 0.9995) continue;
     float sinAng = sqrt(max(1e-3, 1.0 - cosAng * cosAng));
-    dmin = min(dmin, (pl.w - dot(pl.xyz, p)) / sinAng);
+    float d = (pl.w - dot(pl.xyz, p)) / sinAng;
+    if (d < dmin) {
+      dmin = d;
+      adjN = pl.xyz;
+    }
   }
   return max(dmin, 0.0);
 }
@@ -6440,11 +6426,11 @@ vec3 facetIridescence(int id, int k, vec3 p, vec3 rd, vec3 n, float dEdge, vec3 
   float filmT = cosV * 2.4 + hgt * 1.35 + (dEdge / r) * 0.95 + float(k) * 0.19 + genShift;
   vec3 irid1 = spectralRainbow(filmT);
   vec3 irid2 = spectralRainbow(filmT * 1.62 + 0.29);
-  vec3 specCol = normalize(mix(irid1, irid2, 0.32) + vec3(1e-4)) * 1.35;
+  vec3 specCol = normalize(mix(irid1, irid2, 0.35) + vec3(1e-4)) * 1.55;
   float fresRim = pow(1.0 - cosV, 2.0);
   float s = u_iridescence;
-  vec3 tinted = mix(baseRefl, baseRefl * specCol * 1.15, clamp(s * 0.38, 0.0, 0.55));
-  vec3 sheen = specCol * f_ambient * (0.12 + 0.42 * fresRim) * min(s, 1.5) * 0.14;
+  vec3 tinted = mix(baseRefl, baseRefl * specCol * 1.28, clamp(s * 0.58, 0.0, 0.78));
+  vec3 sheen = specCol * f_ambient * (0.18 + 0.58 * fresRim) * min(s, 1.5) * 0.28;
   return tinted + sheen;
 }
 
@@ -6538,16 +6524,54 @@ void main() {
     float frostRoll = hash(vec3(uid, float(k), f_seed + 0.5));
     float frostW = smoothstep(frostRoll - 0.15, frostRoll + 0.15, u_frostShare);
     float rough = u_frost * frostW;
-    float dEdge = (u_edgeWear > 0.0 || u_hopper > 0.0 || u_iridescence > 0.0 || u_bloom > 0.0) ? edgeDist(id, k, p) : 1.0;
+    vec3 adjN = body(id, PA + k).xyz;
+    float dEdge = (u_edgeWear > 0.0 || u_edgeChips > 0.01 || u_hopper > 0.0 || u_iridescence > 0.0 || u_bloom > 0.0) ? edgeDist(id, k, p, adjN) : 1.0;
+    float eDist = dEdge;
     float chip = wearFromDist(id, p, dEdge);
     rough = max(rough, chip * 0.6);
     vec3 n = faceNormal(id, k, body(id, PA + k).xyz, p, rough, footprint, dEdge);
+    float inChip = 0.0;
+    if (u_edgeChips > 0.01 && eDist < 0.018) {
+      vec3 axis = body(id, 1).xyz, root = body(id, 3).xyz;
+      float r = max(body(id, 2).w, 0.03);
+      vec3 p0 = body(id, PA).xyz;
+      vec3 t1 = p0 - axis * dot(p0, axis);
+      float t1Len = length(t1);
+      t1 = t1Len > 1e-4 ? (t1 / t1Len) : normalize(cross(axis, vec3(0.577, 0.577, 0.577)));
+      vec3 t2 = cross(axis, t1);
+      vec3 rel = p - root;
+      vec3 lp = vec3(dot(rel, t1), dot(rel, axis), dot(rel, t2));
+      float chipZone = smoothstep(0.62, 0.82, n3(lp * 12.5 + vec3(float(id) * 3.7 + float(k) * 1.3)));
+      if (chipZone > 0.001) {
+        float chipDetail = n3(lp * 38.0) * 0.65 + n3(lp * 84.0) * 0.35;
+        float maxW = min(0.016, r * (0.035 + 0.085 * u_edgeChips));
+        float chipWidth = maxW * chipZone * smoothstep(0.38, 0.75, chipDetail);
+        if (eDist < chipWidth && chipWidth > 1e-4) {
+          inChip = (1.0 - smoothstep(chipWidth * 0.25, chipWidth, eDist)) * step(1e-4, u_edgeChips);
+          if (inChip > 0.001) {
+            vec3 edgeBevelN = normalize(body(id, PA + k).xyz + adjN);
+            vec3 chipN = normalize(vec3(n3(lp * 52.0) - 0.5, n3(lp * 52.0 + 7.1) - 0.5, n3(lp * 52.0 + 13.3) - 0.5));
+            n = normalize(mix(n, mix(edgeBevelN, chipN, 0.45), inChip * 0.65));
+            rough = max(rough, inChip * 0.42);
+          }
+        }
+      }
+    }
     float F = fresnel(-dot(rd, n), 1.0 / effIor) * alpha;
     vec3 entryRefl = facetIridescence(id, k, p, rd, n, dEdge, softFacetRefl(env(reflect(rd, n), rough)));
     vec3 entryFlash = crystalBloomGlint(id, k, p, rd, n, dEdge, rough);
-    float iridReflBoost = clamp(F + u_iridescence * 0.06 * alpha, 0.0, 0.42 * alpha) * (0.15 + 0.85 * glare);
+    float iridReflBoost = clamp(F + u_iridescence * 0.09 * alpha, 0.0, 0.48 * alpha) * (0.15 + 0.85 * glare);
     col += thr * (iridReflBoost * entryRefl + alpha * (chip * 0.12 * f_ambient + entryFlash));
     thr *= (1.0 - F * (0.3 + 0.7 * glare)) * (1.0 - 0.6 * chip * alpha);
+    if (inChip > 0.001) {
+      vec3 stoneCol = exp(-f_sigma * 0.35);
+      vec3 keyDir = normalize(vec3(f_lights[0], f_lights[1], f_lights[2]));
+      float diffLight = clamp(dot(f_toWorld * n, keyDir) * 0.5 + 0.5, 0.0, 1.0);
+      vec3 chipScatter = mix(stoneCol, vec3(0.92, 0.94, 0.98), 0.65) * (0.45 + 0.55 * diffLight) * (0.35 + 0.85 * f_ambient);
+      float chipMix = inChip * 0.36 * alpha;
+      col += thr * chipMix * chipScatter;
+      thr *= 1.0 - chipMix * 0.65;
+    }
     vec3 refrIn = refract(rd, n, 1.0 / effIor);
     rd = dot(refrIn, refrIn) > 1e-6 ? normalize(mix(rd, refrIn, alpha)) : rd;
     ro = p;
@@ -6567,7 +6591,8 @@ void main() {
       float exitFrostRoll = hash(vec3(uid, float(kf), f_seed + 0.5));
       float exitFrostW = smoothstep(exitFrostRoll - 0.15, exitFrostRoll + 0.15, u_frostShare);
       float fr = u_frost * exitFrostW;
-      float dExit = (u_hopper > 0.0 || u_iridescence > 0.0 || u_bloom > 0.0) ? edgeDist(id, kf, p) : 1.0;
+      vec3 exitAdjN;
+      float dExit = (u_hopper > 0.0 || u_iridescence > 0.0 || u_bloom > 0.0) ? edgeDist(id, kf, p, exitAdjN) : 1.0;
       vec3 nf = faceNormal(id, kf, body(id, PA + kf).xyz, p, fr, nextTravelled * f_pixAngle, dExit);
       float cosi = dot(rd, nf);
       vec3 o = refract(rd, -nf, effIor);
@@ -6596,7 +6621,7 @@ void main() {
   }
 
   if (dot(thr, thr) > 0.0) {
-    float effFire = u_fire + u_iridescence * 0.018;
+    float effFire = u_fire + u_iridescence * 0.028;
     if (lastRefracted && effFire > 0.005 && lastFireAlpha > 1e-4) {
       int ns = int(u_fireSamples + 0.5);
       vec3 acc = vec3(0.0), wsum = vec3(0.0);
@@ -6614,7 +6639,7 @@ void main() {
         if (u_iridescence > 0.0) {
           float defl = length(sampleDir - initialRd);
           vec3 prism = spectralRainbow(defl * 2.4 + x * 0.85);
-          eCol += prism * f_ambient * u_iridescence * 0.14 * lastFireAlpha * smoothstep(0.06, 0.48, defl);
+          eCol += prism * f_ambient * u_iridescence * 0.24 * lastFireAlpha * smoothstep(0.06, 0.48, defl);
         }
         acc += w * eCol;
       }
@@ -6762,7 +6787,7 @@ const __default_params = [
   {
     group: 'Cluster',
     params: [
-      { key: 'crystals', label: 'Crystals', value: 9, min: 1, max: 28, step: 0.01, uniform: false, desc: 'Total crystal points and twin offshoots in the cluster.' },
+      { key: 'crystals', label: 'Crystals', value: 3, default: 3, min: 1, max: 15, step: 0.01, uniform: false, desc: 'Total crystal points and twin offshoots in the cluster.' },
       { key: 'fan', label: 'Fan °', value: 55, min: 0, max: 85, step: 1, uniform: false, desc: 'How far the outer points lean away from upright.' },
       { key: 'crossAt', label: 'Cross point', value: 0.45, min: 0, max: 1, step: 0.01, uniform: false, desc: 'Where along their length the points cross: 0.5 through their middles, 1 at their outer tips, 0 at their roots.' },
       { key: 'lengthJitter', label: 'Length variety', value: 0.22, min: 0, max: 0.9, step: 0.01, uniform: false, desc: 'How much shorter the subsidiary points are than the tallest.' },
@@ -6797,6 +6822,7 @@ const __default_params = [
       { key: 'striationScale', label: 'Ridge spacing', value: 140, min: 20, max: 400, step: 1, desc: 'Ridges per unit of length.', when: { key: 'striations', not: [0] } },
       { key: 'frostShare', label: 'Frosted faces', value: 0.22, min: 0, max: 1, step: 0.01, desc: 'Share of faces that are etched and translucent rather than polished.' },
       { key: 'frost', label: 'Frost', value: 0.3, min: 0, max: 1, step: 0.01, desc: 'How rough a frosted face is.', when: { key: 'frostShare', not: [0] } },
+      { key: 'edgeChips', label: 'Edge chipping', value: 0.28, default: 0.28, min: 0, max: 1, step: 0.01, desc: 'Occasional localized conchoidal nicks and frosted micro-cracks along crystal ridges, as in raw crystals cracked out of the ground.' },
       { key: 'edgeWear', label: 'Edge wear', value: 0.55, min: 0, max: 1, step: 0.01, desc: 'Chips and bruising along facet edges.' },
       { key: 'edgeWidth', label: 'Wear width', value: 0.05, min: 0.005, max: 0.2, step: 0.001, desc: 'How far the wear reaches from an edge.', when: { key: 'edgeWear', not: [0] } },
     ],
@@ -6867,7 +6893,7 @@ const presets = {
     twinAngle: 52,
     cavityCurve: 0.15,
     hopper: 0,
-    crystals: 10,
+    crystals: 3,
     fan: 52,
     crossAt: 0.42,
     lengthJitter: 0.24,
@@ -6881,13 +6907,15 @@ const presets = {
     coreColour: '#f5d0fe',
     ior: 1.544,
     fire: 0.036,
+    striations: 0.18,
+    edgeChips: 0.32,
     milk: 0.28,
     milkBase: 0.78,
     veils: 1.2,
-    phantom: 0.45,
-    phantomRate: 0.5,
+    phantom: 0.22,
+    phantomRate: 0.35,
     phantomSize: 0.68,
-    phantomLayers: 2,
+    phantomLayers: 1,
     needles: 0,
     fractures: 0.45,
     hueShift: 180,
@@ -6904,8 +6932,8 @@ const presets = {
     twinShare: 0.75,
     twinAngle: 60,
     cavityCurve: 0,
-    hopper: 0.45,
-    crystals: 22,
+    hopper: 0,
+    crystals: 5,
     fan: 68,
     crossAt: 0.5,
     lengthJitter: 0.35,
@@ -6918,14 +6946,16 @@ const presets = {
     coreColour: '#e0f2fe',
     ior: 1.31,
     fire: 0.022,
+    striations: 0.08,
     frostShare: 0.48,
     frost: 0.42,
+    edgeChips: 0.26,
     milk: 0.85,
     milkBase: 0.4,
     veils: 2.2,
-    phantom: 0.7,
-    phantomRate: 0.7,
-    phantomLayers: 3,
+    phantom: 0,
+    phantomRate: 0,
+    phantomLayers: 1,
     fractures: 0.65,
     fractureGlow: 1.9,
     hueShift: 180,
@@ -6942,8 +6972,8 @@ const presets = {
     twinShare: 0.48,
     twinAngle: 34,
     cavityCurve: 0,
-    hopper: 0.1,
-    crystals: 14,
+    hopper: 0.02,
+    crystals: 4,
     fan: 26,
     crossAt: 0.3,
     lengthJitter: 0.38,
@@ -6959,13 +6989,14 @@ const presets = {
     coreColour: '#047857',
     ior: 1.582,
     fire: 0.024,
-    striations: 0.22,
+    striations: 0.18,
+    edgeChips: 0.34,
     milk: 0.18,
     veils: 1.85,
-    phantom: 1.25,
-    phantomRate: 0.85,
-    phantomSize: 0.76,
-    phantomLayers: 4,
+    phantom: 0.85,
+    phantomRate: 0.75,
+    phantomSize: 0.74,
+    phantomLayers: 2,
     needles: 2,
     needleColour: '#a7f3d0',
     fractures: 0.55,
@@ -6983,8 +7014,8 @@ const presets = {
     twinShare: 0.65,
     twinAngle: 88,
     cavityCurve: 0.1,
-    hopper: 0.88,
-    crystals: 16,
+    hopper: 0.42,
+    crystals: 4,
     fan: 48,
     crossAt: 0.45,
     lengthJitter: 0.32,
@@ -7000,15 +7031,16 @@ const presets = {
     coreColour: '#38bdf8',
     ior: 2.15,
     fire: 0.065,
-    striations: 0.65,
+    striations: 0.38,
     striationScale: 55,
     frostShare: 0.1,
+    edgeChips: 0.22,
     edgeWear: 0.25,
     milk: 0.05,
     veils: 0.3,
-    phantom: 0.9,
-    phantomRate: 0.75,
-    phantomLayers: 3,
+    phantom: 0.45,
+    phantomRate: 0.5,
+    phantomLayers: 2,
     fractures: 0.55,
     fractureGlow: 1.4,
     hueShift: 180,
@@ -7026,8 +7058,8 @@ const presets = {
     twinShare: 0.35,
     twinAngle: 60,
     cavityCurve: 0,
-    hopper: 0.15,
-    crystals: 9,
+    hopper: 0,
+    crystals: 2,
     fan: 42,
     crossAt: 0.5,
     lengthJitter: 0.28,
@@ -7045,14 +7077,15 @@ const presets = {
     fireSamples: 8,
     bounces: 8,
     depth: 4,
-    striations: 0.05,
-    frostShare: 0.05,
-    edgeWear: 0.15,
+    striations: 0,
+    frostShare: 0.04,
+    edgeChips: 0.05,
+    edgeWear: 0.1,
     milk: 0.02,
-    veils: 0.15,
-    phantom: 0.25,
-    phantomRate: 0.35,
-    phantomLayers: 2,
+    veils: 0.12,
+    phantom: 0,
+    phantomRate: 0,
+    phantomLayers: 1,
     needles: 0,
     fractures: 0.12,
     fractureGlow: 0.9,
@@ -7072,8 +7105,8 @@ const presets = {
     twinShare: 0.42,
     twinAngle: 58,
     cavityCurve: 0.78,
-    hopper: 0.12,
-    crystals: 20,
+    hopper: 0,
+    crystals: 5,
     fan: 62,
     crossAt: 0.22,
     lengthJitter: 0.42,
@@ -7086,9 +7119,13 @@ const presets = {
     coreColour: '#fb923c',
     ior: 1.768,
     fire: 0.045,
+    striations: 0.14,
+    edgeChips: 0.28,
     milk: 0.2,
     veils: 0.9,
-    phantom: 0.4,
+    phantom: 0,
+    phantomRate: 0,
+    phantomLayers: 1,
     needles: 6,
     needleWidth: 0.002,
     needleColour: '#fde047',
@@ -7108,8 +7145,8 @@ const presets = {
     twinShare: 0.5552,
     twinAngle: 44.4193,
     cavityCurve: 0,
-    hopper: 0.0897,
-    crystals: 12,
+    hopper: 0,
+    crystals: 3,
     fan: 38.7861,
     crossAt: 0.3539,
     lengthJitter: 0.3013,
@@ -7123,16 +7160,17 @@ const presets = {
     coreColour: '#ec4ca2',
     ior: 1.6158,
     fire: 0.0317,
-    striations: 0.7043,
+    striations: 0.72,
     striationScale: 217.9037,
     frostShare: 0.2268,
     frost: 0.3031,
+    edgeChips: 0.36,
     milk: 0.1683,
     milkBase: 0.7408,
     veils: 1.421,
-    phantom: 0.6026,
-    phantomRate: 0.6513,
-    phantomLayers: 3,
+    phantom: 0.15,
+    phantomRate: 0.3,
+    phantomLayers: 1,
     needles: 2.9214,
     needleColour: '#faa7d0',
     fractures: 0.4066,
@@ -7151,8 +7189,8 @@ const presets = {
     twinShare: 0.5,
     twinAngle: 54,
     cavityCurve: 0,
-    hopper: 0.2,
-    crystals: 11,
+    hopper: 0.36,
+    crystals: 3,
     fan: 40,
     crossAt: 0.38,
     lengthJitter: 0.25,
@@ -7165,11 +7203,13 @@ const presets = {
     coreColour: '#fef3c7',
     ior: 1.544,
     fire: 0.038,
+    striations: 0.32,
+    edgeChips: 0.38,
     milk: 0.12,
     veils: 0.75,
-    phantom: 0.85,
-    phantomRate: 0.8,
-    phantomLayers: 3,
+    phantom: 0.65,
+    phantomRate: 0.65,
+    phantomLayers: 2,
     needles: 10,
     needleWidth: 0.0032,
     needleColour: '#fbbf24',
@@ -7188,8 +7228,8 @@ const presets = {
     twinShare: 0.3,
     twinAngle: 48,
     cavityCurve: 0,
-    hopper: 0.18,
-    crystals: 9,
+    hopper: 0,
+    crystals: 2,
     fan: 36,
     crossAt: 0.42,
     lengthJitter: 0.28,
@@ -7205,13 +7245,14 @@ const presets = {
     coreColour: '#818cf8',
     ior: 1.578,
     fire: 0.03,
-    striations: 0.45,
+    striations: 0.55,
     striationScale: 180,
+    edgeChips: 0.28,
     milk: 0.15,
     veils: 0.95,
-    phantom: 0.55,
-    phantomRate: 0.6,
-    phantomLayers: 2,
+    phantom: 0,
+    phantomRate: 0,
+    phantomLayers: 1,
     needles: 2,
     needleColour: '#e0f2fe',
     fractures: 0.3,
@@ -7230,7 +7271,7 @@ const presets = {
     twinAngle: 48,
     cavityCurve: 0,
     hopper: 0,
-    crystals: 8,
+    crystals: 2,
     fan: 46,
     crossAt: 0.36,
     lengthJitter: 0.28,
@@ -7243,14 +7284,15 @@ const presets = {
     biColour: 0,
     ior: 1.544,
     fire: 0.028,
-    striations: 0.35,
+    striations: 0.48,
     striationScale: 165,
+    edgeChips: 0.34,
     milk: 0.65,
     milkBase: 0.88,
     veils: 1.5,
-    phantom: 0.55,
-    phantomRate: 0.6,
-    phantomLayers: 3,
+    phantom: 0.22,
+    phantomRate: 0.4,
+    phantomLayers: 1,
     needles: 0,
     fractures: 0.3,
     hueShift: 180,
@@ -7296,8 +7338,8 @@ function randomize(store) {
     twinShare: habit === 'Twin Branching' || habit === 'Dendritic Starburst' ? range(0.5, 0.88) : range(0.15, 0.65),
     twinAngle: range(28, 86, 1),
     cavityCurve: habit === 'Druzy Geode Bowl' ? range(0.55, 0.9) : range(0, 0.25),
-    hopper: r() < 0.45 ? range(0.15, 0.85) : 0,
-    crystals: Math.floor(range(6, 22, 1)),
+    hopper: r() < 0.75 ? (r() < 0.6 ? 0 : range(0.01, 0.08)) : range(0.18, 0.42),
+    crystals: Math.min(15, Math.max(2, Math.floor(range(2, 15, 1)))),
     fan: habit === 'Cathedral Spire' ? range(14, 34, 1) : range(32, 72, 1),
     crossAt: habit === 'Druzy Geode Bowl' ? range(0.12, 0.32) : range(0.28, 0.58),
     lengthJitter: range(0.15, 0.48),
@@ -7321,14 +7363,15 @@ function randomize(store) {
     striationScale: range(60, 240, 1),
     frostShare: range(0.05, 0.35),
     frost: range(0.15, 0.42),
+    edgeChips: range(0.15, 0.42),
     edgeWear: range(0.18, 0.6),
     milk: range(0.05, 0.65),
     milkBase: range(0.45, 0.9),
     veils: range(0.35, 1.8),
-    phantom: r() < 0.75 ? range(0.3, 1.25) : 0,
-    phantomRate: range(0.4, 0.85),
+    phantom: r() < 0.45 ? range(0.2, 0.75) : 0,
+    phantomRate: range(0.35, 0.75),
     phantomSize: range(0.55, 0.82),
-    phantomLayers: Math.floor(range(1, 4, 1)),
+    phantomLayers: r() < 0.65 ? 1 : 2,
     needles: r() < 0.45 ? Math.floor(range(2, 9, 1)) : 0,
     needleWidth: range(0.0018, 0.004, 0.0001),
     needleColour,

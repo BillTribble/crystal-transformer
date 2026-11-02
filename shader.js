@@ -175,7 +175,7 @@ vec3 spectralRainbow(float t) {
   vec3 x = fract(t + vec3(0.0, 0.66667, 0.33333));
   vec3 wave = clamp(abs(x * 6.0 - 3.0) - 1.0, 0.0, 1.0);
   vec3 raw = wave * wave * (3.0 - 2.0 * wave);
-  return mix(vec3(0.92, 0.94, 0.98), raw, 0.38);
+  return mix(vec3(0.95, 0.96, 1.0), raw, 0.78);
 }
 vec4 encodeHdr(vec3 c) { return vec4(c / (1.0 + c), 1.0); }
 vec3 decodeHdr(vec4 e) { return e.rgb / max(1.0 - e.rgb, 1e-4); }
@@ -386,8 +386,8 @@ vec3 inside(int id, vec3 ro, vec3 rd, float len, float travelled, float jitter, 
     if (u_iridescence > 0.01) {
       float iridPhase = hgt * 1.45 + radFrac * 0.95 + dot(rd, axis) * 0.95 + hueOff + v.b * 0.55;
       vec3 iridWave = spectralRainbow(iridPhase);
-      float veilBand = (0.015 + 0.07 * v.g + 0.03 * v.r) * clamp(u_iridescence * 0.24, 0.0, 0.45);
-      scat += T * iridWave * tintedLightIn * veilBand * dt * 1.1;
+      float veilBand = (0.022 + 0.11 * v.g + 0.045 * v.r) * clamp(u_iridescence * 0.45, 0.0, 0.75);
+      scat += T * iridWave * tintedLightIn * veilBand * dt * 1.45;
     }
 
     vec3 sigma = baseSigma * opticalScale * (1.0 + u_colourZoning * (2.0 * hgt - 1.0)) * (0.75 + 0.5 * v.b);
@@ -486,11 +486,11 @@ vec3 inside(int id, vec3 ro, vec3 rd, float len, float travelled, float jitter, 
           float mask = fracW * (1.0 - smoothstep(0.55, 0.78, extent + 0.45 * (v.b - 0.5) + 0.25 * v.r));
           if (mask > 0.0) {
             float film = v.b * 0.85 + length(hp - fc) * 1.4 + hueOff + abs(dn) * 1.2;
-            vec3 irid = mix(vec3(0.96, 0.97, 1.0), spectralRainbow(film), clamp(u_iridescence * 0.42, 0.0, 0.48));
-            float fr = 0.10 + 0.65 * pow(1.0 - abs(dn), 3.6);
+            vec3 irid = mix(vec3(0.96, 0.97, 1.0), spectralRainbow(film), clamp(u_iridescence * 0.72, 0.0, 0.85));
+            float fr = 0.12 + 0.78 * pow(1.0 - abs(dn), 3.4);
             vec3 rawRefl = env(reflect(rd, fn), 0.05);
-            vec3 refl = (rawRefl / (1.0 + 1.2 * max(rawRefl.r, max(rawRefl.g, rawRefl.b)))) + f_ambient * (0.14 * u_flash + 0.08 * u_iridescence);
-            float glowBoost = min(u_fractureGlow, 1.8) * 0.42;
+            vec3 refl = (rawRefl / (1.0 + 1.1 * max(rawRefl.r, max(rawRefl.g, rawRefl.b)))) + f_ambient * (0.16 * u_flash + 0.18 * u_iridescence);
+            float glowBoost = min(u_fractureGlow, 2.2) * 0.65;
             scat += T * mask * glowBoost * fr * irid * refl;
             T *= 1.0 - 0.35 * mask * fr;
           }
@@ -528,16 +528,32 @@ vec3 faceNormal(int id, int k, vec3 n, vec3 p, float rough, float footprint, flo
   return n;
 }
 
-float edgeDist(int id, int k, vec3 p) {
+float n3(vec3 p) {
+  vec3 i = floor(p), f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  return mix(
+    mix(mix(hash(i), hash(i + vec3(1, 0, 0)), f.x),
+        mix(hash(i + vec3(0, 1, 0)), hash(i + vec3(1, 1, 0)), f.x), f.y),
+    mix(mix(hash(i + vec3(0, 0, 1)), hash(i + vec3(1, 0, 1)), f.x),
+        mix(hash(i + vec3(0, 1, 1)), hash(i + vec3(1, 1, 1)), f.x), f.y),
+    f.z);
+}
+
+float edgeDist(int id, int k, vec3 p, out vec3 adjN) {
   float dmin = 1e9;
   vec3 nk = body(id, PA + k).xyz;
+  adjN = nk;
   for (int j = 0; j < CP; j++) {
     if (j == k) continue;
     vec4 pl = body(id, PA + j);
     float cosAng = dot(pl.xyz, nk);
     if (cosAng > 0.9995) continue;
     float sinAng = sqrt(max(1e-3, 1.0 - cosAng * cosAng));
-    dmin = min(dmin, (pl.w - dot(pl.xyz, p)) / sinAng);
+    float d = (pl.w - dot(pl.xyz, p)) / sinAng;
+    if (d < dmin) {
+      dmin = d;
+      adjN = pl.xyz;
+    }
   }
   return max(dmin, 0.0);
 }
@@ -580,11 +596,11 @@ vec3 facetIridescence(int id, int k, vec3 p, vec3 rd, vec3 n, float dEdge, vec3 
   float filmT = cosV * 2.4 + hgt * 1.35 + (dEdge / r) * 0.95 + float(k) * 0.19 + genShift;
   vec3 irid1 = spectralRainbow(filmT);
   vec3 irid2 = spectralRainbow(filmT * 1.62 + 0.29);
-  vec3 specCol = normalize(mix(irid1, irid2, 0.32) + vec3(1e-4)) * 1.35;
+  vec3 specCol = normalize(mix(irid1, irid2, 0.35) + vec3(1e-4)) * 1.55;
   float fresRim = pow(1.0 - cosV, 2.0);
   float s = u_iridescence;
-  vec3 tinted = mix(baseRefl, baseRefl * specCol * 1.15, clamp(s * 0.38, 0.0, 0.55));
-  vec3 sheen = specCol * f_ambient * (0.12 + 0.42 * fresRim) * min(s, 1.5) * 0.14;
+  vec3 tinted = mix(baseRefl, baseRefl * specCol * 1.28, clamp(s * 0.58, 0.0, 0.78));
+  vec3 sheen = specCol * f_ambient * (0.18 + 0.58 * fresRim) * min(s, 1.5) * 0.28;
   return tinted + sheen;
 }
 
@@ -678,16 +694,54 @@ void main() {
     float frostRoll = hash(vec3(uid, float(k), f_seed + 0.5));
     float frostW = smoothstep(frostRoll - 0.15, frostRoll + 0.15, u_frostShare);
     float rough = u_frost * frostW;
-    float dEdge = (u_edgeWear > 0.0 || u_hopper > 0.0 || u_iridescence > 0.0 || u_bloom > 0.0) ? edgeDist(id, k, p) : 1.0;
+    vec3 adjN = body(id, PA + k).xyz;
+    float dEdge = (u_edgeWear > 0.0 || u_edgeChips > 0.01 || u_hopper > 0.0 || u_iridescence > 0.0 || u_bloom > 0.0) ? edgeDist(id, k, p, adjN) : 1.0;
+    float eDist = dEdge;
     float chip = wearFromDist(id, p, dEdge);
     rough = max(rough, chip * 0.6);
     vec3 n = faceNormal(id, k, body(id, PA + k).xyz, p, rough, footprint, dEdge);
+    float inChip = 0.0;
+    if (u_edgeChips > 0.01 && eDist < 0.018) {
+      vec3 axis = body(id, 1).xyz, root = body(id, 3).xyz;
+      float r = max(body(id, 2).w, 0.03);
+      vec3 p0 = body(id, PA).xyz;
+      vec3 t1 = p0 - axis * dot(p0, axis);
+      float t1Len = length(t1);
+      t1 = t1Len > 1e-4 ? (t1 / t1Len) : normalize(cross(axis, vec3(0.577, 0.577, 0.577)));
+      vec3 t2 = cross(axis, t1);
+      vec3 rel = p - root;
+      vec3 lp = vec3(dot(rel, t1), dot(rel, axis), dot(rel, t2));
+      float chipZone = smoothstep(0.62, 0.82, n3(lp * 12.5 + vec3(float(id) * 3.7 + float(k) * 1.3)));
+      if (chipZone > 0.001) {
+        float chipDetail = n3(lp * 38.0) * 0.65 + n3(lp * 84.0) * 0.35;
+        float maxW = min(0.016, r * (0.035 + 0.085 * u_edgeChips));
+        float chipWidth = maxW * chipZone * smoothstep(0.38, 0.75, chipDetail);
+        if (eDist < chipWidth && chipWidth > 1e-4) {
+          inChip = (1.0 - smoothstep(chipWidth * 0.25, chipWidth, eDist)) * step(1e-4, u_edgeChips);
+          if (inChip > 0.001) {
+            vec3 edgeBevelN = normalize(body(id, PA + k).xyz + adjN);
+            vec3 chipN = normalize(vec3(n3(lp * 52.0) - 0.5, n3(lp * 52.0 + 7.1) - 0.5, n3(lp * 52.0 + 13.3) - 0.5));
+            n = normalize(mix(n, mix(edgeBevelN, chipN, 0.45), inChip * 0.65));
+            rough = max(rough, inChip * 0.42);
+          }
+        }
+      }
+    }
     float F = fresnel(-dot(rd, n), 1.0 / effIor) * alpha;
     vec3 entryRefl = facetIridescence(id, k, p, rd, n, dEdge, softFacetRefl(env(reflect(rd, n), rough)));
     vec3 entryFlash = crystalBloomGlint(id, k, p, rd, n, dEdge, rough);
-    float iridReflBoost = clamp(F + u_iridescence * 0.06 * alpha, 0.0, 0.42 * alpha) * (0.15 + 0.85 * glare);
+    float iridReflBoost = clamp(F + u_iridescence * 0.09 * alpha, 0.0, 0.48 * alpha) * (0.15 + 0.85 * glare);
     col += thr * (iridReflBoost * entryRefl + alpha * (chip * 0.12 * f_ambient + entryFlash));
     thr *= (1.0 - F * (0.3 + 0.7 * glare)) * (1.0 - 0.6 * chip * alpha);
+    if (inChip > 0.001) {
+      vec3 stoneCol = exp(-f_sigma * 0.35);
+      vec3 keyDir = normalize(vec3(f_lights[0], f_lights[1], f_lights[2]));
+      float diffLight = clamp(dot(f_toWorld * n, keyDir) * 0.5 + 0.5, 0.0, 1.0);
+      vec3 chipScatter = mix(stoneCol, vec3(0.92, 0.94, 0.98), 0.65) * (0.45 + 0.55 * diffLight) * (0.35 + 0.85 * f_ambient);
+      float chipMix = inChip * 0.36 * alpha;
+      col += thr * chipMix * chipScatter;
+      thr *= 1.0 - chipMix * 0.65;
+    }
     vec3 refrIn = refract(rd, n, 1.0 / effIor);
     rd = dot(refrIn, refrIn) > 1e-6 ? normalize(mix(rd, refrIn, alpha)) : rd;
     ro = p;
@@ -707,7 +761,8 @@ void main() {
       float exitFrostRoll = hash(vec3(uid, float(kf), f_seed + 0.5));
       float exitFrostW = smoothstep(exitFrostRoll - 0.15, exitFrostRoll + 0.15, u_frostShare);
       float fr = u_frost * exitFrostW;
-      float dExit = (u_hopper > 0.0 || u_iridescence > 0.0 || u_bloom > 0.0) ? edgeDist(id, kf, p) : 1.0;
+      vec3 exitAdjN;
+      float dExit = (u_hopper > 0.0 || u_iridescence > 0.0 || u_bloom > 0.0) ? edgeDist(id, kf, p, exitAdjN) : 1.0;
       vec3 nf = faceNormal(id, kf, body(id, PA + kf).xyz, p, fr, nextTravelled * f_pixAngle, dExit);
       float cosi = dot(rd, nf);
       vec3 o = refract(rd, -nf, effIor);
@@ -736,7 +791,7 @@ void main() {
   }
 
   if (dot(thr, thr) > 0.0) {
-    float effFire = u_fire + u_iridescence * 0.018;
+    float effFire = u_fire + u_iridescence * 0.028;
     if (lastRefracted && effFire > 0.005 && lastFireAlpha > 1e-4) {
       int ns = int(u_fireSamples + 0.5);
       vec3 acc = vec3(0.0), wsum = vec3(0.0);
@@ -754,7 +809,7 @@ void main() {
         if (u_iridescence > 0.0) {
           float defl = length(sampleDir - initialRd);
           vec3 prism = spectralRainbow(defl * 2.4 + x * 0.85);
-          eCol += prism * f_ambient * u_iridescence * 0.14 * lastFireAlpha * smoothstep(0.06, 0.48, defl);
+          eCol += prism * f_ambient * u_iridescence * 0.24 * lastFireAlpha * smoothstep(0.06, 0.48, defl);
         }
         acc += w * eCol;
       }

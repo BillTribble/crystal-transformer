@@ -24,37 +24,37 @@ export const ENSO_REVERB_MODES = [
 ];
 
 export const SAMPLE_ZONES = [
-  { id: 'piano_c2', voice: 'piano', midi: 36, dur: 6.2 },
-  { id: 'piano_fs2', voice: 'piano', midi: 42, dur: 6.2 },
-  { id: 'piano_c3', voice: 'piano', midi: 48, dur: 6.0 },
-  { id: 'piano_fs3', voice: 'piano', midi: 54, dur: 6.0 },
-  { id: 'piano_c4', voice: 'piano', midi: 60, dur: 5.8 },
-  { id: 'piano_fs4', voice: 'piano', midi: 66, dur: 5.6 },
-  { id: 'piano_c5', voice: 'piano', midi: 72, dur: 5.4 },
-  { id: 'piano_fs5', voice: 'piano', midi: 78, dur: 5.2 },
-  { id: 'piano_c6', voice: 'piano', midi: 84, dur: 5.0 },
+  { id: 'piano_c2', voice: 'piano', midi: 36, dur: 12.0 },
+  { id: 'piano_fs2', voice: 'piano', midi: 42, dur: 12.0 },
+  { id: 'piano_c3', voice: 'piano', midi: 48, dur: 11.8 },
+  { id: 'piano_fs3', voice: 'piano', midi: 54, dur: 11.8 },
+  { id: 'piano_c4', voice: 'piano', midi: 60, dur: 11.6 },
+  { id: 'piano_fs4', voice: 'piano', midi: 66, dur: 11.5 },
+  { id: 'piano_c5', voice: 'piano', midi: 72, dur: 11.4 },
+  { id: 'piano_fs5', voice: 'piano', midi: 78, dur: 11.2 },
+  { id: 'piano_c6', voice: 'piano', midi: 84, dur: 11.0 },
 
-  { id: 'pad_c3', voice: 'pad', midi: 48, dur: 8.0 },
-  { id: 'pad_g3', voice: 'pad', midi: 55, dur: 8.0 },
-  { id: 'pad_c4', voice: 'pad', midi: 60, dur: 8.0 },
-  { id: 'pad_g4', voice: 'pad', midi: 67, dur: 8.0 },
+  { id: 'pad_c3', voice: 'pad', midi: 48, dur: 12.5 },
+  { id: 'pad_g3', voice: 'pad', midi: 55, dur: 12.5 },
+  { id: 'pad_c4', voice: 'pad', midi: 60, dur: 12.5 },
+  { id: 'pad_g4', voice: 'pad', midi: 67, dur: 12.5 },
 
   { id: 'bell_c4', voice: 'bell', midi: 60, dur: 5.8 },
   { id: 'bell_g4', voice: 'bell', midi: 67, dur: 5.8 },
   { id: 'bell_c5', voice: 'bell', midi: 72, dur: 5.5 },
   { id: 'bell_g5', voice: 'bell', midi: 79, dur: 5.5 },
 
-  { id: 'choir_c4', voice: 'choir', midi: 60, dur: 8.2 },
-  { id: 'choir_g4', voice: 'choir', midi: 67, dur: 8.2 },
-  { id: 'choir_c5', voice: 'choir', midi: 72, dur: 8.2 },
+  { id: 'choir_c4', voice: 'choir', midi: 60, dur: 12.5 },
+  { id: 'choir_g4', voice: 'choir', midi: 67, dur: 12.5 },
+  { id: 'choir_c5', voice: 'choir', midi: 72, dur: 12.5 },
 
-  { id: 'tape_c3', voice: 'tape', midi: 48, dur: 7.2 },
-  { id: 'tape_g3', voice: 'tape', midi: 55, dur: 7.2 },
-  { id: 'tape_c4', voice: 'tape', midi: 60, dur: 7.2 },
+  { id: 'tape_c3', voice: 'tape', midi: 48, dur: 12.5 },
+  { id: 'tape_g3', voice: 'tape', midi: 55, dur: 12.5 },
+  { id: 'tape_c4', voice: 'tape', midi: 60, dur: 12.5 },
 
-  { id: 'drone_c2', voice: 'drone', midi: 36, dur: 8.6 },
-  { id: 'drone_g2', voice: 'drone', midi: 43, dur: 8.6 },
-  { id: 'drone_c3', voice: 'drone', midi: 48, dur: 8.6 },
+  { id: 'drone_c2', voice: 'drone', midi: 36, dur: 12.5 },
+  { id: 'drone_g2', voice: 'drone', midi: 43, dur: 12.5 },
+  { id: 'drone_c3', voice: 'drone', midi: 48, dur: 12.5 },
 ];
 
 // Exact instrument trim & crossfade balance from eno_soundscape/js/audio-engine.js
@@ -899,13 +899,6 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
     const washTrackFadeGain = audioCtx.createGain();
     washTrackFadeGain.gain.setValueAtTime(1.0, now);
 
-    // Dedicated 680 Hz Q = 0.5 silk lowpass filter per wash so sustained tones are warm, smooth, and velvety
-    const washVoiceLp = audioCtx.createBiquadFilter();
-    washVoiceLp.type = 'lowpass';
-    washVoiceLp.frequency.setValueAtTime(washVoice === 'drone' ? 540 : 680, now);
-    washVoiceLp.Q.value = 0.5;
-
-    washVoiceLp.connect(washEnv);
     washEnv.connect(washTrackFadeGain);
     washTrackFadeGain.connect(washSilkFilter);
 
@@ -922,57 +915,33 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
       const rate = Math.max(0.45, Math.min(1.65, Math.pow(2, (sp.midi - match.midi) / 12)));
       src.playbackRate.setValueAtTime(rate, now);
 
-      // Loop the sustain plateau of the reverb-stamped buffer (0.85s .. dur - 1.2s)
+      // Pure 0%-synth-CPU sample playback looping the flat 2.0s..9.5s sustain plateau of the 12.5s sample
       const bufDur = match.buffer.duration;
       if (bufDur > 1.8) {
         src.loop = true;
-        src.loopStart = 0.85;
-        src.loopEnd = Math.max(2.2, bufDur - 1.2);
+        src.loopStart = bufDur >= 10.0 ? 2.0 : 0.65;
+        src.loopEnd = bufDur >= 10.0 ? 9.5 : Math.max(1.8, bufDur - 0.6);
       }
 
       const vGain = audioCtx.createGain();
-      vGain.gain.setValueAtTime(sp.gain, now);
-
-      // Pair with a continuous, non-decaying sustained harmonic tone voiced for washVoice
-      // so the 17-second wash holds a true, unbroken sustained plateau even when the sample tail dips.
-      const freq = midiToHz(sp.midi);
-      const susOsc1 = audioCtx.createOscillator();
-      susOsc1.type = (washVoice === 'pad' || washVoice === 'tape') ? 'triangle' : 'sine';
-      susOsc1.frequency.setValueAtTime(freq, now);
-      susOsc1.detune.setValueAtTime(i % 2 === 0 ? -4 : 4, now);
-
-      const susOsc2 = audioCtx.createOscillator();
-      susOsc2.type = 'sine';
-      susOsc2.frequency.setValueAtTime(washVoice === 'choir' ? freq * 2.0 : freq, now);
-      susOsc2.detune.setValueAtTime(i % 2 === 0 ? 5 : -5, now);
-
-      const susGain = audioCtx.createGain();
-      susGain.gain.setValueAtTime(sp.gain * 0.58, now);
-      susOsc1.connect(susGain);
-      susOsc2.connect(susGain);
+      vGain.gain.setValueAtTime(sp.gain * 1.35, now);
 
       if (audioCtx.createStereoPanner) {
         const panner = audioCtx.createStereoPanner();
         panner.pan.setValueAtTime(Math.max(-1, Math.min(1, sp.pan)), now);
         src.connect(vGain);
         vGain.connect(panner);
-        susGain.connect(panner);
-        panner.connect(washVoiceLp);
+        panner.connect(washEnv);
       } else {
         src.connect(vGain);
-        vGain.connect(washVoiceLp);
-        susGain.connect(washVoiceLp);
+        vGain.connect(washEnv);
       }
 
-      const offset = bufDur > 2.4 ? 0.85 + ((i * 0.17) % 0.65) : 0;
+      const offset = bufDur >= 10.0 ? 2.0 + ((i * 0.45) % 2.5) : 0;
       src.start(now, offset);
       src.stop(now + totalDur + 0.08);
-      susOsc1.start(now);
-      susOsc2.start(now);
-      susOsc1.stop(now + totalDur + 0.08);
-      susOsc2.stop(now + totalDur + 0.08);
 
-      sources.push(src, susOsc1, susOsc2);
+      sources.push(src);
       triggeredVoices.push(sp.voice);
       chordMidis.push(sp.midi);
     }
@@ -1131,11 +1100,12 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
     const peak = Math.max(0.005, Math.min(0.85, velocity * (vCfg.gain || 0.65) * instTrim * gainScale));
 
     if (isPiano) {
-      // Soft 8ms wool-felt hammer onset + natural felt decay
+      // Soft 8ms wool-felt hammer onset; hold full gain across the 11.5s–12.0s reverb-stamped sample
+      // so the pre-baked 8.8s Enso cathedral convolution + stereo delay tail rings out in full with 0% live reverb CPU!
       env.gain.setValueAtTime(0.0001, now);
       env.gain.linearRampToValueAtTime(peak, now + 0.008);
-      env.gain.setValueAtTime(peak * 0.92, now + Math.min(0.65, dur * 0.25));
-      env.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+      env.gain.setValueAtTime(peak, now + Math.max(0.5, dur - 0.30));
+      env.gain.linearRampToValueAtTime(0.0001, now + dur);
     } else if (voice === 'bell') {
       // Gentle glass chime bloom
       const att = Math.min(0.08, vCfg.attack || 0.06);
