@@ -56,7 +56,7 @@ MODULES = [
         "sound",
         "sound.js",
         [],
-        ["TRACK_ROTATE_SECONDS", "ENSO_REVERB_MODES", "SAMPLE_ZONES", "ENSO_TRACKS", "ENSO_TRACK_NAMES", "createEnsoSound"],
+        ["TRACK_ROTATE_SECONDS", "ENSO_REVERB_MODES", "ENSO_DRONE_MODES", "ENSO_WASH_INSTRUMENTS", "SAMPLE_ZONES", "ENSO_TRACKS", "ENSO_TRACK_NAMES", "createEnsoSound"],
         None,
     ),
     (
@@ -92,7 +92,7 @@ MODULES = [
             "const { playback } = __mod_standard;",
             "const { film } = __mod_film;",
             "const { okhslToHex } = __mod_okhsl;",
-            "const { ENSO_TRACK_NAMES, ENSO_REVERB_MODES } = __mod_sound;",
+            "const { ENSO_TRACK_NAMES, ENSO_REVERB_MODES, ENSO_DRONE_MODES, ENSO_WASH_INSTRUMENTS } = __mod_sound;",
         ],
         ["HABITS", "presets", "randomize"],
         "__default_params",

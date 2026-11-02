@@ -142,10 +142,7 @@ function writeCornerNipPlane(rowIdx, slotIdx, pA, pB, kPrism0, kPrism1, cHoriz, 
     const mx = cluster.data[oM], my = cluster.data[oM + 1], mz = cluster.data[oM + 2], wM = cluster.data[oM + 3];
     const du = mx * ux + my * uy + mz * uz;
     const dist = wM - (mx * p0x + my * p0y + mz * p0z);
-    if (Math.abs(du) < 1e-6) {
-      if (dist < -1e-4) return false;
-      continue;
-    }
+    if (Math.abs(du) < 1e-6) continue;
     const t = dist / du;
     if (du > 0) {
       if (t < tMax) { tMax = t; mMax = m; }
@@ -153,8 +150,8 @@ function writeCornerNipPlane(rowIdx, slotIdx, pA, pB, kPrism0, kPrism1, cHoriz, 
       tMin = t;
     }
   }
-  const ridgeLen = tMax - tMin;
-  if (ridgeLen <= 1e-3 || mMax < 0 || tMax > 1e4) return false;
+  if (mMax < 0 || tMax > 1e4) return false;
+  const ridgeLen = Math.max(0, tMax - tMin);
 
   const vx = p0x + tMax * ux;
   const vy = p0y + tMax * uy;
@@ -177,7 +174,7 @@ function writeCornerNipPlane(rowIdx, slotIdx, pA, pB, kPrism0, kPrism1, cHoriz, 
   const nl = Math.hypot(nx, ny, nz) || 1;
   nx /= nl; ny /= nl; nz /= nl;
 
-  const effDepth = Math.min(depth, ridgeLen * 0.06);
+  const effDepth = Math.min(depth, ridgeLen * 0.022);
   const wNip = (nx * vx + ny * vy + nz * vz) - effDepth;
   slot(rowIdx, PLANES_AT + slotIdx, nx, ny, nz, wNip);
   return true;
@@ -1067,49 +1064,58 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
     const tableFrac = Math.max(0.68, 1.12 - 0.58 * dynChamfer);
     crystalPlane(rowIdx, 17, 0, 1, 0, L * tableFrac);
 
-    // Slots 18..20: Literal 3D geometric corner-nip half-space planes (as if crystal corners were dropped/chipped)
+    // Slots 18..20: Literal 3D geometric corner-nip half-space planes (1/3rd size, smoothly merging with zero popping)
     const edgeChipsVal = P.edgeChips ? Math.max(0, Math.min(1, Number(P.edgeChips.value))) : 0.28;
     const rc = rMax / Math.cos(Math.PI / Math.max(3, sSym));
     crystalPlane(rowIdx, 18, 0, 1, 0, L * 12 + r * 12);
     crystalPlane(rowIdx, 19, 0, 1, 0, L * 12 + r * 12);
     crystalPlane(rowIdx, 20, 0, 1, 0, L * 12 + r * 12);
-    if (edgeChipsVal > 0.01) {
-      // Shoulder corner normal MUST have cVert between prism (0) and crown (cosNT) so it only nips the shoulder vertex!
-      const shVert1 = Math.max(0.08, Math.min(0.65, cosNT * 0.52));
-      const shHoriz1 = Math.sqrt(Math.max(0.1, 1 - shVert1 * shVert1));
-      const shVert2 = Math.max(0.08, Math.min(0.65, cosNT * 0.58));
-      const shHoriz2 = Math.sqrt(Math.max(0.1, 1 - shVert2 * shVert2));
 
-      const nipRoll1 = ((node.uid * 37 + 7) % 19) / 19;
-      const nipW1 = smooth01(Math.max(0, Math.min(1, (edgeChipsVal * 2.1 - nipRoll1 * 0.35) / 0.35)));
-      const k0 = Math.floor((node.uid * 5 + 0) % nSym);
-      const k1 = (k0 + 1) % nSym;
-      if (nipW1 > 1e-3) {
-        const nipDepth1 = r * (0.028 + 0.055 * edgeChipsVal) * nipW1;
-        writeCornerNipPlane(rowIdx, 18, k0, k1, k0, k1, shHoriz1, shVert1, nipDepth1, 0.85, 1.15);
-      }
+    const nipRoll1 = ((node.uid * 37 + 7) % 19) / 19;
+    const nipRoll2 = ((node.uid * 53 + 3) % 23) / 23;
+    const nipRoll3 = ((node.uid * 29 + 5) % 17) / 17;
+    const rawChip1 = smooth01(Math.max(0, Math.min(1, (edgeChipsVal * 1.8 - nipRoll1 * 0.35 + 0.12) / 0.55)));
+    const rawChip2 = smooth01(Math.max(0, Math.min(1, (edgeChipsVal * 1.7 - nipRoll2 * 0.42 + 0.12) / 0.55)));
+    const rawChip3 = smooth01(Math.max(0, Math.min(1, (edgeChipsVal * 1.6 - nipRoll3 * 0.42 + 0.12) / 0.55)));
 
-      const nipRoll2 = ((node.uid * 53 + 3) % 23) / 23;
-      const nipW2 = smooth01(Math.max(0, Math.min(1, (edgeChipsVal * 1.9 - nipRoll2 * 0.45) / 0.35)));
-      if (nipW2 > 1e-3) {
-        const k2 = (k0 + Math.max(1, Math.floor(nSym / 2))) % nSym;
-        const k3 = (k2 + 1) % nSym;
-        const nipDepth2 = r * (0.025 + 0.050 * edgeChipsVal) * nipW2;
-        writeCornerNipPlane(rowIdx, 19, k2, k3, k2, k3, shHoriz2, shVert2, nipDepth2, 1.12, 0.88);
-      }
-
-      // Tip corner normal has cVert slightly above cosNT to nip a tiny asymmetric chip right at the apex/table corner
-      const tipVert = Math.min(0.94, cosNT + (1.0 - cosNT) * 0.45);
-      const tipHoriz = Math.sqrt(Math.max(0.05, 1 - tipVert * tipVert));
-      const nipRoll3 = ((node.uid * 29 + 5) % 17) / 17;
-      const nipW3 = smooth01(Math.max(0, Math.min(1, (edgeChipsVal * 1.85 - nipRoll3 * 0.45) / 0.35)));
-      if (nipW3 > 1e-3) {
-        const kt0 = (k0 + 1) % nSym;
-        const kt1 = (kt0 + 1) % nSym;
-        const nipDepth3 = r * (0.020 + 0.042 * edgeChipsVal) * nipW3;
-        writeCornerNipPlane(rowIdx, 20, 8 + kt0, 8 + kt1, kt0, kt1, tipHoriz, tipVert, nipDepth3, 0.90, 1.10);
-      }
+    if (!Number.isFinite(node.smoothChip1) || !evolveOn) {
+      node.smoothChip1 = rawChip1;
+      node.smoothChip2 = rawChip2;
+      node.smoothChip3 = rawChip3;
+    } else if (nodeDt > 0) {
+      const aChip = 1 - Math.exp(-0.22 * nodeDt);
+      const maxStepChip = 0.065 * nodeDt;
+      const d1 = rawChip1 - node.smoothChip1;
+      node.smoothChip1 += Math.max(-maxStepChip, Math.min(maxStepChip, d1 * aChip));
+      const d2 = rawChip2 - node.smoothChip2;
+      node.smoothChip2 += Math.max(-maxStepChip, Math.min(maxStepChip, d2 * aChip));
+      const d3 = rawChip3 - node.smoothChip3;
+      node.smoothChip3 += Math.max(-maxStepChip, Math.min(maxStepChip, d3 * aChip));
     }
+
+    // Lock corner-nip indices to fixed faces in {0, 1, 2} so they NEVER jump when symmetry morphs!
+    const shVert1 = Math.max(0.08, Math.min(0.65, cosNT * 0.52));
+    const shHoriz1 = Math.sqrt(Math.max(0.1, 1 - shVert1 * shVert1));
+    const shVert2 = Math.max(0.08, Math.min(0.65, cosNT * 0.58));
+    const shHoriz2 = Math.sqrt(Math.max(0.1, 1 - shVert2 * shVert2));
+    const tipVert = Math.min(0.94, cosNT + (1.0 - cosNT) * 0.45);
+    const tipHoriz = Math.sqrt(Math.max(0.05, 1 - tipVert * tipVert));
+
+    const k0 = node.uid % 2;
+    const k1 = k0 + 1;
+    const k2 = (k0 + 1) % 3;
+    const k3 = (k2 + 1) % 3;
+    const kt0 = 1;
+    const kt1 = 2;
+
+    const nipDepth1 = r * (0.009 + 0.018 * edgeChipsVal) * node.smoothChip1;
+    writeCornerNipPlane(rowIdx, 18, k0, k1, k0, k1, shHoriz1, shVert1, nipDepth1, 0.85, 1.15);
+
+    const nipDepth2 = r * (0.008 + 0.016 * edgeChipsVal) * node.smoothChip2;
+    writeCornerNipPlane(rowIdx, 19, k2, k3, k2, k3, shHoriz2, shVert2, nipDepth2, 1.12, 0.88);
+
+    const nipDepth3 = r * (0.006 + 0.014 * edgeChipsVal) * node.smoothChip3;
+    writeCornerNipPlane(rowIdx, 20, 8 + kt0, 8 + kt1, kt0, kt1, tipHoriz, tipVert, nipDepth3, 0.90, 1.10);
 
     const half = 0.5 * L;
     const nodeAlpha = Math.max(0.0, Math.min(1.0, node.alpha * smooth01(Math.min(1.0, presence / 0.35))));
