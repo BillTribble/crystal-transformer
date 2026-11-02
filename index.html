@@ -60,7 +60,7 @@
       background: rgba(0, 0, 0, 0.38); border: 1px solid rgba(255, 255, 255, 0.12);
       border-radius: 19px; padding: 0 6px; color: var(--ink); font: 11px/1 var(--mono);
       backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
-      transition: opacity .2s, background .2s;
+      transition: opacity .45s ease, background .2s;
     }
     #hud-preset button {
       border: 0; background: none; color: var(--ink-dim); font: inherit; cursor: pointer;
@@ -88,7 +88,14 @@
       display: block; border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 50%;
       background: rgba(0, 0, 0, 0.38); color: var(--ink);
       backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
-      cursor: pointer; opacity: 0.72; transition: opacity .2s, visibility .2s, transform .4s, background .2s, border-color .2s;
+      cursor: pointer; opacity: 0.72; transition: opacity .45s ease, visibility .2s, transform .4s, background .2s, border-color .2s;
+    }
+    #hud-preset.hud-idle, #hud-preset.hud-hidden,
+    body.hud-idle #hud-preset, body.hud-hidden #hud-preset,
+    .disc.hud-idle, .disc.hud-hidden,
+    body.hud-idle .disc, body.hud-hidden .disc {
+      opacity: 0 !important;
+      pointer-events: none !important;
     }
     .disc:focus-visible { opacity: 1; background: rgba(0, 0, 0, 0.65); outline: none; }
     .disc.active { opacity: 1; border-color: rgba(255, 255, 255, 0.45); background: rgba(255, 255, 255, 0.16); }
@@ -873,9 +880,10 @@ function probeFloatTargets(gl) {
 
   // === Module: kit/chrome.js ===
   const __mod_chrome = (() => {
-// The buttons around the sketch: settings cog, keyboard shortcuts, and UI visibility state.
+// The buttons around the sketch: settings cog, keyboard shortcuts, and media-player 5s auto-fade HUD.
 
 const UI_KEY = 'crystals:ui';
+const HUD_IDLE_MS = 5000;
 
 function load(key) {
   try { return localStorage.getItem(key); } catch { return null; }
@@ -890,6 +898,38 @@ function setupChrome(persist, onPane, shortcuts = {}) {
   const settings = persist && location.hash === '#settings';
   let ui = persist && (settings || load(UI_KEY) !== 'off') ? 'on' : 'off';
   let pane = settings ? 'open' : 'closed';
+  let idleTimer = 0;
+  let hudIdle = false;
+
+  function setHudIdle(isIdle) {
+    hudIdle = !!isIdle;
+    body.dataset.hud = hudIdle ? 'idle' : 'active';
+    body.classList.toggle('hud-idle', hudIdle);
+    body.classList.toggle('hud-hidden', hudIdle);
+    const hudNodes = document.querySelectorAll('#hud-preset, .disc');
+    for (let i = 0; i < hudNodes.length; i++) {
+      hudNodes[i].classList.toggle('hud-idle', hudIdle);
+      hudNodes[i].classList.toggle('hud-hidden', hudIdle);
+    }
+  }
+
+  function scheduleHudFade() {
+    clearTimeout(idleTimer);
+    if (ui !== 'on' || pane === 'open') {
+      setHudIdle(false);
+      return;
+    }
+    idleTimer = window.setTimeout(() => {
+      if (ui === 'on' && pane !== 'open') {
+        setHudIdle(true);
+      }
+    }, HUD_IDLE_MS);
+  }
+
+  function wakeHud() {
+    if (hudIdle) setHudIdle(false);
+    scheduleHudFade();
+  }
 
   function apply() {
     body.dataset.ui = ui;
@@ -898,11 +938,22 @@ function setupChrome(persist, onPane, shortcuts = {}) {
     panel.setAttribute('aria-hidden', String(!open));
     panel.inert = !open;
     cog.setAttribute('aria-expanded', String(open));
+    if (open) {
+      clearTimeout(idleTimer);
+      setHudIdle(false);
+    } else {
+      scheduleHudFade();
+    }
   }
   function setUi(v) { ui = v; if (persist) save(UI_KEY, v); apply(); }
   function setPane(v) { pane = v; apply(); onPane?.(v === 'open'); }
 
   cog.addEventListener('click', () => setPane(pane === 'open' ? 'closed' : 'open'));
+
+  const wakeEvents = ['pointerdown', 'pointermove', 'touchstart', 'touchmove', 'mousemove', 'mousedown', 'click', 'wheel', 'keydown'];
+  for (let i = 0; i < wakeEvents.length; i++) {
+    window.addEventListener(wakeEvents[i], wakeHud, { passive: true });
+  }
 
   window.addEventListener('keydown', (e) => {
     const t = e.target;
@@ -931,6 +982,10 @@ function setupChrome(persist, onPane, shortcuts = {}) {
   apply();
   return {
     get paneOpen() { return ui === 'on' && pane === 'open'; },
+    get hudIdle() { return hudIdle; },
+    hudIdleMs: HUD_IDLE_MS,
+    wakeHud,
+    forceHudIdle() { clearTimeout(idleTimer); setHudIdle(true); },
     openPane() { setUi('on'); setPane('open'); },
     closePane() { setPane('closed'); },
     togglePane() { setUi('on'); setPane(pane === 'open' ? 'closed' : 'open'); },
@@ -2376,7 +2431,7 @@ function rollFaceSeeds() {
 
 function createInitialCohortNode(i, nBase, nPrimary, parentNode, startFromSeed, habit = 'Quartz Cluster', symmetry = 6) {
   const isSecondary = i >= nPrimary;
-  const uid = ++nextUid;
+  const uid = i + 1;
   let birthThreshold = 0;
   let birthSpan = 0.56;
   if (i === 0) {
@@ -2390,7 +2445,10 @@ function createInitialCohortNode(i, nBase, nPrimary, parentNode, startFromSeed, 
     birthSpan = 0.38;
   }
 
-  const rho = i === 0 ? 0.12 * rand() : Math.sqrt((i + 0.5 * rand()) / Math.max(1, nPrimary));
+  const uRho = rand();
+  const rho = i === 0 ? 0.12 * uRho : Math.sqrt((i + 0.5 * uRho) / Math.max(1, nPrimary));
+  const twinRoll = i < 2 ? 999 : 0.06 + 0.84 * (((i - 2) * 0.6180339887 + 0.23) % 1);
+  const parentIdx = i < 2 ? -1 : ((i - 1) % Math.max(1, Math.min(4, i - 1)));
   const initSeedP = 0.24;
   const initGrow = startFromSeed
     ? (i === 0 ? Math.max(0.32, smooth01((initSeedP - birthThreshold) / birthSpan)) : smooth01((initSeedP - birthThreshold) / birthSpan))
@@ -2404,7 +2462,11 @@ function createInitialCohortNode(i, nBase, nPrimary, parentNode, startFromSeed, 
     cohortIdx: i,
     isInitialCohort: true,
     isSecondary,
-    parentUid: parentNode ? parentNode.uid : -1,
+    parentIdx,
+    parentUid: parentNode ? parentNode.uid : (parentIdx >= 0 ? parentIdx + 1 : -1),
+    twinRoll,
+    twinW: 0,
+    presence: 1,
     birthHabit: habit,
     birthSymmetry: symmetry,
     birthNPrimary: nPrimary,
@@ -2416,7 +2478,8 @@ function createInitialCohortNode(i, nBase, nPrimary, parentNode, startFromSeed, 
     deadFrames: 0,
     alpha: startFromSeed ? smooth01(initGrow / 0.42) : 1.0,
     lifecycle: startFromSeed && initGrow < 0.999 ? 'spawning' : 'mature',
-    // Morphological genes rolled once at birth so crystal shape is stable across pool compaction
+    // Morphological genes rolled once at birth so crystal shape is stable across all transitions
+    uRho,
     rho,
     uAz: sym(),
     uLean: sym(),
@@ -2441,7 +2504,7 @@ function createInitialCohortNode(i, nBase, nPrimary, parentNode, startFromSeed, 
     rnd: rand(),
     hueOffset: (uid * 0.16180339887) % 1,
     faceSeeds: rollFaceSeeds(),
-    // Cached world frame (updated each frame so child branches can anchor even after parent dissolves)
+    // Cached world frame (updated each frame so child branches can anchor smoothly)
     worldRoot: new Float32Array(3),
     worldAxis: new Float32Array([0, 1, 0]),
     worldSide: new Float32Array([1, 0, 0]),
@@ -2625,6 +2688,10 @@ function spawnFrontierBranch(P) {
   cluster.nodes.push(node);
   return node;
 }
+
+const primRoot = new Float32Array(3), primAx = new Float32Array(3);
+const twinRoot = new Float32Array(3), twinAx = new Float32Array(3);
+const sphereCentres = new Float32Array(MAX_CRYSTALS * 4);
 function resetEvolution(P, _opts = {}) {
   const seedVal = P?.seed ? Number(P.seed.value) : 7;
   seedRandom(seedVal);
@@ -2633,27 +2700,29 @@ function resetEvolution(P, _opts = {}) {
   spawnTimer = 0;
 
   const evolveOn = P?.evolve ? !!P.evolve.value : true;
-  const nBase = Math.max(1, Math.min(MAX_CRYSTALS, Math.round(P?.crystals ? Number(P.crystals.value) : 9)));
-  lastStaticCount = nBase;
+  const floatC = Math.max(1, Math.min(MAX_CRYSTALS, P?.crystals ? Number(P.crystals.value) : 9));
+  lastStaticCount = floatC;
   const habit = P?.habit ? String(P.habit.value) : 'Quartz Cluster';
   const symmetry = P?.symmetry ? Math.max(3, Math.min(8, Number(P.symmetry.value))) : 6;
   const twinShare = P?.twinShare ? Number(P.twinShare.value) : 0.3;
-  const nPrimary = primaryCountFor(nBase, habit, twinShare);
+  const nPrimary = primaryCountFor(Math.round(floatC), habit, twinShare);
 
   cluster.nodes = [];
   cluster.evolveTime = 0;
   cluster.evoPhase = 0;
   cluster.evoBurstVel = 0;
-  cluster.spawnedCount = nBase;
+  cluster.spawnedCount = MAX_CRYSTALS;
   cluster.dissolvedCount = 0;
-  cluster.generation = nBase > nPrimary ? 1 : 0;
+  cluster.generation = 1;
   cluster.seedProgress = 1.0;
   cluster.phase = !evolveOn ? 'static' : 'evolving';
 
-  for (let i = 0; i < nBase; i++) {
-    const isSecondary = i >= nPrimary;
-    const parentNode = isSecondary ? cluster.nodes[(i - nPrimary) % nPrimary] : null;
-    const node = createInitialCohortNode(i, nBase, nPrimary, parentNode, false, habit, symmetry);
+  // Pre-allocate all MAX_CRYSTALS nodes deterministically so float `crystals` count
+  // smoothly scales crystal presence in/out without ever adding/removing/reassigning nodes.
+  for (let i = 0; i < MAX_CRYSTALS; i++) {
+    const pIdx = i < 2 ? -1 : ((i - 1) % Math.max(1, Math.min(4, i - 1)));
+    const parentNode = pIdx >= 0 ? cluster.nodes[pIdx] : null;
+    const node = createInitialCohortNode(i, MAX_CRYSTALS, nPrimary, parentNode, false, habit, symmetry);
     node.growProgress = 1.0;
     node.dissolveProgress = 0.0;
     node.alpha = 1.0;
@@ -2666,44 +2735,16 @@ function triggerGrowBurst(_P) {
   cluster.version++;
 }
 function stepEvolution(P, dt, viewportW = 0, viewportH = 0) {
-  if (!cluster.nodes.length) {
+  if (cluster.nodes.length < MAX_CRYSTALS) {
     resetEvolution(P, { startFromSeed: false });
   }
 
+  const safeDt = Math.max(0, Math.min(Number(dt) || 0, 30));
+  cluster.pendingCenterDt = (cluster.pendingCenterDt || 0) + safeDt;
+
   const evolveOn = P?.evolve ? !!P.evolve.value : true;
-  const desiredCount = Math.max(1, Math.min(MAX_CRYSTALS, Math.round(P?.crystals ? Number(P.crystals.value) : 9)));
-  const habit = P?.habit ? String(P.habit.value) : 'Quartz Cluster';
-  const symmetry = P?.symmetry ? Math.max(3, Math.min(8, Number(P.symmetry.value))) : 6;
-  const twinShare = P?.twinShare ? Number(P.twinShare.value) : 0.3;
-  const nPrimary = primaryCountFor(desiredCount, habit, twinShare);
-
-  // Keep cluster.nodes matched to desiredCount without single-crystal popcorn spawning/dissolving
-  if (cluster.nodes.length !== desiredCount) {
-    while (cluster.nodes.length < desiredCount) {
-      const idx = cluster.nodes.length;
-      const isSec = idx >= nPrimary;
-      const pNode = isSec ? cluster.nodes[(idx - nPrimary) % Math.max(1, nPrimary)] : null;
-      const node = createInitialCohortNode(idx, desiredCount, nPrimary, pNode, false, habit, symmetry);
-      node.growProgress = 1.0;
-      node.dissolveProgress = 0.0;
-      node.alpha = 1.0;
-      node.lifecycle = 'mature';
-      cluster.nodes.push(node);
-    }
-    if (cluster.nodes.length > desiredCount) {
-      cluster.nodes.length = desiredCount;
-    }
-    for (let i = 0; i < cluster.nodes.length; i++) {
-      const isSec = i >= nPrimary;
-      cluster.nodes[i].cohortIdx = i;
-      cluster.nodes[i].isSecondary = isSec;
-      cluster.nodes[i].parentUid = isSec ? cluster.nodes[(i - nPrimary) % Math.max(1, nPrimary)].uid : -1;
-    }
-  }
-
   if (!evolveOn) {
     cluster.phase = 'static';
-    lastStaticCount = desiredCount;
     for (let i = 0; i < cluster.nodes.length; i++) {
       cluster.nodes[i].growProgress = 1.0;
       cluster.nodes[i].dissolveProgress = 0.0;
@@ -2717,7 +2758,7 @@ function stepEvolution(P, dt, viewportW = 0, viewportH = 0) {
   cluster.phase = 'evolving';
   cluster.seedProgress = 1.0;
 
-  let rem = Math.max(0, Math.min(dt, 30));
+  let rem = safeDt;
   const evolveSpd = P?.evolveSpeed !== undefined ? Math.max(0, Number(P.evolveSpeed.value)) : 1;
   const growSpd = P?.growSpeed !== undefined ? Math.max(0, Number(P.growSpeed.value)) : 0.04;
 
@@ -2750,17 +2791,14 @@ function stepEvolution(P, dt, viewportW = 0, viewportH = 0) {
 function buildCluster(P, viewportW = 0, viewportH = 0) {
   const seedVal = P?.seed ? Number(P.seed.value) : 7;
   const evolveOn = P?.evolve ? !!P.evolve.value : true;
-  const desiredCount = Math.max(1, Math.min(MAX_CRYSTALS, Math.round(P?.crystals ? Number(P.crystals.value) : 9)));
+  const floatC = Math.max(1.0, Math.min(MAX_CRYSTALS, P?.crystals ? Number(P.crystals.value) : 9.0));
+  const nActive = Math.min(MAX_CRYSTALS, Math.ceil(floatC - 1e-4));
+  cluster.floatCrystals = floatC;
 
-  if (evolveOn) {
-    lastStaticCount = desiredCount;
-    if (seedVal !== lastSeedVal && cluster.nodes.length > 0) {
-      seedRandom(seedVal + cluster.spawnedCount * 31);
-      lastSeedVal = seedVal;
-    }
-  }
-  if (!cluster.nodes.length || (!evolveOn && (seedVal !== lastSeedVal || desiredCount !== lastStaticCount))) {
+  if (cluster.nodes.length < MAX_CRYSTALS || (!evolveOn && seedVal !== lastSeedVal)) {
     resetEvolution(P, { startFromSeed: false });
+  } else if (seedVal !== lastSeedVal) {
+    lastSeedVal = seedVal;
   }
 
   const vw = viewportW > 0 ? viewportW : (typeof window !== 'undefined' && window.innerWidth > 0 ? window.innerWidth : 1280);
@@ -2778,7 +2816,6 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
   const halfFrustumX = halfFrustumMin * (vw / minDim);
   const halfFrustumY = halfFrustumMin * (vh / minDim);
 
-  const habit = P.habit ? String(P.habit.value) : 'Quartz Cluster';
   const growth = P.growth ? Math.max(0.03, Math.min(4.5, Number(P.growth.value))) : 1;
   const dirProgress = 1.22 * Math.tanh(Math.max(0, growth - 0.75) * 0.72);
   const overScale = 1 + 0.48 * Math.tanh(Math.max(0, growth - 1.0) * 0.72);
@@ -2792,27 +2829,32 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
   const cavityCurve = P.cavityCurve ? Number(P.cavityCurve.value) : 0;
 
   const fan = P.fan.value * DEG;
-  const tilt = P.tipAngle.value * DEG, cosT = Math.cos(tilt), sinT = Math.sin(tilt);
+  const tilt = P.tipAngle.value * DEG;
 
   let minY = Infinity, maxY = -Infinity, maxR2 = 0;
-  let weightedSumY = 0, weightTotal = 0;
+  let weightedSumX = 0, weightedSumY = 0, weightedSumZ = 0, weightTotal = 0;
 
-  // Map uid -> node for live parent lookups
-  const byUid = new Map();
-  for (let i = 0; i < cluster.nodes.length; i++) {
-    byUid.set(cluster.nodes[i].uid, cluster.nodes[i]);
-  }
-
-  const nPrimary = primaryCountFor(desiredCount, habit, twinShare);
+  const effPrimaryCount = Math.max(1.8, floatC * (1.0 - 0.38 * twinShare));
   let activeCount = 0;
 
-  for (let idx = 0; idx < cluster.nodes.length; idx++) {
+  for (let idx = 0; idx < nActive; idx++) {
     if (activeCount >= MAX_CRYSTALS) break;
     const node = cluster.nodes[idx];
     const i = node.cohortIdx;
     const nodeSymmetry = symmetry;
 
-    // Combine node lifecycle growth/dissolve with manual P.growth slider
+    // Continuous presence factor for crystal idx: smoothly emerges from 0 out of the core
+    // as floatC crosses idx..idx+1, and smoothly shrinks back to 0 before removal.
+    const presence = smooth01(Math.max(0.0, Math.min(1.0, floatC - i)));
+    node.presence = presence;
+    if (presence < 1e-3) {
+      node.worldL = 0;
+      node.worldFullL = 0;
+      node.worldR = 0;
+      continue;
+    }
+
+    // Combine node lifecycle growth with manual P.growth slider
     const manualProgress = (!evolveOn && growth < 1.0)
       ? smooth01((growth - node.birthThreshold * 0.85) / Math.max(0.15, node.birthSpan))
       : 1.0;
@@ -2833,7 +2875,6 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
     const w3 = Math.cos(phi * 1.18 + s3);
     const w4 = Math.sin(phi * 1.42 + s1 + s2 * 0.5);
 
-    // Smooth per-crystal length (0.55x..1.35x), thickness (0.75x..1.25x), tilt (±18%), azimuth (±0.14 rad), and twist modulation
     const lenWave = 0.62 * w1 + 0.38 * w3;
     const radWave = 0.64 * w2 - 0.36 * w1;
     const tiltWave = 0.60 * w3 + 0.40 * w2;
@@ -2841,94 +2882,110 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
     const lenMod = 0.95 + 0.40 * lenWave;
     const radMod = 1.0 + 0.25 * radWave;
 
-    let baseL = 1;
-    let baseR = P.thickness.value;
-    let tw = node.uTwist + 0.22 * w4;
+    // 1. Compute Primary Root Transform (primRoot, primAx, primBaseL, primBaseR, primTw)
+    const rho = i === 0 ? 0.12 * node.uRho : Math.min(1.0, Math.sqrt((i + 0.5 * node.uRho) / effPrimaryCount));
+    node.rho = rho;
+    const az = i * GOLDEN + 0.55 * node.uAz + 0.14 * azWave;
+    let lean = fan * Math.min(1, rho + 0.28 * node.uLean * (i > 0 ? 1 : 0.25));
+    const smoothAbsTilt = Math.sqrt(tiltWave * tiltWave + 0.01) - 0.1;
+    lean = i === 0
+      ? Math.max(0.02, lean * (1 + 0.18 * tiltWave) + 0.10 * fan * smoothAbsTilt)
+      : lean * (1 + 0.18 * tiltWave);
 
-    if (!node.isSecondary) {
-      const rho = node.rho;
-      const az = i * GOLDEN + 0.55 * node.uAz + 0.14 * azWave;
-      let lean = fan * Math.min(1, rho + 0.28 * node.uLean * (i > 0 ? 1 : 0.25));
-      lean = i === 0
-        ? Math.max(0.02, lean * (1 + 0.18 * tiltWave) + 0.10 * fan * Math.abs(tiltWave))
-        : lean * (1 + 0.18 * tiltWave);
-
-      if (growSideways) {
-        if (i > 0) {
-          const targetSideLean = Math.min(84 * DEG, Math.max(lean, (56 + 26 * rho) * DEG));
-          lean = lean + (targetSideLean - lean) * dirProgress * Math.min(1, 0.45 + 0.55 * rho);
-        }
-      } else {
-        lean = lean * (1 - 0.58 * dirProgress);
-      }
-
-      const leanAz = az + 0.35 * node.uLeanAz + 0.14 * tiltWave;
-      ax[0] = Math.sin(lean) * Math.cos(leanAz);
-      ax[1] = Math.cos(lean);
-      ax[2] = Math.sin(lean) * Math.sin(leanAz);
-
-      baseL = (i === 0 ? 1 : Math.max(0.18, 1 - P.lengthJitter.value * (0.4 * node.uLen + 0.6 * rho))) * lenMod;
-
-      const horizComp = Math.hypot(ax[0], ax[2]);
-      const vertComp = Math.abs(ax[1]);
-      if (growSideways) {
-        baseL *= 1 + dirProgress * (0.78 * horizComp * Math.min(1.9, aspect) - 0.16 * vertComp);
-      } else {
-        baseL *= 1 + dirProgress * (0.85 * vertComp * Math.min(1.9, 1 / aspect) - 0.16 * horizComp);
-      }
-
-      baseR = P.thickness.value * Math.pow(baseL, 0.65) * Math.max(0.25, 1 + P.thicknessJitter.value * 0.55 * node.uRadSym) * radMod;
-
-      buildSideBasis(tw);
-
-      const curL = baseL * gScale;
-      const curR = baseR * Math.pow(gScale, 0.78);
-      const back = P.crossAt.value * curL;
-      const u = node.uRootU * curR * 1.05, v = node.uRootV * curR * 1.05;
-      for (let k = 0; k < 3; k++) root[k] = -ax[k] * back + sx[k] * u + sz[k] * v + node.driftOffset[k];
-
-      if (dirProgress > 0.01 && i > 0) {
-        if (growSideways) {
-          const latDist = dirProgress * halfFrustumX * 0.96 * rho * localGrowth;
-          root[0] += Math.cos(az) * latDist;
-          root[2] += Math.sin(az) * latDist;
-          root[1] *= (1 - 0.42 * dirProgress);
-        } else {
-          const tier = ((i % 2 === 1) ? 1 : -0.88) * Math.pow(rho, 0.78);
-          const vertDist = dirProgress * halfFrustumY * 0.98 * tier * localGrowth;
-          root[1] += vertDist;
-          root[0] *= (1 - 0.42 * dirProgress);
-          root[2] *= (1 - 0.42 * dirProgress);
-        }
-      }
-
-      const curve = cavityCurve;
-      if (curve > 0.001) {
-        const bowlR = 0.52 * curve * (0.35 + 0.65 * gScale);
-        const ringR = bowlR * rho;
-        const bowlY = -bowlR * Math.cos(rho * 1.15) + bowlR * 0.45;
-        root[0] += Math.cos(az) * ringR;
-        root[1] += bowlY;
-        root[2] += Math.sin(az) * ringR;
-        const inTilt = curve * 0.45 * rho;
-        ax[0] = ax[0] * (1 - inTilt) - Math.cos(az) * inTilt * 0.5;
-        ax[2] = ax[2] * (1 - inTilt) - Math.sin(az) * inTilt * 0.5;
-        const al = Math.hypot(ax[0], ax[1], ax[2]) || 1;
-        ax[0] /= al; ax[1] /= al; ax[2] /= al;
-        buildSideBasis(tw);
+    if (growSideways) {
+      if (i > 0) {
+        const targetSideLean = Math.min(84 * DEG, Math.max(lean, (56 + 26 * rho) * DEG));
+        lean = lean + (targetSideLean - lean) * dirProgress * Math.min(1, 0.45 + 0.55 * rho);
       }
     } else {
-      // Secondary generation or twin branch: look up live parent or fallback to saved parent frame
-      const liveParent = byUid.get(node.parentUid);
-      if (liveParent && liveParent.worldL > 0.02) {
+      lean = lean * (1 - 0.58 * dirProgress);
+    }
+
+    const leanAz = az + 0.35 * node.uLeanAz + 0.14 * tiltWave;
+    primAx[0] = Math.sin(lean) * Math.cos(leanAz);
+    primAx[1] = Math.cos(lean);
+    primAx[2] = Math.sin(lean) * Math.sin(leanAz);
+
+    let primBaseL = (i === 0 ? 1 : Math.max(0.18, 1 - P.lengthJitter.value * (0.4 * node.uLen + 0.6 * rho))) * lenMod;
+    const horizComp = Math.hypot(primAx[0], primAx[2]);
+    const vertComp = Math.abs(primAx[1]);
+    if (growSideways) {
+      primBaseL *= 1 + dirProgress * (0.78 * horizComp * Math.min(1.9, aspect) - 0.16 * vertComp);
+    } else {
+      primBaseL *= 1 + dirProgress * (0.85 * vertComp * Math.min(1.9, 1 / aspect) - 0.16 * horizComp);
+    }
+
+    const primBaseR = P.thickness.value * Math.pow(primBaseL, 0.65) * Math.max(0.25, 1 + P.thicknessJitter.value * 0.55 * node.uRadSym) * radMod;
+    const primTw = node.uTwist + 0.22 * w4;
+
+    ax[0] = primAx[0]; ax[1] = primAx[1]; ax[2] = primAx[2];
+    buildSideBasis(primTw);
+
+    const curPrimL = primBaseL * gScale * presence;
+    const curPrimR = primBaseR * Math.pow(gScale, 0.78) * presence;
+    const back = P.crossAt.value * curPrimL;
+    const u = node.uRootU * curPrimR * 1.05, v = node.uRootV * curPrimR * 1.05;
+    for (let k = 0; k < 3; k++) {
+      primRoot[k] = -primAx[k] * back + sx[k] * u + sz[k] * v + node.driftOffset[k];
+    }
+
+    if (dirProgress > 0.01 && i > 0) {
+      if (growSideways) {
+        const latDist = dirProgress * halfFrustumX * 0.96 * rho * localGrowth * presence;
+        primRoot[0] += Math.cos(az) * latDist;
+        primRoot[2] += Math.sin(az) * latDist;
+        primRoot[1] *= (1 - 0.42 * dirProgress);
+      } else {
+        const tier = ((i % 2 === 1) ? 1 : -0.88) * Math.pow(rho, 0.78);
+        const vertDist = dirProgress * halfFrustumY * 0.98 * tier * localGrowth * presence;
+        primRoot[1] += vertDist;
+        primRoot[0] *= (1 - 0.42 * dirProgress);
+        primRoot[2] *= (1 - 0.42 * dirProgress);
+      }
+    }
+
+    const curve = cavityCurve;
+    if (curve > 0.001) {
+      const bowlR = 0.52 * curve * (0.35 + 0.65 * gScale) * presence;
+      const ringR = bowlR * rho;
+      const bowlY = -bowlR * Math.cos(rho * 1.15) + bowlR * 0.45;
+      primRoot[0] += Math.cos(az) * ringR;
+      primRoot[1] += bowlY;
+      primRoot[2] += Math.sin(az) * ringR;
+      const inTilt = curve * 0.45 * rho;
+      primAx[0] = primAx[0] * (1 - inTilt) - Math.cos(az) * inTilt * 0.5;
+      primAx[2] = primAx[2] * (1 - inTilt) - Math.sin(az) * inTilt * 0.5;
+      const al = Math.hypot(primAx[0], primAx[1], primAx[2]) || 1;
+      primAx[0] /= al; primAx[1] /= al; primAx[2] /= al;
+    }
+
+    // 2. Continuous twinShare transition (twinW in [0, 1]): smoothly blends between
+    // primary root crystal and secondary twin branch with zero discrete jumps.
+    const twinW = i < 2 ? 0.0 : smooth01(Math.max(0.0, Math.min(1.0, (twinShare - node.twinRoll + 0.18) / 0.36)));
+    node.twinW = twinW;
+    node.isSecondary = twinW >= 0.5;
+
+    let baseL = primBaseL;
+    let baseR = primBaseR;
+    let tw = primTw;
+
+    if (twinW <= 1e-5) {
+      for (let k = 0; k < 3; k++) {
+        root[k] = primRoot[k];
+        ax[k] = primAx[k];
+      }
+      buildSideBasis(tw);
+    } else {
+      const pNode = cluster.nodes[node.parentIdx >= 0 ? node.parentIdx : 0];
+      if (pNode && pNode.worldL > 0.005) {
         for (let k = 0; k < 3; k++) {
-          node.savedParentRoot[k] = liveParent.worldRoot[k];
-          node.savedParentAxis[k] = liveParent.worldAxis[k];
+          node.savedParentRoot[k] = pNode.worldRoot[k];
+          node.savedParentAxis[k] = pNode.worldAxis[k];
         }
-        node.savedParentL = liveParent.worldL;
-        node.savedParentFullL = Math.max(0.35, Math.min(0.95, liveParent.worldFullL));
-        node.savedParentR = Math.max(0.035, Math.min(0.18, liveParent.worldR));
-        node.savedParentTwist = liveParent.worldTwist;
+        node.savedParentL = pNode.worldL;
+        node.savedParentFullL = Math.max(0.35, Math.min(0.95, pNode.worldFullL));
+        node.savedParentR = Math.max(0.035, Math.min(0.18, pNode.worldR));
+        node.savedParentTwist = pNode.worldTwist;
       }
 
       const pRoot = node.savedParentRoot;
@@ -2951,48 +3008,58 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
       const attachFrac = Math.max(0.14, Math.min(0.78, 0.24 + 0.44 * node.uAttach + 0.09 * lenWave));
       const attachDist = pL * attachFrac;
       for (let k = 0; k < 3; k++) {
-        root[k] = pRoot[k] + ax[k] * attachDist + (k === 0 ? rx : k === 1 ? ry : rz) * (pR * 0.35) + node.driftOffset[k];
+        twinRoot[k] = pRoot[k] + pAxis[k] * attachDist + (k === 0 ? rx : k === 1 ? ry : rz) * (pR * 0.35) + node.driftOffset[k];
       }
 
-      ax[0] = pAxis[0] * cosB + rx * sinB;
-      ax[1] = pAxis[1] * cosB + ry * sinB;
-      ax[2] = pAxis[2] * cosB + rz * sinB;
+      twinAx[0] = pAxis[0] * cosB + rx * sinB;
+      twinAx[1] = pAxis[1] * cosB + ry * sinB;
+      twinAx[2] = pAxis[2] * cosB + rz * sinB;
 
-      // Radial bounding envelope: if branch tip would exceed envelope radius, steer gently inward
+      // Smooth C2 radial bounding envelope
       const estL = pFullL * 0.58;
-      const tipX = root[0] + ax[0] * estL;
-      const tipY = root[1] + ax[1] * estL;
-      const tipZ = root[2] + ax[2] * estL;
+      const tipX = twinRoot[0] + twinAx[0] * estL;
+      const tipY = twinRoot[1] + twinAx[1] * estL;
+      const tipZ = twinRoot[2] + twinAx[2] * estL;
       const tipDist = Math.hypot(tipX, tipY, tipZ);
       if (tipDist > 0.72) {
-        const steer = Math.min(0.68, (tipDist - 0.72) * 0.95);
-        const invR = 1 / Math.max(1e-4, Math.hypot(root[0], root[1], root[2]));
-        ax[0] = ax[0] * (1 - steer) - root[0] * invR * steer;
-        ax[1] = ax[1] * (1 - steer) - root[1] * invR * steer * 0.7;
-        ax[2] = ax[2] * (1 - steer) - root[2] * invR * steer;
+        const steer = 0.68 * smooth01(Math.min(1.0, (tipDist - 0.72) / 0.45));
+        const invR = 1 / Math.max(1e-4, Math.hypot(twinRoot[0], twinRoot[1], twinRoot[2]));
+        twinAx[0] = twinAx[0] * (1 - steer) - twinRoot[0] * invR * steer;
+        twinAx[1] = twinAx[1] * (1 - steer) - twinRoot[1] * invR * steer * 0.7;
+        twinAx[2] = twinAx[2] * (1 - steer) - twinRoot[2] * invR * steer;
       }
 
       if (dirProgress > 0.01) {
         if (growSideways) {
-          ax[1] *= (1 - 0.55 * dirProgress);
+          twinAx[1] *= (1 - 0.55 * dirProgress);
         } else {
-          ax[0] *= (1 - 0.55 * dirProgress);
-          ax[2] *= (1 - 0.55 * dirProgress);
-          ax[1] = Math.sign(ax[1] || 1) * Math.max(Math.abs(ax[1]), 0.65 * dirProgress);
+          twinAx[0] *= (1 - 0.55 * dirProgress);
+          twinAx[2] *= (1 - 0.55 * dirProgress);
+          twinAx[1] += (0.72 - twinAx[1]) * 0.48 * dirProgress;
         }
+      }
+      const tal = Math.hypot(twinAx[0], twinAx[1], twinAx[2]) || 1;
+      twinAx[0] /= tal; twinAx[1] /= tal; twinAx[2] /= tal;
+
+      const twinTw = pTwist + branchAz + 0.22 * w4;
+      const twinBaseL = pFullL * (0.44 + 0.32 * node.uBranchLen) * (1 + 0.32 * dirProgress) * lenMod;
+      const twinBaseR = Math.max(0.035, P.thickness.value * 0.85) * (0.68 + 0.28 * node.uBranchRad) * radMod;
+
+      for (let k = 0; k < 3; k++) {
+        root[k] = primRoot[k] + (twinRoot[k] - primRoot[k]) * twinW;
+        ax[k] = primAx[k] + (twinAx[k] - primAx[k]) * twinW;
       }
       const al = Math.hypot(ax[0], ax[1], ax[2]) || 1;
       ax[0] /= al; ax[1] /= al; ax[2] /= al;
-      tw = pTwist + branchAz + 0.22 * w4;
+      baseL = primBaseL + (twinBaseL - primBaseL) * twinW;
+      baseR = primBaseR + (twinBaseR - primBaseR) * twinW;
+      tw = primTw + (twinTw - primTw) * twinW;
       buildSideBasis(tw);
-
-      baseL = pFullL * (0.44 + 0.32 * node.uBranchLen) * (1 + 0.32 * dirProgress) * lenMod;
-      baseR = Math.max(0.035, P.thickness.value * 0.85) * (0.68 + 0.28 * node.uBranchRad) * radMod;
     }
 
-    // Apply procedural growth scaling to L and r
-    const L = Math.max(0.008, baseL * gScale);
-    const r = Math.max(0.003, baseR * Math.pow(gScale, 0.78));
+    // Apply procedural growth scaling and continuous crystal count presence to L and r
+    const L = Math.max(1e-4, baseL * gScale * presence);
+    const r = Math.max(1e-4, baseR * Math.pow(gScale, 0.78) * presence);
 
     // Save computed world frame on node for child branches
     for (let k = 0; k < 3; k++) {
@@ -3001,7 +3068,7 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
       node.worldSide[k] = sx[k];
     }
     node.worldL = L;
-    node.worldFullL = baseL;
+    node.worldFullL = baseL * presence;
     node.worldR = r;
     node.worldTwist = tw;
 
@@ -3009,12 +3076,7 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
     const fs = node.faceSeeds;
     let rMax = 0;
 
-    // Unified continuous "opening-out" polygon symmetry (3.0 -> 4.0 -> 5.0 -> 6.0 -> 8.0 faces):
-    // For s = n + f (n = floor(s), f in [0, 1]):
-    // - Faces k = 0..n-1 sit at angle 2*pi*k / s
-    // - The emerging (n+1)-th face (k = n) sits at angle 2*pi*n / s (which equals 2*pi == 0 at f = 0,
-    //   coincident with face 0!) and blends its faceJitter from face 0 (at f=0) to face n (at f=1),
-    //   hinging smoothly open as f increases from 0 -> 1 with zero geometric discontinuity.
+    // Unified continuous "opening-out" polygon symmetry (3.0 -> 4.0 -> 5.0 -> 6.0 -> 8.0 faces)
     const sSym = Math.max(3.0, Math.min(8.0, Number(nodeSymmetry) || 6.0));
     const nSym = Math.min(7, Math.floor(sSym));
     const fSym = Math.max(0.0, Math.min(1.0, sSym - nSym));
@@ -3033,7 +3095,8 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
           : ((1 - wSym) * Math.sin(phi * 1.15 + s1) + wSym * Math.sin(phi * 1.15 + s1 + nSym * GOLDEN));
         const fSeedBase = k < nSym ? fs[k] : (fs[0] + (fs[nSym] - fs[0]) * wSym);
         const fSeed = 0.65 * fSeedBase + 0.35 * fWaveK;
-        const faceR = r * Math.max(0.35, 1 + dynFaceJitter * fSeed);
+        const emergePad = k === nSym ? (1 - wSym) * r * 0.06 : 0;
+        const faceR = r * Math.max(0.35, 1 + dynFaceJitter * fSeed) + emergePad;
         const midOffset = Math.max(r * 0.22, faceR + 0.5 * L * taperLy);
         const topR = faceR - 0.5 * L * taperLy;
         const botR = faceR + 0.5 * L * taperLy;
@@ -3049,19 +3112,22 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
     const cosNT = Math.cos(nodeTilt), sinNT = Math.sin(nodeTilt);
     const dynDom = P.faceDominance.value * (1 + 0.28 * w1);
     const dynTipJitter = Math.max(0.06, P.tipJitter.value * (1 + 0.22 * w3));
+    const domPhase0 = 0.5 + 0.5 * Math.sin(phi * 0.95 + s3);
     for (let k = 0; k < 8; k++) {
       if (k <= nSym) {
         const a = (TAU * k) / sSym;
         const domPhase = 0.5 + 0.5 * Math.sin(phi * 0.95 + s3 + k * Math.PI);
-        const domBase = k < nSym ? (k & 1) : ((nSym & 1) * wSym);
-        const domWeight = 0.65 * domBase + 0.35 * (k < nSym ? domPhase : domPhase * wSym);
+        const domWeight0 = 0.35 * domPhase0;
+        const domWeightK = 0.65 * (k & 1) + 0.35 * domPhase;
+        const domWeight = k < nSym ? domWeightK : (domWeight0 + (domWeightK - domWeight0) * wSym);
         const tWaveK = k < nSym
           ? Math.cos(phi * 1.32 + s2 + k * GOLDEN)
           : ((1 - wSym) * Math.cos(phi * 1.32 + s2) + wSym * Math.cos(phi * 1.32 + s2 + nSym * GOLDEN));
         const tSeedBase = k < nSym ? fs[8 + k] : (fs[8] + (fs[8 + nSym] - fs[8]) * wSym);
         const tSeed = 0.62 * tSeedBase + 0.38 * tWaveK;
+        const emergeTipPad = k === nSym ? (1 - wSym) * r * 0.06 : 0;
         const big = domWeight * dynDom * r;
-        const tipOff = L * cosNT + big + dynTipJitter * r * 0.45 * tSeed;
+        const tipOff = L * cosNT + big + dynTipJitter * r * 0.45 * tSeed + emergeTipPad;
         crystalPlane(rowIdx, 8 + k, sinNT * Math.cos(a), cosNT, sinNT * Math.sin(a), Math.max(0.02 * L, tipOff));
       } else {
         crystalPlane(rowIdx, 8 + k, 0, 1, 0, L * 12 + r * 12);
@@ -3078,19 +3144,29 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
     crystalPlane(rowIdx, 17, 0, 1, 0, L * tableFrac);
 
     const half = 0.5 * L, rc = rMax / Math.cos(Math.PI / Math.max(3, sSym));
-    const nodeAlpha = Math.max(0.0, Math.min(1.0, node.alpha));
-    slot(rowIdx, 0, root[0] + ax[0] * half, root[1] + ax[1] * half, root[2] + ax[2] * half, Math.hypot(half + r * 0.65, rc) * 1.04);
+    const nodeAlpha = Math.max(0.0, Math.min(1.0, node.alpha * smooth01(Math.min(1.0, presence / 0.35))));
+    const scx = root[0] + ax[0] * half;
+    const scy = root[1] + ax[1] * half;
+    const scz = root[2] + ax[2] * half;
+    const sr = Math.hypot(half + r * 0.65, rc) * 1.04;
+    sphereCentres[rowIdx * 4] = scx;
+    sphereCentres[rowIdx * 4 + 1] = scy;
+    sphereCentres[rowIdx * 4 + 2] = scz;
+    sphereCentres[rowIdx * 4 + 3] = sr;
+
+    slot(rowIdx, 0, scx, scy, scz, sr);
     slot(rowIdx, 1, ax[0], ax[1], ax[2], L);
     slot(rowIdx, 2, nodeAlpha, node.hueOffset, node.uid, r);
     slot(rowIdx, 3, root[0], root[1], root[2], node.rnd);
 
-    // Smoothly cubic-weighted bounds so arriving/dissolving crystals have zero derivative at birth/death
-    const w = nodeAlpha * nodeAlpha * Math.min(1.0, gScale);
-    const tipY = root[1] + ax[1] * L;
-    const midY = root[1] + ax[1] * half;
-    weightedSumY += midY * w;
+    // Smooth volume-weighted 3D centroid so emerging/shrinking crystals have zero derivative at birth/death
+    const w = (nodeAlpha * nodeAlpha) * (presence * presence) * Math.max(1e-4, L * r * r);
+    weightedSumX += scx * w;
+    weightedSumY += scy * w;
+    weightedSumZ += scz * w;
     weightTotal += w;
 
+    const tipY = root[1] + ax[1] * L;
     const effPad = r * (0.1 + 0.35 * nodeAlpha);
     minY = Math.min(minY, Math.min(root[1], tipY) - effPad);
     maxY = Math.max(maxY, Math.max(root[1], tipY) + effPad);
@@ -3101,19 +3177,66 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
 
   cluster.crystals = Math.max(1, activeCount);
   cluster.activeVectors = cluster.crystals * CRYSTAL_PLANES;
-  const targetCentreY = weightTotal > 1e-4 ? weightedSumY / weightTotal : (Number.isFinite(minY) ? 0.5 * (minY + maxY) : 0);
-  cluster.centreY = Number.isFinite(cluster.centreY)
-    ? cluster.centreY + (targetCentreY - cluster.centreY) * 0.04
-    : targetCentreY;
+  for (let idx = nActive; idx < cluster.nodes.length; idx++) {
+    cluster.nodes[idx].presence = 0;
+    cluster.nodes[idx].worldL = 0;
+    cluster.nodes[idx].worldFullL = 0;
+    cluster.nodes[idx].worldR = 0;
+  }
+
+  const targetCx = weightTotal > 1e-6 ? weightedSumX / weightTotal : 0;
+  const targetCy = weightTotal > 1e-6 ? weightedSumY / weightTotal : (Number.isFinite(minY) ? 0.5 * (minY + maxY) : 0);
+  const targetCz = weightTotal > 1e-6 ? weightedSumZ / weightTotal : 0;
+  cluster.targetCentreX = targetCx;
+  cluster.targetCentreY = targetCy;
+  cluster.targetCentreZ = targetCz;
+
+  if (!cluster.centerInit || !Number.isFinite(cluster.centreY)) {
+    cluster.centreX = targetCx;
+    cluster.centreY = targetCy;
+    cluster.centreZ = targetCz;
+    cluster.velCentreX = 0;
+    cluster.velCentreY = 0;
+    cluster.velCentreZ = 0;
+    cluster.centerInit = true;
+    cluster.pendingCenterDt = 0;
+  } else {
+    // Slow critically-damped 2nd-order spring-damper (true ease-in from rest + smooth ease-out deceleration, tau ~ 2.2s)
+    let remC = Math.max(0, Math.min(cluster.pendingCenterDt > 0 ? cluster.pendingCenterDt : (!evolveOn ? 0.016 : 0), 10));
+    cluster.pendingCenterDt = 0;
+    const omega = 1.35;
+    const omega2 = omega * omega;
+    const damp = 2.0 * omega;
+    while (remC > 1e-6) {
+      const cdt = Math.min(remC, 0.05);
+      remC -= cdt;
+      cluster.velCentreX += ((targetCx - cluster.centreX) * omega2 - damp * cluster.velCentreX) * cdt;
+      cluster.centreX += cluster.velCentreX * cdt;
+      cluster.velCentreY += ((targetCy - cluster.centreY) * omega2 - damp * cluster.velCentreY) * cdt;
+      cluster.centreY += cluster.velCentreY * cdt;
+      cluster.velCentreZ += ((targetCz - cluster.centreZ) * omega2 - damp * cluster.velCentreZ) * cdt;
+      cluster.centreZ += cluster.velCentreZ * cdt;
+    }
+  }
+
+  let maxCamReach = 0.45;
+  for (let k = 0; k < activeCount; k++) {
+    const dx = sphereCentres[k * 4] - cluster.centreX;
+    const dy = sphereCentres[k * 4 + 1] - cluster.centreY;
+    const dz = sphereCentres[k * 4 + 2] - cluster.centreZ;
+    const reach = Math.hypot(dx, dy, dz) + sphereCentres[k * 4 + 3];
+    if (reach > maxCamReach) maxCamReach = reach;
+  }
+
   const targetRadiusXZ = Math.max(0.18, Math.sqrt(maxR2));
   const targetHalfY = Math.max(0.18, Number.isFinite(minY) ? 0.5 * (maxY - minY) : 0.45);
   cluster.radiusXZ = Number.isFinite(cluster.radiusXZ)
-    ? Math.max(targetRadiusXZ, cluster.radiusXZ + (targetRadiusXZ - cluster.radiusXZ) * 0.08)
+    ? cluster.radiusXZ + (targetRadiusXZ - cluster.radiusXZ) * 0.04
     : targetRadiusXZ;
   cluster.halfY = Number.isFinite(cluster.halfY)
-    ? Math.max(targetHalfY, cluster.halfY + (targetHalfY - cluster.halfY) * 0.08)
+    ? cluster.halfY + (targetHalfY - cluster.halfY) * 0.04
     : targetHalfY;
-  cluster.radius = Math.max(0.45, cluster.radiusXZ * 1.18, cluster.halfY * 1.18);
+  cluster.radius = Math.max(0.45, maxCamReach * 1.06, cluster.radiusXZ * 1.18, cluster.halfY * 1.18);
   cluster.version++;
 
   const projHalfX = (focal * cluster.radiusXZ) / Math.max(0.6, D);
@@ -5075,6 +5198,7 @@ function run(slug, { manifest, params, presets, randomize, sketch }) {
     cluster,
     morphState,
     sound,
+    chrome,
     loop,
     store,
     P,

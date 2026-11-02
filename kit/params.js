@@ -42,7 +42,7 @@ const STICKY_USER_KEYS = new Set([
   'autoGrow', 'growSpeed', 'growth', 'spinStart', 'spin', 'tilt', 'fov',
   'bloom', 'faceGlare',
 ]);
-const DISCRETE_INT_KEYS = new Set(['seed', 'crystals', 'fireSamples', 'bounces', 'depth', 'filmFps', 'targetFps', 'maxFps']);
+const DISCRETE_INT_KEYS = new Set(['seed', 'fireSamples', 'bounces', 'depth', 'filmFps', 'targetFps', 'maxFps']);
 
 export function createModel(schema, storageKey, presets = {}) {
   const params = [];
@@ -228,6 +228,7 @@ export function createModel(schema, storageKey, presets = {}) {
       for (const p of params) {
         if (p.key === 'renderScale' || p.key === 'targetFps' || p.key === 'maxFps' || p.key === 'maxDpr' || p.key === 'bloom' || p.noPreset) continue;
         if (STICKY_USER_KEYS.has(p.key) && values[p.key] === undefined) continue;
+        if (p.key === 'seed' && seconds > 0 && glideNumbers) continue;
         const to = coerce(p, resolveTarget(p));
         if (seconds <= 0 || p.type === 'select' || p.type === 'bool' || p.key === 'seed' || (p.type !== 'color' && !glideNumbers)) {
           assign(p, to);
@@ -245,9 +246,10 @@ export function createModel(schema, storageKey, presets = {}) {
       glideLen = Math.max(seconds, 1e-3);
     },
     applyPreset(name, seconds = 0.65, glideNumbers = true) {
-      const values = customPresets[name] || presets?.[name];
+      const resolvedName = (name === 'Glacial Ice Dendrite' && presets?.['Glacial Ice']) ? 'Glacial Ice' : name;
+      const values = customPresets[resolvedName] || presets?.[resolvedName];
       if (!values) return;
-      store.applyValues(values, seconds, name, glideNumbers);
+      store.applyValues(values, seconds, resolvedName, glideNumbers);
     },
     randomize(customRandomizer, seconds = 10.0) {
       const next = typeof customRandomizer === 'function' ? { ...customRandomizer(store) } : {};

@@ -143,7 +143,7 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
     stageIndex: 0,
     diceRolls: 0,
     fromPreset: standardPresetNames[0] || 'Amethyst Cathedral',
-    toPreset: standardPresetNames[1] || 'Classic Quartz Prism',
+    toPreset: standardPresetNames[1] || 'Glacial Ice',
     elapsed: 0,
     holdRemaining: 0,
     progress: 0,
@@ -560,7 +560,7 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
         velPitch *= idleDecay;
       }
       if (P.spin && Math.abs(velYaw) > 4) {
-        const mag = Math.abs(Number(P.spin.value)) || 7;
+        const mag = Math.abs(Number(P.spin.value)) || 1.5;
         store.setValue(P.spin, Math.sign(velYaw) * mag);
       }
       const baseSpin = P.spin ? Number(P.spin.value) : 0;
@@ -737,6 +737,7 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
     cluster,
     morphState,
     sound,
+    chrome,
     loop,
     store,
     P,

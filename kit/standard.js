@@ -12,7 +12,7 @@
 
 /** @type {Record<string, ParamDef>} */
 const STANDARD = {
-  timeScale: { key: 'timeScale', label: 'Speed', value: 3, default: 3, min: 0, max: 4, step: 0.01, uniform: false, desc: 'Global speed of all scene motion.' },
+  timeScale: { key: 'timeScale', label: 'Speed', value: 1.5, default: 1.5, min: 0, max: 4, step: 0.01, uniform: false, desc: 'Global speed of all scene motion.' },
   renderScale: { key: 'renderScale', label: 'Render scale', value: 1, min: 0.25, max: 1, step: 0.05, uniform: false, desc: 'Internal resolution ceiling. Lower = faster, softer. Adaptive quality works below this.' },
   targetFps: { key: 'targetFps', label: 'Target fps', value: 60, min: 24, max: 120, step: 1, uniform: false, desc: 'Frame rate adaptive quality tries to hold.' },
   maxFps: { key: 'maxFps', label: 'Frame cap', value: 0, min: 0, max: 120, step: 1, uniform: false, desc: 'Most frames per second to draw (0 = as many as the screen shows). A slow scene looks the same at 30 and costs half the GPU, battery and heat.' },

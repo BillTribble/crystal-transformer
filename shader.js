@@ -101,7 +101,8 @@ export default {
       f.f_cam[k] = M[k];
       f.f_cam[3 + k] = M[3 + k];
       f.f_cam[6 + k] = -M[6 + k];
-      f.f_camPos[k] = D * M[6 + k] + (k === 1 ? cluster.centreY : 0);
+      const cOff = k === 0 ? (cluster.centreX || 0) : k === 1 ? (cluster.centreY || 0) : (cluster.centreZ || 0);
+      f.f_camPos[k] = D * M[6 + k] + cOff;
     }
 
     const ka = P.keyAngle.value * DEG, kh = P.keyHeight.value * DEG, ra = P.rimAngle.value * DEG;
@@ -392,8 +393,10 @@ vec3 inside(int id, vec3 ro, vec3 rd, float len, float travelled, float jitter, 
     T *= (1.0 - a) * exp(-sigma * dt);
   }
 
-  // Multi-generation nested phantoms (guarded behind u_phantom > 0.01; smoothly weighted per layer so morphing phantomLayers never snaps)
-  if (u_phantom > 0.01 && hash(vec3(uid, f_seed, 97.0)) < u_phantomRate) {
+  // Multi-generation nested phantoms (guarded behind u_phantom > 0.01; smoothly weighted per layer & phantomRate so morphing never snaps)
+  float phRateRoll = hash(vec3(uid, f_seed, 97.0));
+  float phRateW = smoothstep(phRateRoll - 0.14, phRateRoll + 0.14, u_phantomRate);
+  if (u_phantom > 0.01 && phRateW > 1e-4) {
     vec3 phTint = exp(-mix(f_sigma, f_sigmaCore, 0.4) * 0.35);
     vec3 phLightIn = lightIn * mix(vec3(1.0), normalize(phTint + vec3(0.05)) * 1.25, clamp(length(f_sigma) * 0.22, 0.0, 0.85));
     for (int layer = 0; layer < 4; layer++) {
@@ -418,7 +421,7 @@ vec3 inside(int id, vec3 ro, vec3 rd, float len, float travelled, float jitter, 
           vec3 hp = ro + rd * t;
           float cosk = abs(dot(rd, body(id, PA + (e == 0 ? kn : kf)).xyz));
           float dust = texture(u_incl, hp * u_inclusionScale * 2.0 + off + float(layer) * 0.37).r;
-          float sheet = layerWeight * clamp(u_phantom * (0.12 - 0.02 * float(layer)) * (0.3 + 1.7 * dust) / max(cosk, 0.12), 0.0, 1.0);
+          float sheet = phRateW * layerWeight * clamp(u_phantom * (0.12 - 0.02 * float(layer)) * (0.3 + 1.7 * dust) / max(cosk, 0.12), 0.0, 1.0);
           vec3 phCol = u_iridescence > 0.01
             ? mix(phLightIn, spectralRainbow(cosk * 2.4 + float(layer) * 0.33 + hueOff) * (phLightIn + vec3(0.35)), clamp(u_iridescence * 0.6, 0.0, 1.0))
             : phLightIn;
@@ -466,7 +469,9 @@ vec3 inside(int id, vec3 ro, vec3 rd, float len, float travelled, float jitter, 
   // Deep internal iridescent cleavage plane (guarded behind u_fractures > 0.01 || u_iridescence > 0.01)
   if (u_fractures > 0.01 || u_iridescence > 0.01 || u_flash > 0.01) {
     float effFractures = clamp(u_fractures + u_iridescence * 0.22 + u_flash * 0.25, 0.0, 1.0);
-    if (hash(vec3(uid, f_seed, 91.0)) < effFractures) {
+    float fracRoll = hash(vec3(uid, f_seed, 91.0));
+    float fracW = smoothstep(fracRoll - 0.14, fracRoll + 0.14, effFractures);
+    if (fracW > 1e-4) {
       vec3 hj = vec3(uid, f_seed, 93.0);
       vec3 fn = normalize(vec3(hash(hj), hash(hj + 1.0), hash(hj + 2.0)) - 0.5);
       vec3 fc = root + axis * L * (0.25 + 0.4 * hash(hj + 3.0));
@@ -477,7 +482,7 @@ vec3 inside(int id, vec3 ro, vec3 rd, float len, float travelled, float jitter, 
           vec3 hp = ro + rd * t;
           vec4 v = texture(u_incl, hp * 2.5 + off);
           float extent = length(hp - fc) / (r * (1.6 + 0.35 * u_iridescence));
-          float mask = 1.0 - smoothstep(0.55, 0.78, extent + 0.45 * (v.b - 0.5) + 0.25 * v.r);
+          float mask = fracW * (1.0 - smoothstep(0.55, 0.78, extent + 0.45 * (v.b - 0.5) + 0.25 * v.r));
           if (mask > 0.0) {
             float film = v.b * 2.5 + length(hp - fc) * 6.0 + hueOff + abs(dn) * 2.2;
             vec3 irid = spectralRainbow(film);
@@ -668,7 +673,9 @@ void main() {
     hopCost += alpha;
 
     float footprint = travelled * f_pixAngle;
-    float rough = hash(vec3(uid, float(k), f_seed + 0.5)) < u_frostShare ? u_frost : 0.0;
+    float frostRoll = hash(vec3(uid, float(k), f_seed + 0.5));
+    float frostW = smoothstep(frostRoll - 0.15, frostRoll + 0.15, u_frostShare);
+    float rough = u_frost * frostW;
     float dEdge = (u_edgeWear > 0.0 || u_hopper > 0.0 || u_iridescence > 0.0 || u_bloom > 0.0) ? edgeDist(id, k, p) : 1.0;
     float chip = wearFromDist(id, p, dEdge);
     rough = max(rough, chip * 0.6);
@@ -695,7 +702,9 @@ void main() {
       float nextTravelled = travelled + len * alpha;
       p = ro + rd * len;
 
-      float fr = hash(vec3(uid, float(kf), f_seed + 0.5)) < u_frostShare ? u_frost : 0.0;
+      float exitFrostRoll = hash(vec3(uid, float(kf), f_seed + 0.5));
+      float exitFrostW = smoothstep(exitFrostRoll - 0.15, exitFrostRoll + 0.15, u_frostShare);
+      float fr = u_frost * exitFrostW;
       float dExit = (u_hopper > 0.0 || u_iridescence > 0.0 || u_bloom > 0.0) ? edgeDist(id, kf, p) : 1.0;
       vec3 nf = faceNormal(id, kf, body(id, PA + kf).xyz, p, fr, nextTravelled * f_pixAngle, dExit);
       float cosi = dot(rd, nf);
