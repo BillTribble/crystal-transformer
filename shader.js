@@ -269,16 +269,19 @@ bool sphereHit(vec3 ro, vec3 rd, vec4 s, float tMax) {
   return -b + h > 0.0 && -b - h < tMax;
 }
 
-// 1. Massive Abstract Architectural Occlusion Voids (u_occlusion): invisible 3D displacing spheres/wedges (from next crystal row) that carve sweeping concave architectural gaps through the crystals
-bool applyMassiveOcclusionVoids(int row, vec3 ro, vec3 rd, inout float tn, inout float tf, inout int kn) {
-  if (u_occlusion <= 0.01) return true;
+// 1. Massive Abstract Architectural Occlusion Voids (u_occlusion): fixed-radius 3D displacing spheres/wedges (from next crystal row) whose negative-space cutout opacity cross-dissolves smoothly over 8 seconds via rawAlpha
+float evalMassiveOcclusionVoid(int row, vec3 ro, vec3 rd, float tEntry, out vec3 outWallN, out float outRim) {
+  outWallN = vec3(0.0, 1.0, 0.0);
+  outRim = 0.0;
+  if (u_occlusion <= 0.001) return 0.0;
   vec3 ax = body(row, 1).xyz;
   vec3 rt = body(row, 3).xyz;
   int nc = max(1, int(f_crystals + 0.5));
   int nextRow = (row + 1) % nc;
+  float bestCut = 0.0;
   for (int m = 0; m < 2; m++) {
     vec4 rawEc = body(nextRow, m);
-    vec4 ec = vec4(rawEc.xyz, rawEc.w * u_occlusion);
+    vec4 ec = vec4(rawEc.xyz, rawEc.w * 0.92);
     if (ec.w <= 1e-4) continue;
     vec3 oc = ro - ec.xyz;
     float b = dot(oc, rd);
@@ -301,16 +304,21 @@ bool applyMassiveOcclusionVoids(int row, vec3 ro, vec3 rd, inout float tn, inout
       float tDn = dDn / dnDn;
       if (dnDn < 0.0) tc0 = max(tc0, tDn); else tc1 = min(tc1, tDn);
     } else if (dDn < 0.0) continue;
-    if (tc1 > tc0) {
-      float tStart = max(tn, 0.0);
-      if (tc0 <= tStart + 1e-3 && tc1 > tStart) {
-        tn = tc1;
-        kn = CP + m;
-        if (tn >= tf) return false;
+    if (tc1 > tc0 && tc1 > tEntry) {
+      float frontSoft = smoothstep(tEntry + ec.w * 0.28, tEntry - ec.w * 0.06, tc0);
+      float span = max(0.0, tc1 - max(tc0, tEntry));
+      float depthSoft = smoothstep(0.0, max(ec.w * 0.36, 1e-3), span);
+      float cut = frontSoft * depthSoft;
+      if (cut > bestCut) {
+        bestCut = cut;
+        vec3 pHit = ro + rd * max(tc0, tEntry);
+        vec3 relC = pHit - ec.xyz;
+        outWallN = -normalize(relC + 1e-5);
+        outRim = clamp(cut * (1.0 - cut) * 4.0, 0.0, 1.0);
       }
     }
   }
-  return tf > max(tn, 0.0);
+  return clamp(bestCut, 0.0, 1.0);
 }
 
 // 2. Tiny Crystal-Locked 3D Edge Chips (u_edgeChips): concentrated around corners + varied length (micro-nicks & longer conchoidal scars)
@@ -435,9 +443,6 @@ bool convexHit(int row, vec3 ro, vec3 rd, out float tn, out float tf, out int kn
     if (tn > tf) return false;
   }
   if (tf <= max(tn, 0.0)) return false;
-  if (u_occlusion > 0.01) {
-    if (!applyMassiveOcclusionVoids(row, ro, rd, tn, tf, kn)) return false;
-  }
   if (u_edgeChips > 0.01 && kn < 16) {
     float r = max(body(row, 2).w, 0.02);
     vec3 pStart = ro + rd * max(tn, 0.0);
@@ -1174,6 +1179,15 @@ void main() {
     skipMask |= (1 << id);
 
     float rawAlpha = clamp(body(id, 2).x, 0.0, 1.0);
+    vec3 voidWallN = vec3(0.0, 1.0, 0.0);
+    float voidRim = 0.0;
+    if (u_occlusion > 0.001) {
+      float occNorm = clamp(u_occlusion / 0.92, 0.0, 1.0);
+      float occBlend = occNorm * occNorm * (3.0 - 2.0 * occNorm);
+      float voidCut = evalMassiveOcclusionVoid(id, ro, rd, t, voidWallN, voidRim);
+      rawAlpha *= (1.0 - occBlend * voidCut);
+      voidRim *= occBlend;
+    }
     float budgetWeight = clamp(float(depth) - hopCost, 0.0, 1.0);
     float alpha = rawAlpha * rawAlpha * (3.0 - 2.0 * rawAlpha) * budgetWeight;
     if (alpha <= 1e-5) {
@@ -1224,6 +1238,11 @@ void main() {
     rough = max(rough, chip * 0.6);
     vec3 n = faceNormal(id, isEdgeIncursion ? 18 : k, rawFaceN, p, rough, footprint, dEdge);
     float inChip = 0.0;
+    if (voidRim > 0.001) {
+      n = normalize(mix(n, voidWallN, voidRim * 0.65));
+      rough = max(rough, 0.24 * voidRim);
+      inChip = max(inChip, 0.22 * voidRim);
+    }
     if ((u_edgeChips > 0.01 || u_occlusion > 0.01) && (isEdgeIncursion || isCornerNip)) {
       vec3 axis = body(id, 1).xyz, root = body(id, 3).xyz;
       float r = max(body(id, 2).w, 0.03);

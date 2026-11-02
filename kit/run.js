@@ -289,6 +289,8 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
 
   let occlusionDriftTime = 0;
   let occlusionManualHold = 0;
+  let smoothOcclusion = Number(P.occlusion?.value) || 0;
+  let targetOcclusion = smoothOcclusion;
 
   function doRandomize(seconds = 18.0) {
     if (!randomize) return;
@@ -469,12 +471,14 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
       } else if (changedKey === 'occlusionStyle' && P.occlusion) {
         occlusionManualHold = 0;
         const st = String(P.occlusionStyle?.value || 'Auto drift (1/3 time)');
-        if (st === 'Always on (Massive)') store.setValue(P.occlusion, 0.92);
-        else if (st === 'Subtle') store.setValue(P.occlusion, 0.38);
-        else if (st === 'Off') store.setValue(P.occlusion, 0.0);
+        if (st === 'Always on (Massive)') targetOcclusion = 0.92;
+        else if (st === 'Subtle') targetOcclusion = 0.38;
+        else if (st === 'Off') targetOcclusion = 0.0;
         panel.syncAll();
       } else if (changedKey === 'occlusion') {
         occlusionManualHold = 30.0;
+        smoothOcclusion = Number(P.occlusion?.value) || 0;
+        targetOcclusion = smoothOcclusion;
       } else if (changedKey) {
         cluster.applyManualParam?.(changedKey, P);
         if (P[changedKey] && morphState.fromMap[changedKey] !== undefined) {
@@ -774,23 +778,42 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
         const occStyle = String(P.occlusionStyle.value || 'Auto drift (1/3 time)');
         if (occlusionManualHold > 0) {
           occlusionManualHold = Math.max(0, occlusionManualHold - dt);
-        } else if (occStyle === 'Auto drift (1/3 time)' && P.evolve?.value) {
-          occlusionDriftTime += dt;
-          // 72-second cycle: ~2/3 of the time (46s) at 0.0, ~1/3 of the time (26s) drifting smoothly into massive abstract voids (0.92) and back
-          const cyc = occlusionDriftTime % 72.0;
-          let targetOcc = 0.0;
-          if (cyc >= 46.0 && cyc < 54.0) {
-            const u = (cyc - 46.0) / 8.0;
-            targetOcc = 0.92 * (0.5 - 0.5 * Math.cos(Math.PI * u));
-          } else if (cyc >= 54.0 && cyc < 64.0) {
-            targetOcc = 0.92 + 0.06 * Math.sin((cyc - 54.0) * 0.62);
-          } else if (cyc >= 64.0) {
-            const u = (cyc - 64.0) / 8.0;
-            targetOcc = 0.92 * (0.5 + 0.5 * Math.cos(Math.PI * u));
+          targetOcclusion = Number(P.occlusion.value) || 0;
+          smoothOcclusion = targetOcclusion;
+        } else {
+          if (occStyle === 'Always on (Massive)') {
+            targetOcclusion = 0.92;
+          } else if (occStyle === 'Subtle') {
+            targetOcclusion = 0.38;
+          } else if (occStyle === 'Off') {
+            targetOcclusion = 0.0;
+          } else if (occStyle === 'Auto drift (1/3 time)' && P.evolve?.value) {
+            occlusionDriftTime += dt;
+            // 72-second cycle: 44s at 0.0, 8s slow fade-in (44..52s), 12s hold at 0.92 (52..64s), 8s slow fade-out (64..72s)
+            const cyc = occlusionDriftTime % 72.0;
+            if (cyc >= 44.0 && cyc < 52.0) {
+              const u = (cyc - 44.0) / 8.0;
+              targetOcclusion = 0.92 * (0.5 - 0.5 * Math.cos(Math.PI * u));
+            } else if (cyc >= 52.0 && cyc < 64.0) {
+              targetOcclusion = 0.92;
+            } else if (cyc >= 64.0) {
+              const u = (cyc - 64.0) / 8.0;
+              targetOcclusion = 0.92 * (0.5 + 0.5 * Math.cos(Math.PI * u));
+            } else {
+              targetOcclusion = 0.0;
+            }
+          }
+          // Rate-limit smoothOcclusion to at most 1.0 / 8.0 (0.125/s, or 0.92 over 8.0 seconds) so voids always appear/disappear over 8 full seconds
+          const maxStep = (0.92 / 8.0) * dt;
+          const diff = targetOcclusion - smoothOcclusion;
+          if (Math.abs(diff) <= maxStep) {
+            smoothOcclusion = targetOcclusion;
+          } else {
+            smoothOcclusion += Math.sign(diff) * maxStep;
           }
           const curOcc = Number(P.occlusion.value) || 0;
-          if (Math.abs(targetOcc - curOcc) > 1e-3) {
-            store.setSmooth(P.occlusion, Number(targetOcc.toFixed(3)));
+          if (Math.abs(smoothOcclusion - curOcc) > 5e-4) {
+            store.setSmooth(P.occlusion, Number(smoothOcclusion.toFixed(4)));
             P.occlusion.base = P.occlusion.value;
             needsUiSync = true;
           }

@@ -72,7 +72,7 @@ export const SAMPLE_ZONES = [
 // Exact instrument trim & crossfade balance from eno_soundscape/js/audio-engine.js
 // (pianoCrossfade = -0.62 -> pianoMultiplier = 1.0, otherMultiplier = 0.38)
 const VOICE_INSTRUMENT_TRIM = {
-  piano: 0.92,
+  piano: 0.85,
   pad: 0.15,
   bell: 0.18,
   choir: 0.16,
@@ -92,11 +92,11 @@ export const ENSO_TRACKS = [
     degreeWeights: [0.98, 0.86, 0.42, 0.78, 0.92, 0.48, 0.32],
     markovGravity: [0.98, 0.86, 0.35, 0.78, 0.92, 0.42, 0.28],
     rotationSpeed: 1.00,
-    pianoCutoffHz: 2800,
-    pianoShelfDb: -3.2,
+    pianoCutoffHz: 980,
+    pianoShelfDb: -8.8,
     globalAttackSec: 4.2,
-    phraseCycleSec: 5.4,
-    phraseGateProb: 0.95,
+    phraseCycleSec: 17.6,
+    phraseGateProb: 0.72,
     phraseLengthLfo: { enabled: false },
     droneMode: 'Breathing wash',
     washInstrument: 'choir',
@@ -104,10 +104,9 @@ export const ENSO_TRACKS = [
     washSustain: 7.0,
     washGap: 3.0,
     chordInstrument: 'choir',
-    chordRollMs: 120,
+    chordRollMs: 168,
     chordVel: 0.48,
     voices: {
-      piano: { gain: 1.00, attack: 0.008, release: 7.5, octave: 1, pan: 0.32, muted: false },
       pad:   { cycle: 21.3, prob: 0.66, gain: 0.65, attack: 4.2, release: 9.5, octave: 0, pan: 0.38, muted: false },
       bell:  { cycle: 19.3, prob: 0.36, gain: 0.56, attack: 0.08, release: 5.5, octave: 1, pan: 0.60, muted: false },
       choir: { cycle: 29.9, prob: 0.48, gain: 0.60, attack: 4.5, release: 10.5, octave: 1, pan: 0.50, muted: false },
@@ -115,16 +114,18 @@ export const ENSO_TRACKS = [
       drone: { cycle: 34.1, prob: 0.0,  gain: 0.65, attack: 4.6, release: 12.0, octave: -1, pan: 0.15, muted: true },
     },
     phrases: [
-      // Luminous Cell & Lydian Glass Motif in natural middle/upper register (MIDI 60..84, C4..G5)
+      // Lydian Glass Progression & Luminous Cell from eno_soundscape/js/phrase-patterns.js
       [
-        { deg: [0, 4], oct: [1, 2], delayMs: 0,    vel: 0.85, rollMs: 120 },
-        { deg: [3],    oct: [2],    delayMs: 1450, vel: 0.80, rollMs: 110 },
-        { deg: [1],    oct: [2],    delayMs: 2920, vel: 0.78, rollMs: 110 },
+        { deg: [0, 2, 4, 6], oct: [0, 0, 0, 0], delayMs: 0, vel: 0.44, rollMs: 162 },
+        { deg: [1, 3, 5, 0], oct: [0, 0, 0, 1], delayMs: 1950, vel: 0.38, rollMs: 178 },
+        { deg: [6, 1, 3, 5], oct: [-1, 0, 0, 0], delayMs: 4100, vel: 0.35, rollMs: 192 },
+        { deg: [0, 3, 4, 6], oct: [0, 0, 0, 0], delayMs: 6300, vel: 0.42, rollMs: 168 },
       ],
       [
-        { deg: [4], oct: [1], delayMs: 0,    vel: 0.82, rollMs: 110 },
-        { deg: [6], oct: [1], delayMs: 1380, vel: 0.78, rollMs: 110 },
-        { deg: [0], oct: [2], delayMs: 2820, vel: 0.85, rollMs: 110 },
+        { deg: [0], oct: [1], delayMs: 0, vel: 0.44, rollMs: 155 },
+        { deg: [3], oct: [1], delayMs: 840, vel: 0.36, rollMs: 155 },
+        { deg: [4], oct: [1], delayMs: 1820, vel: 0.40, rollMs: 165 },
+        { deg: [1], oct: [1], delayMs: 3040, vel: 0.34, rollMs: 175 },
       ],
     ],
     chords: [
@@ -145,12 +146,12 @@ export const ENSO_TRACKS = [
     degreeWeights: [0.90, 0.75, 0.60, 0.30, 0.80, 0.50, 0.40],
     markovGravity: [0.92, 0.78, 0.72, 0.32, 0.88, 0.62, 0.76],
     rotationSpeed: 0.90,
-    pianoCutoffHz: 3000,
-    pianoShelfDb: -2.8,
+    pianoCutoffHz: 1120,
+    pianoShelfDb: -6.5,
     globalAttackSec: 3.2,
-    phraseCycleSec: 5.2,
-    phraseGateProb: 0.95,
-    phraseLengthLfo: { enabled: true, periodSec: 180, minRatio: 0.65, maxRatio: 1.00 },
+    phraseCycleSec: 15.8,
+    phraseGateProb: 0.76,
+    phraseLengthLfo: { enabled: true, periodSec: 180, minRatio: 0.50, maxRatio: 1.00 },
     droneMode: 'Breathing wash',
     washInstrument: 'drone',
     washFade: 4.3,
@@ -160,7 +161,6 @@ export const ENSO_TRACKS = [
     chordRollMs: 112,
     chordVel: 0.54,
     voices: {
-      piano: { gain: 1.00, attack: 0.008, release: 7.5, octave: 1, pan: 0.32, muted: false },
       pad:   { cycle: 23.3, prob: 0.62, gain: 0.65, attack: 3.2, release: 8.0, octave: 0, pan: 0.35, muted: false },
       bell:  { cycle: 19.7, prob: 0.34, gain: 0.58, attack: 0.04, release: 4.8, octave: 1, pan: 0.55, muted: false },
       choir: { cycle: 18.7, prob: 0.72, gain: 0.62, attack: 3.4, release: 9.2, octave: 1, pan: 0.45, muted: false },
@@ -168,16 +168,26 @@ export const ENSO_TRACKS = [
       drone: { cycle: 37.3, prob: 0.0,  gain: 0.65, attack: 3.8, release: 10.5, octave: -1, pan: 0.15, muted: true },
     },
     phrases: [
-      // Sunlit Canopy Motif & Atrium Drop Cell in middle/upper register (MIDI 67..79, G4..G5)
+      // Sunlit Canopy Cascade (primarySteps & variantSteps from eno_soundscape/js/phrase-patterns.js)
       [
-        { deg: [0, 4], oct: [1, 1], delayMs: 0,    vel: 0.85, rollMs: 115 },
-        { deg: [2],    oct: [1],    delayMs: 1360, vel: 0.80, rollMs: 105 },
-        { deg: [6],    oct: [1],    delayMs: 2780, vel: 0.78, rollMs: 105 },
+        { deg: [0, 4], oct: [0, 1], delayMs: 0, vel: 0.48, rollMs: 115 },
+        { deg: [2], oct: [1], delayMs: 440, vel: 0.40, rollMs: 90 },
+        { deg: [1], oct: [1], delayMs: 880, vel: 0.36, rollMs: 90 },
+        { deg: [4], oct: [1], delayMs: 1320, vel: 0.44, rollMs: 95 },
+        { deg: [6], oct: [0], delayMs: 1960, vel: 0.34, rollMs: 95 },
+        { deg: [5], oct: [0], delayMs: 2420, vel: 0.38, rollMs: 95 },
+        { deg: [2], oct: [0], delayMs: 2880, vel: 0.33, rollMs: 95 },
+        { deg: [0], oct: [1], delayMs: 3640, vel: 0.45, rollMs: 115 },
       ],
       [
-        { deg: [4], oct: [1], delayMs: 0,    vel: 0.82, rollMs: 105 },
-        { deg: [1], oct: [1], delayMs: 1420, vel: 0.78, rollMs: 105 },
-        { deg: [0], oct: [1], delayMs: 2840, vel: 0.84, rollMs: 105 },
+        { deg: [0, 4], oct: [0, 1], delayMs: 0, vel: 0.46, rollMs: 115 },
+        { deg: [1], oct: [1], delayMs: 440, vel: 0.38, rollMs: 90 },
+        { deg: [2], oct: [1], delayMs: 900, vel: 0.42, rollMs: 90 },
+        { deg: [6], oct: [1], delayMs: 1380, vel: 0.35, rollMs: 95 },
+        { deg: [4], oct: [1], delayMs: 2040, vel: 0.43, rollMs: 95 },
+        { deg: [3], oct: [0], delayMs: 2500, vel: 0.34, rollMs: 95 },
+        { deg: [1], oct: [0], delayMs: 2960, vel: 0.36, rollMs: 95 },
+        { deg: [0], oct: [1], delayMs: 3720, vel: 0.44, rollMs: 115 },
       ],
     ],
     chords: [
@@ -197,12 +207,12 @@ export const ENSO_TRACKS = [
     intervals: [0, 2, 4, 6, 7, 9, 11],
     degreeWeights: [0.85, 0.75, 0.70, 0.50, 0.90, 0.60, 0.35],
     markovGravity: [1.40, 1.32, 1.0, 1.44, 1.55, 1.0, 1.0],
-    rotationSpeed: 0.85,
-    pianoCutoffHz: 3100,
-    pianoShelfDb: -2.5,
+    rotationSpeed: 0.80,
+    pianoCutoffHz: 1140,
+    pianoShelfDb: -5.5,
     globalAttackSec: 5.2,
-    phraseCycleSec: 5.6,
-    phraseGateProb: 0.95,
+    phraseCycleSec: 19.4,
+    phraseGateProb: 0.70,
     phraseLengthLfo: { enabled: false },
     droneMode: 'Breathing wash',
     washInstrument: 'drone',
@@ -210,10 +220,9 @@ export const ENSO_TRACKS = [
     washSustain: 7.2,
     washGap: 3.2,
     chordInstrument: 'pad',
-    chordRollMs: 130,
+    chordRollMs: 208,
     chordVel: 0.48,
     voices: {
-      piano: { gain: 1.00, attack: 0.008, release: 7.8, octave: 1, pan: 0.34, muted: false },
       pad:   { cycle: 26.9, prob: 0.68, gain: 0.65, attack: 5.0, release: 12.0, octave: 0, pan: -0.38, muted: false },
       bell:  { cycle: 16.9, prob: 0.42, gain: 0.58, attack: 0.12, release: 7.2, octave: 1, pan: 0.62, muted: false },
       choir: { cycle: 31.1, prob: 0.58, gain: 0.62, attack: 5.2, release: 13.5, octave: 1, pan: -0.60, muted: false },
@@ -221,16 +230,18 @@ export const ENSO_TRACKS = [
       drone: { cycle: 41.1, prob: 0.0,  gain: 0.65, attack: 5.4, release: 15.0, octave: -1, pan: 0.18, muted: true },
     },
     phrases: [
-      // Cathedral Bell Cell & Gallery Horizon Motif in middle/upper register (MIDI 65..77, F4..F5)
+      // Cathedral Vespers Chords & Gallery Horizon Pattern from eno_soundscape/js/phrase-patterns.js
       [
-        { deg: [0, 4], oct: [1, 1], delayMs: 0,    vel: 0.85, rollMs: 120 },
-        { deg: [3],    oct: [1],    delayMs: 1480, vel: 0.80, rollMs: 115 },
-        { deg: [6],    oct: [1],    delayMs: 2980, vel: 0.82, rollMs: 115 },
+        { deg: [0, 2, 4, 1], oct: [0, 0, 0, 1], delayMs: 0, vel: 0.46, rollMs: 196 },
+        { deg: [1, 3, 5, 0], oct: [0, 0, 0, 1], delayMs: 2150, vel: 0.40, rollMs: 216 },
+        { deg: [5, 0, 2, 4], oct: [-1, 0, 0, 0], delayMs: 4400, vel: 0.36, rollMs: 204 },
+        { deg: [4, 6, 1, 3], oct: [0, 0, 1, 1], delayMs: 6700, vel: 0.42, rollMs: 224 },
       ],
       [
-        { deg: [4], oct: [1], delayMs: 0,    vel: 0.82, rollMs: 115 },
-        { deg: [2], oct: [1], delayMs: 1440, vel: 0.78, rollMs: 115 },
-        { deg: [0], oct: [1], delayMs: 2920, vel: 0.85, rollMs: 115 },
+        { deg: [0], oct: [1], delayMs: 0, vel: 0.46, rollMs: 185 },
+        { deg: [2], oct: [1], delayMs: 950, vel: 0.38, rollMs: 185 },
+        { deg: [3], oct: [1], delayMs: 2050, vel: 0.42, rollMs: 195 },
+        { deg: [4], oct: [1], delayMs: 3350, vel: 0.36, rollMs: 210 },
       ],
     ],
     chords: [
@@ -250,12 +261,12 @@ export const ENSO_TRACKS = [
     intervals: [0, 2, 4, 5, 7, 9, 11],
     degreeWeights: [0.90, 0.82, 0.65, 0.20, 0.85, 0.70, 0.30],
     markovGravity: [1.55, 1.42, 1.32, 1.0, 1.60, 1.35, 1.0],
-    rotationSpeed: 0.88,
-    pianoCutoffHz: 2900,
-    pianoShelfDb: -3.0,
+    rotationSpeed: 0.74,
+    pianoCutoffHz: 1080,
+    pianoShelfDb: -7.2,
     globalAttackSec: 4.8,
-    phraseCycleSec: 5.5,
-    phraseGateProb: 0.95,
+    phraseCycleSec: 17.2,
+    phraseGateProb: 0.74,
     phraseLengthLfo: { enabled: false },
     droneMode: 'Breathing wash',
     washInstrument: 'tape',
@@ -263,10 +274,9 @@ export const ENSO_TRACKS = [
     washSustain: 6.8,
     washGap: 2.8,
     chordInstrument: 'pad',
-    chordRollMs: 130,
+    chordRollMs: 152,
     chordVel: 0.50,
     voices: {
-      piano: { gain: 1.00, attack: 0.008, release: 7.5, octave: 1, pan: 0.32, muted: false },
       pad:   { cycle: 21.1, prob: 0.74, gain: 0.65, attack: 4.8, release: 12.5, octave: 0, pan: 0.36, muted: false },
       bell:  { cycle: 22.9, prob: 0.44, gain: 0.58, attack: 0.08, release: 7.5, octave: 1, pan: 0.60, muted: false },
       choir: { cycle: 27.7, prob: 0.58, gain: 0.62, attack: 4.8, release: 14.0, octave: 1, pan: 0.50, muted: false },
@@ -274,16 +284,22 @@ export const ENSO_TRACKS = [
       drone: { cycle: 37.9, prob: 0.0,  gain: 0.65, attack: 5.0, release: 15.5, octave: -1, pan: 0.15, muted: true },
     },
     phrases: [
-      // Tranquility Base & Lunar Horizon Cell in middle/upper register (MIDI 60..79, C4..G5)
+      // Tranquility Base Sequence from eno_soundscape/js/phrase-patterns.js
       [
-        { deg: [0, 4], oct: [1, 2], delayMs: 0,    vel: 0.85, rollMs: 120 },
-        { deg: [2],    oct: [2],    delayMs: 1420, vel: 0.80, rollMs: 115 },
-        { deg: [5],    oct: [1],    delayMs: 2860, vel: 0.82, rollMs: 115 },
+        { deg: [0, 4], oct: [0, 1], delayMs: 0, vel: 0.48, rollMs: 150 },
+        { deg: [1], oct: [1], delayMs: 650, vel: 0.37, rollMs: 135 },
+        { deg: [2], oct: [1], delayMs: 1380, vel: 0.41, rollMs: 135 },
+        { deg: [4], oct: [1], delayMs: 2180, vel: 0.45, rollMs: 145 },
+        { deg: [5], oct: [1], delayMs: 3360, vel: 0.38, rollMs: 150 },
+        { deg: [4], oct: [1], delayMs: 4120, vel: 0.42, rollMs: 140 },
+        { deg: [2], oct: [1], delayMs: 4940, vel: 0.35, rollMs: 135 },
+        { deg: [0], oct: [1], delayMs: 6040, vel: 0.46, rollMs: 155 },
       ],
       [
-        { deg: [4], oct: [1], delayMs: 0,    vel: 0.82, rollMs: 115 },
-        { deg: [1], oct: [2], delayMs: 1400, vel: 0.78, rollMs: 115 },
-        { deg: [0], oct: [2], delayMs: 2820, vel: 0.85, rollMs: 115 },
+        { deg: [4], oct: [1], delayMs: 0, vel: 0.45, rollMs: 145 },
+        { deg: [1], oct: [1], delayMs: 740, vel: 0.37, rollMs: 145 },
+        { deg: [2], oct: [1], delayMs: 1620, vel: 0.41, rollMs: 155 },
+        { deg: [0], oct: [1], delayMs: 2820, vel: 0.46, rollMs: 165 },
       ],
     ],
     chords: [
@@ -304,11 +320,11 @@ export const ENSO_TRACKS = [
     degreeWeights: [0.95, 0.70, 0.80, 0.35, 0.85, 0.65, 0.45],
     markovGravity: [1.48, 1.0, 1.55, 1.0, 1.42, 1.38, 1.0],
     rotationSpeed: 1.00,
-    pianoCutoffHz: 2600,
-    pianoShelfDb: -3.8,
+    pianoCutoffHz: 860,
+    pianoShelfDb: -12.5,
     globalAttackSec: 2.8,
-    phraseCycleSec: 5.0,
-    phraseGateProb: 0.95,
+    phraseCycleSec: 13.8,
+    phraseGateProb: 0.84,
     phraseLengthLfo: { enabled: false },
     droneMode: 'Breathing wash',
     washInstrument: 'pad',
@@ -316,10 +332,9 @@ export const ENSO_TRACKS = [
     washSustain: 6.8,
     washGap: 2.5,
     chordInstrument: 'pad',
-    chordRollMs: 96,
+    chordRollMs: 72,
     chordVel: 0.44,
     voices: {
-      piano: { gain: 1.00, attack: 0.008, release: 7.2, octave: 1, pan: 0.32, muted: false },
       pad:   { cycle: 18.9, prob: 0.55, gain: 0.60, attack: 2.8, release: 7.2, octave: 0, pan: 0.34, muted: false },
       bell:  { cycle: 21.3, prob: 0.28, gain: 0.50, attack: 0.04, release: 4.2, octave: 1, pan: 0.55, muted: false },
       choir: { cycle: 27.1, prob: 0.38, gain: 0.56, attack: 3.4, release: 8.0, octave: 1, pan: 0.46, muted: false },
@@ -327,16 +342,21 @@ export const ENSO_TRACKS = [
       drone: { cycle: 31.3, prob: 0.0,  gain: 0.62, attack: 3.6, release: 9.0, octave: -1, pan: 0.14, muted: true },
     },
     phrases: [
-      // Winter Bell Cell & Mist & Memory Motif in middle/upper register (MIDI 67..77, G4..F5)
+      // Winter Bell Cell & Mist & Memory Sequence from eno_soundscape/js/phrase-patterns.js
       [
-        { deg: [0], oct: [1], delayMs: 0,    vel: 0.84, rollMs: 100 },
-        { deg: [2], oct: [1], delayMs: 1280, vel: 0.78, rollMs: 100 },
-        { deg: [4], oct: [1], delayMs: 2640, vel: 0.82, rollMs: 100 },
+        { deg: [0], oct: [1], delayMs: 0, vel: 0.40, rollMs: 68 },
+        { deg: [2], oct: [1], delayMs: 520, vel: 0.34, rollMs: 68 },
+        { deg: [1], oct: [1], delayMs: 1480, vel: 0.31, rollMs: 72 },
+        { deg: [4], oct: [0], delayMs: 2080, vel: 0.38, rollMs: 76 },
       ],
       [
-        { deg: [4], oct: [1], delayMs: 0,    vel: 0.82, rollMs: 100 },
-        { deg: [3], oct: [1], delayMs: 1320, vel: 0.78, rollMs: 100 },
-        { deg: [0], oct: [1], delayMs: 2720, vel: 0.84, rollMs: 100 },
+        { deg: [0], oct: [1], delayMs: 0, vel: 0.40, rollMs: 68 },
+        { deg: [1], oct: [1], delayMs: 540, vel: 0.33, rollMs: 68 },
+        { deg: [2], oct: [1], delayMs: 1120, vel: 0.36, rollMs: 72 },
+        { deg: [4], oct: [1], delayMs: 1960, vel: 0.39, rollMs: 75 },
+        { deg: [3], oct: [1], delayMs: 2580, vel: 0.34, rollMs: 70 },
+        { deg: [1], oct: [1], delayMs: 3200, vel: 0.31, rollMs: 68 },
+        { deg: [0], oct: [1], delayMs: 4100, vel: 0.38, rollMs: 78 },
       ],
     ],
     chords: [
@@ -356,12 +376,12 @@ export const ENSO_TRACKS = [
     intervals: [0, 2, 3, 5, 7, 8, 10],
     degreeWeights: [0.90, 0.50, 0.75, 0.45, 0.80, 0.60, 0.40],
     markovGravity: [1.58, 1.0, 1.48, 1.0, 1.52, 1.38, 1.32],
-    rotationSpeed: 1.00,
-    pianoCutoffHz: 2700,
-    pianoShelfDb: -3.5,
+    rotationSpeed: 1.05,
+    pianoCutoffHz: 910,
+    pianoShelfDb: -11.5,
     globalAttackSec: 2.4,
-    phraseCycleSec: 5.2,
-    phraseGateProb: 0.95,
+    phraseCycleSec: 14.6,
+    phraseGateProb: 0.86,
     phraseLengthLfo: { enabled: false },
     droneMode: 'Breathing wash',
     washInstrument: 'pad',
@@ -369,11 +389,10 @@ export const ENSO_TRACKS = [
     washSustain: 7.0,
     washGap: 3.0,
     chordInstrument: 'tape',
-    chordRollMs: 120,
+    chordRollMs: 136,
     chordVel: 0.48,
     // In eno_soundscape/js/presets.js, discreet_loops has activeVoiceCount: 4 (bell & choir muted)
     voices: {
-      piano: { gain: 1.00, attack: 0.008, release: 7.4, octave: 1, pan: 0.32, muted: false },
       pad:   { cycle: 18.7, prob: 0.60, gain: 0.62, attack: 2.8, release: 7.9, octave: 0, pan: 0.36, muted: false },
       bell:  { cycle: 19.3, prob: 0.0,  gain: 0.50, attack: 0.05, release: 4.0, octave: 1, pan: 0.60, muted: true },
       choir: { cycle: 25.9, prob: 0.0,  gain: 0.55, attack: 3.4, release: 7.5, octave: 1, pan: 0.48, muted: true },
@@ -381,16 +400,21 @@ export const ENSO_TRACKS = [
       drone: { cycle: 26.3, prob: 0.0,  gain: 0.65, attack: 3.4, release: 9.5, octave: -1, pan: 0.16, muted: true },
     },
     phrases: [
-      // Discreet Tape Fragment & Earth & Overgrowth Motif in middle/upper register (MIDI 62..77, D4..F5)
+      // Discreet Tape Fragment & Earth & Overgrowth Arc from eno_soundscape/js/phrase-patterns.js
       [
-        { deg: [0], oct: [1], delayMs: 0,    vel: 0.84, rollMs: 110 },
-        { deg: [2], oct: [1], delayMs: 1320, vel: 0.78, rollMs: 110 },
-        { deg: [4], oct: [1], delayMs: 2680, vel: 0.82, rollMs: 110 },
+        { deg: [0], oct: [1], delayMs: 0, vel: 0.44, rollMs: 125 },
+        { deg: [2], oct: [1], delayMs: 610, vel: 0.36, rollMs: 125 },
+        { deg: [4], oct: [1], delayMs: 1220, vel: 0.40, rollMs: 135 },
+        { deg: [1], oct: [1], delayMs: 2440, vel: 0.34, rollMs: 145 },
       ],
       [
-        { deg: [4], oct: [1], delayMs: 0,    vel: 0.82, rollMs: 110 },
-        { deg: [0], oct: [2], delayMs: 1360, vel: 0.84, rollMs: 110 },
-        { deg: [2], oct: [2], delayMs: 2760, vel: 0.78, rollMs: 110 },
+        { deg: [0], oct: [1], delayMs: 0, vel: 0.44, rollMs: 125 },
+        { deg: [1], oct: [1], delayMs: 610, vel: 0.35, rollMs: 125 },
+        { deg: [2], oct: [1], delayMs: 1220, vel: 0.39, rollMs: 130 },
+        { deg: [4], oct: [1], delayMs: 1830, vel: 0.42, rollMs: 135 },
+        { deg: [3], oct: [1], delayMs: 3050, vel: 0.36, rollMs: 130 },
+        { deg: [1], oct: [1], delayMs: 3660, vel: 0.34, rollMs: 125 },
+        { deg: [0], oct: [1], delayMs: 4880, vel: 0.41, rollMs: 140 },
       ],
     ],
     chords: [
@@ -421,14 +445,11 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
   let dryBus = null;
   let pianoFeltFilter = null;
   let pianoSilkShelf = null;
-  let pianoAnalyser = null;
-  let pianoAnalyserBuf = null;
   let bgWarmFilter = null;
   let fdnSend = null;
   let fdnNodes = [];
   let enabled = false;
   let volume = 0.75;
-  let pianoLevel = 0.85;
   let washLevel = 0.33;
   let autoRotate = true;
   let reverbMode = ENSO_REVERB_MODES[0];
@@ -440,12 +461,13 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
   let washGap = ENSO_TRACKS[trackIndex].washGap ?? 3.0;
   let trackElapsedSec = 0;
   let totalListenedSec = 0;
-  let phraseTimerSec = 4.8;
+  let phraseTimerSec = 15.0;
   let phraseCycleCount = 0;
   let chordStepIdx = 0;
   let currentChordDegrees = [0, 2, 4];
   let noteHistory = [];
   let bgVoiceTimers = [];
+  let pianoLevel = 0.85;
   let notesTriggered = 0;
   let pianoNotesTriggered = 0;
   let lastPianoMidi = 60;
@@ -453,6 +475,7 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
   let lastPianoPlaybackRate = 1.0;
   let lastPianoPeakGain = 0.0;
   let pianoNoteLog = [];
+  let lastAppliedWashTarget = -1;
   let oggSamplesLoaded = 0;
   let offlineFallbackReady = false;
   let sampleLoadStarted = false;
@@ -465,6 +488,8 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
   let washEnvGain = null;
   let washAnalyser = null;
   let washAnalyserBuf = null;
+  let pianoAnalyser = null;
+  let pianoAnalyserBuf = null;
   let washFormantFilter = null;
   let washSilkFilter = null;
   let washWarmShelf = null;
@@ -476,7 +501,6 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
   let washPhaseElapsed = 0;
   let washStartFloor = 0.0;
   let washEnvLevel = 0.0;
-  let lastAppliedWashTarget = -1;
   let washTimerSec = 6.2;
   let currentWashCycleSec = 18.4;
   let washesTriggered = 0;
@@ -503,7 +527,6 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
   // Map<voice, Array<{ midi, buffer, source: 'ogg'|'mp3'|'offline' }>>
   const sampleBank = new Map();
   const scheduledTimers = new Set();
-  let pendingCallbacks = [];
 
   // Staggered initial phases across the 5 non-piano voices (piano is driven by the Enso Phrase Engine)
   const voicePhases = {
@@ -542,19 +565,15 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
     }
   }
 
-  // Synchronous 0ms warm stereo bootstrap buffers across all middle/upper piano zones (MIDI 60..84)
-  // so the very first phrase plays at exact natural pitch (playbackRate 0.84..1.19) before .ogg decoding finishes.
+  // Synchronous 0ms warm stereo bootstrap buffers so the very first wash & phrase play immediately
+  // even before OfflineAudioContext or network .ogg decoding completes.
   function buildSyncBootstrapSamples(audioCtx) {
     if (!audioCtx || sampleBank.size > 0) return;
-    const rate = 24000;
-    const dur = 5.2;
+    const rate = 22050;
+    const dur = 3.2;
     const frames = Math.floor(rate * dur);
     const bootstrapZones = [
       { voice: 'piano', midi: 60 },
-      { voice: 'piano', midi: 66 },
-      { voice: 'piano', midi: 72 },
-      { voice: 'piano', midi: 78 },
-      { voice: 'piano', midi: 84 },
       { voice: 'pad',   midi: 55 },
       { voice: 'choir', midi: 60 },
       { voice: 'drone', midi: 43 },
@@ -571,16 +590,10 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
         for (let i = 0; i < frames; i++) {
           const t = i / rate;
           const env = isPerc
-            ? Math.min(1, t / 0.008) * (0.68 * Math.exp(-0.95 * t) + 0.32 * Math.exp(-0.42 * t))
+            ? Math.min(1, t / 0.01) * Math.exp(-1.1 * t)
             : Math.min(1, t / 0.35) * Math.min(1, (dur - t) / 0.35);
-          const sL =
-            0.48 * Math.sin(2 * Math.PI * f0 * t) +
-            0.20 * Math.sin(2 * Math.PI * (f0 * 2.0) * t + 0.3) * Math.exp(-0.6 * t) +
-            0.07 * Math.sin(2 * Math.PI * (f0 * 3.0) * t + 0.8) * Math.exp(-1.2 * t);
-          const sR =
-            0.48 * Math.sin(2 * Math.PI * (f0 * 1.0008) * t + 0.5) +
-            0.20 * Math.sin(2 * Math.PI * (f0 * 1.9992) * t + 1.1) * Math.exp(-0.6 * t) +
-            0.07 * Math.sin(2 * Math.PI * (f0 * 3.0006) * t + 1.5) * Math.exp(-1.2 * t);
+          const sL = 0.32 * Math.sin(2 * Math.PI * f0 * t) + 0.10 * Math.sin(2 * Math.PI * (f0 * 2.0) * t + 0.3);
+          const sR = 0.32 * Math.sin(2 * Math.PI * (f0 * 1.0012) * t + 0.6) + 0.10 * Math.sin(2 * Math.PI * (f0 * 1.9988) * t + 1.1);
           chL[i] = sL * env;
           chR[i] = sR * env;
         }
@@ -596,7 +609,7 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
 
     const preLp = audioCtx.createBiquadFilter();
     preLp.type = 'lowpass';
-    preLp.frequency.value = 1150;
+    preLp.frequency.value = 1350;
     preLp.Q.value = 0.5;
 
     const ap1 = audioCtx.createBiquadFilter();
@@ -616,7 +629,7 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
     const delayTimes = [0.079, 0.113, 0.149, 0.193];
     const merger = audioCtx.createChannelMerger(2);
     const outGain = audioCtx.createGain();
-    outGain.gain.value = 0.24;
+    outGain.gain.value = 0.30;
 
     const nodes = [input, preLp, ap1, ap2, merger, outGain];
     const delays = [];
@@ -626,10 +639,10 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
       d.delayTime.value = delayTimes[i];
       const damp = audioCtx.createBiquadFilter();
       damp.type = 'lowpass';
-      damp.frequency.value = 1100;
+      damp.frequency.value = 1200;
       damp.Q.value = 0.5;
       const fb = audioCtx.createGain();
-      fb.gain.value = 0.36;
+      fb.gain.value = 0.42;
 
       ap2.connect(d);
       d.connect(damp);
@@ -654,30 +667,28 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
   function syncReverbMode() {
     if (!fdnSend || !ctx) return;
     const sendVal =
-      reverbMode === 'Lite FDN Live' ? 0.24 :
-      reverbMode === 'Hybrid (OGG + Lite FDN)' ? 0.10 :
+      reverbMode === 'Lite FDN Live' ? 0.36 :
+      reverbMode === 'Hybrid (OGG + Lite FDN)' ? 0.12 :
       0.0;
-    fdnSend.gain.setTargetAtTime(sendVal, ctx.currentTime, 0.06);
+    fdnSend.gain.setTargetAtTime(sendVal, ctx.currentTime, 0.05);
   }
 
   function syncTrackPianoFilter(track) {
     if (!ctx || !pianoFeltFilter || !pianoSilkShelf) return;
     const now = ctx.currentTime;
-    pianoFeltFilter.frequency.setTargetAtTime(track.pianoCutoffHz || 2800, now, 0.12);
-    pianoSilkShelf.gain.setTargetAtTime(track.pianoShelfDb ?? -3.2, now, 0.12);
+    pianoFeltFilter.frequency.setTargetAtTime(track.pianoCutoffHz || 1050, now, 0.12);
+    pianoSilkShelf.gain.setTargetAtTime(track.pianoShelfDb ?? -8.0, now, 0.12);
   }
 
-  // Instant zero-network fallback: renders smooth, reverb-stamped felt piano buffers across MIDI 60..84
+  // Instant zero-network fallback: renders smooth, dark-damped (Q = 0.5, zero ringing) root buffers
   // locally via OfflineAudioContext + ConvolverNode in ~25ms while 320kbps .ogg files stream in.
   async function buildOfflineStampedFallback() {
     const OfflineCtx = window.OfflineAudioContext || window.webkitOfflineAudioContext;
     if (!OfflineCtx) return;
     const quickZones = [
-      { voice: 'piano', midi: 60, dur: 6.2 },
-      { voice: 'piano', midi: 66, dur: 6.2 },
-      { voice: 'piano', midi: 72, dur: 6.0 },
-      { voice: 'piano', midi: 78, dur: 5.8 },
-      { voice: 'piano', midi: 84, dur: 5.6 },
+      { voice: 'piano', midi: 48, dur: 4.5 },
+      { voice: 'piano', midi: 60, dur: 4.2 },
+      { voice: 'piano', midi: 72, dur: 4.0 },
       { voice: 'pad',   midi: 55, dur: 5.2 },
       { voice: 'bell',  midi: 67, dur: 4.2 },
       { voice: 'choir', midi: 60, dur: 5.2 },
@@ -692,20 +703,20 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
         const octx = new OfflineCtx(2, frames, rate);
         const freq = 440 * Math.pow(2, (z.midi - 69) / 12);
 
-        const irDur = Math.min(z.dur - 0.3, 4.6);
+        const irDur = Math.min(z.dur - 0.3, 3.4);
         const irLen = Math.floor(rate * irDur);
         const irBuf = octx.createBuffer(2, irLen, rate);
         const irL = irBuf.getChannelData(0);
         const irR = irBuf.getChannelData(1);
         let s = (z.midi * 2654435761) >>> 0;
         const rand = () => { s = (s * 1664525 + 1013904223) >>> 0; return (s / 4294967296) * 2 - 1; };
-        const decay = 3.4 / irDur;
+        const decay = 3.8 / irDur;
         let lpL = 0, lpR = 0;
         for (let i = 0; i < irLen; i++) {
           const t = i / rate;
-          const env = 0.5 * (1 - Math.cos(Math.PI * Math.min(1, t / 0.035))) * Math.exp(-decay * t);
-          lpL += 0.22 * (rand() * env - lpL);
-          lpR += 0.22 * (rand() * env - lpR);
+          const env = 0.5 * (1 - Math.cos(Math.PI * Math.min(1, t / 0.025))) * Math.exp(-decay * t);
+          lpL += 0.16 * (rand() * env - lpL);
+          lpR += 0.16 * (rand() * env - lpR);
           irL[i] = lpL;
           irR[i] = lpR;
         }
@@ -714,10 +725,10 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
         conv.buffer = irBuf;
         const damp = octx.createBiquadFilter();
         damp.type = 'lowpass';
-        damp.frequency.value = z.voice === 'piano' ? 2200 : 1700;
+        damp.frequency.value = z.voice === 'piano' ? 1300 : 1700;
         damp.Q.value = 0.5;
         const wet = octx.createGain();
-        wet.gain.value = z.voice === 'piano' ? 0.42 : 0.45;
+        wet.gain.value = z.voice === 'piano' ? 0.30 : 0.45;
         damp.connect(conv);
         conv.connect(wet);
         wet.connect(octx.destination);
@@ -726,8 +737,8 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
         const isPerc = z.voice === 'piano' || z.voice === 'bell';
         env.gain.setValueAtTime(0.0001, 0);
         if (isPerc) {
-          env.gain.linearRampToValueAtTime(0.75, 0.008);
-          env.gain.exponentialRampToValueAtTime(0.0008, z.dur - 0.12);
+          env.gain.linearRampToValueAtTime(0.60, 0.010);
+          env.gain.exponentialRampToValueAtTime(0.0001, z.dur - 0.15);
         } else {
           // Flat sustained plateau for pad/choir/drone/tape so looped washes never decay early
           env.gain.linearRampToValueAtTime(0.56, 0.45);
@@ -744,10 +755,10 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
         o2.type = 'sine';
         o2.frequency.value = freq * 2.0;
         const g2 = octx.createGain();
-        g2.gain.value = z.voice === 'piano' ? 0.24 : 0.18;
+        g2.gain.value = z.voice === 'piano' ? 0.16 : 0.18;
         const lp = octx.createBiquadFilter();
         lp.type = 'lowpass';
-        lp.frequency.value = z.voice === 'piano' ? Math.max(2400, freq * 4.5) : Math.min(1800, freq * 2.5);
+        lp.frequency.value = z.voice === 'piano' ? 950 : Math.min(1800, freq * 2.5);
         lp.Q.value = 0.5;
         o1.connect(lp);
         o2.connect(g2);
@@ -792,9 +803,8 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
       return false;
     };
 
-    const isPriority = (z) => (z.voice === 'piano' ? (z.midi >= 60 && z.midi <= 84) : (z.midi >= 48 && z.midi <= 72));
-    const priority = SAMPLE_ZONES.filter(isPriority);
-    const outer = SAMPLE_ZONES.filter((z) => !isPriority(z));
+    const priority = SAMPLE_ZONES.filter((z) => z.midi >= 48 && z.midi <= 72);
+    const outer = SAMPLE_ZONES.filter((z) => z.midi < 48 || z.midi > 72);
     await Promise.all(priority.map(fetchZone));
     await Promise.all(outer.map(fetchZone));
   }
@@ -817,22 +827,22 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
     dryBus.gain.value = 1.0;
     dryBus.connect(masterGain);
 
-    // Live per-track Felt Piano bus filters (Q = 0.5, open 2600..3100 Hz cutoff so C4..C6 felt piano sings clearly)
+    // Live per-track 3-stage Felt Piano bus filters (Q = 0.5, zero resonance peak)
+    // Ensures pitch-shifted piano samples stay warm, soft, and completely ring-free
     const track = ENSO_TRACKS[trackIndex];
     pianoFeltFilter = ctx.createBiquadFilter();
     pianoFeltFilter.type = 'lowpass';
-    pianoFeltFilter.frequency.value = track.pianoCutoffHz || 2800;
+    pianoFeltFilter.frequency.value = track.pianoCutoffHz || 1050;
     pianoFeltFilter.Q.value = 0.5;
 
     pianoSilkShelf = ctx.createBiquadFilter();
     pianoSilkShelf.type = 'highshelf';
-    pianoSilkShelf.frequency.value = 2200;
+    pianoSilkShelf.frequency.value = 1350;
     pianoSilkShelf.Q.value = 0.5;
-    pianoSilkShelf.gain.value = track.pianoShelfDb ?? -3.2;
+    pianoSilkShelf.gain.value = track.pianoShelfDb ?? -8.0;
 
     pianoFeltFilter.connect(pianoSilkShelf);
     pianoSilkShelf.connect(dryBus);
-
     if (ctx.createAnalyser) {
       pianoAnalyser = ctx.createAnalyser();
       pianoAnalyser.fftSize = 2048;
@@ -1317,6 +1327,24 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
     return Number((liveRms > 0.002 ? (0.35 * liveRms * washLevel + 0.65 * synthRms) : synthRms).toFixed(5));
   }
 
+  function getPianoRms() {
+    if (!enabled || !pianoAnalyser || !pianoAnalyserBuf) return 0;
+    try {
+      pianoAnalyser.getFloatTimeDomainData(pianoAnalyserBuf);
+      let acc = 0;
+      for (let i = 0; i < pianoAnalyserBuf.length; i++) {
+        acc += pianoAnalyserBuf[i] * pianoAnalyserBuf[i];
+      }
+      return Number(Math.sqrt(acc / pianoAnalyserBuf.length).toFixed(5));
+    } catch {
+      return 0;
+    }
+  }
+
+  function getRmsLevel() {
+    return Number(Math.hypot(getPianoRms(), getWashRms()).toFixed(5));
+  }
+
   function findClosestSample(voice, midiNote) {
     const list = sampleBank.get(voice) || (
       voice === 'piano'
@@ -1342,37 +1370,6 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
     const degIdx = ((degree % len) + len) % len;
     const octWrap = Math.floor(degree / len);
     return track.rootMidi + intervals[degIdx] + (octaveOffset + octWrap) * 12;
-  }
-
-  // Guarantees piano notes always play in the natural middle/upper felt-piano register (MIDI 60..84, C4..C6)
-  // even if a scale degree (0..11) or low bass MIDI (< 60) is passed.
-  function foldPianoMidi(rawMidi) {
-    let m = Math.round(Number(rawMidi));
-    if (!Number.isFinite(m)) return 60;
-    if (m >= 0 && m < 24) {
-      m = 60 + (m % 12);
-    }
-    while (m < 60) m += 12;
-    while (m > 84) m -= 12;
-    return m;
-  }
-
-  function pianoDegreeToMidi(track, degree, octaveOffset = 1) {
-    return foldPianoMidi(scaleDegreeToMidi(track, degree, octaveOffset));
-  }
-
-  function getPianoRms() {
-    if (!enabled || !pianoAnalyser || !pianoAnalyserBuf) return 0;
-    try {
-      pianoAnalyser.getFloatTimeDomainData(pianoAnalyserBuf);
-      let acc = 0;
-      for (let i = 0; i < pianoAnalyserBuf.length; i++) {
-        acc += pianoAnalyserBuf[i] * pianoAnalyserBuf[i];
-      }
-      return Number(Math.sqrt(acc / pianoAnalyserBuf.length).toFixed(5));
-    } catch {
-      return 0;
-    }
   }
 
   // Enso Markov consonance + chord-tone gravity pitch selector (from probability-engine.js & phrase-engine.js)
@@ -1411,7 +1408,7 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
     return 0;
   }
 
-  function triggerVoice(voice, midiNote, velocity = 0.78, pan = 0, gainScale = 1.0) {
+  function triggerVoice(voice, midiNote, velocity = 0.5, pan = 0, gainScale = 1.0) {
     if (!enabled) return false;
     const audioCtx = ensureContext();
     if (!audioCtx) return false;
@@ -1419,70 +1416,38 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
       audioCtx.resume().catch(() => {});
     }
 
-    const isPiano = voice === 'piano';
-    const targetMidi = isPiano ? foldPianoMidi(midiNote) : Math.round(Number(midiNote) || 60);
-
-    // For piano, prefer middle/upper zones (MIDI 60..84) so playbackRate stays strictly inside 0.75..1.35
-    let match = null;
-    if (isPiano) {
-      const list = sampleBank.get('piano') || [];
-      const midUpper = list.filter((x) => x.midi >= 60 && x.midi <= 84);
-      const pool = midUpper.length > 0 ? midUpper : list;
-      if (pool.length > 0) {
-        match = pool[0];
-        let bestDist = Math.abs(targetMidi - match.midi);
-        for (let i = 1; i < pool.length; i++) {
-          const d = Math.abs(targetMidi - pool[i].midi);
-          if (d < bestDist) {
-            bestDist = d;
-            match = pool[i];
-          }
-        }
-      }
-    } else {
-      match = findClosestSample(voice, targetMidi);
-    }
+    const match = findClosestSample(voice, midiNote);
     if (!match || !match.buffer) return false;
 
     const now = audioCtx.currentTime;
     const src = audioCtx.createBufferSource();
     src.buffer = match.buffer;
-    const rawRate = Math.pow(2, (targetMidi - match.midi) / 12);
-    const rate = isPiano ? Math.max(0.75, Math.min(1.35, rawRate)) : rawRate;
+    const rate = Math.pow(2, (midiNote - match.midi) / 12);
     src.playbackRate.setValueAtTime(rate, now);
-    src.playbackRate.value = rate;
 
     const track = ENSO_TRACKS[trackIndex];
+    const isPiano = voice === 'piano';
     const vCfg = track.voices[voice] || { gain: isPiano ? 1.0 : 0.60, attack: track.globalAttackSec || 3.2, release: 8.0 };
     const instTrim = VOICE_INSTRUMENT_TRIM[voice] ?? 0.16;
     const env = audioCtx.createGain();
 
     const rawDur = match.buffer.duration / rate;
     const dur = Math.max(1.2, rawDur);
-    const levelMult = isPiano ? pianoLevel : 1.0;
-    const peak = Math.max(0.02, Math.min(0.92, velocity * (vCfg.gain || (isPiano ? 1.0 : 0.65)) * instTrim * levelMult * gainScale));
+    const peak = Math.max(0.005, Math.min(0.85, velocity * (vCfg.gain || 0.65) * instTrim * gainScale));
 
     if (isPiano) {
-      // Soft 8ms wool-felt hammer onset; hold full gain across the 11.0s–11.8s reverb-stamped sample
-      // so the pre-baked 7.8s Enso cathedral convolution bloom rings out in full with 0% live reverb CPU!
+      // Soft 8ms wool-felt hammer onset; hold full gain across the 11.5s–12.0s reverb-stamped sample
+      // so the pre-baked Enso cathedral convolution tail rings out in full with 0% live reverb CPU!
       env.gain.setValueAtTime(0.0001, now);
       env.gain.linearRampToValueAtTime(peak, now + 0.008);
       env.gain.setValueAtTime(peak, now + Math.max(0.5, dur - 0.30));
       env.gain.linearRampToValueAtTime(0.0001, now + dur);
-
       pianoNotesTriggered++;
-      lastPianoMidi = targetMidi;
+      lastPianoMidi = midiNote;
       lastPianoSampleMidi = match.midi;
       lastPianoPlaybackRate = Number(rate.toFixed(4));
       lastPianoPeakGain = Number(peak.toFixed(4));
-      pianoNoteLog.push({
-        midi: targetMidi,
-        sampleMidi: match.midi,
-        playbackRate: lastPianoPlaybackRate,
-        peakGain: lastPianoPeakGain,
-        source: match.source,
-        timeSec: Number(totalListenedSec.toFixed(3)),
-      });
+      pianoNoteLog.push({ midi: midiNote, sampleMidi: match.midi, playbackRate: lastPianoPlaybackRate, peakGain: lastPianoPeakGain, source: match.source });
       if (pianoNoteLog.length > 64) pianoNoteLog.shift();
     } else if (voice === 'bell') {
       // Gentle glass chime bloom
@@ -1500,19 +1465,28 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
       env.gain.exponentialRampToValueAtTime(0.0001, now + dur);
     }
 
+    // Per-note warm lowpass damping when a piano sample is pitch-shifted up (rate > 1)
+    let voiceNode = src;
+    if (isPiano && rate > 1.02) {
+      const noteLp = audioCtx.createBiquadFilter();
+      noteLp.type = 'lowpass';
+      noteLp.frequency.setValueAtTime(Math.max(760, (track.pianoCutoffHz || 1020) / Math.pow(rate, 0.45)), now);
+      noteLp.Q.value = 0.5;
+      src.connect(noteLp);
+      voiceNode = noteLp;
+    }
+
     const destBus = isPiano ? (pianoFeltFilter || dryBus) : (bgWarmFilter || dryBus);
 
     if (audioCtx.createStereoPanner) {
       const panner = audioCtx.createStereoPanner();
       panner.pan.setValueAtTime(Math.max(-1, Math.min(1, pan)), now);
-      src.connect(env);
+      voiceNode.connect(env);
       env.connect(panner);
       panner.connect(destBus);
-      // Piano samples already carry a lush 7.8s stereo cathedral IR baked in; never send percussive
-      // piano transients into the 4-tap delay FDN (which would create discrete tap echoes).
       if (!isPiano && fdnSend) panner.connect(fdnSend);
     } else {
-      src.connect(env);
+      voiceNode.connect(env);
       env.connect(destBus);
       if (!isPiano && fdnSend) env.connect(fdnSend);
     }
@@ -1523,44 +1497,21 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
     return true;
   }
 
-  function triggerPianoNote(midiNote, velocity = 0.82, pan = 0) {
-    return triggerVoice('piano', midiNote, velocity, pan, 1.0);
-  }
-
   function scheduleDelayed(fn, delayMs) {
     if (delayMs <= 4) {
       fn();
       return;
     }
-    const entry = {
-      remainingSec: delayMs / 1000,
-      fired: false,
-      timerId: null,
-      run() {
-        if (this.fired) return;
-        this.fired = true;
-        if (this.timerId !== null) {
-          clearTimeout(this.timerId);
-          scheduledTimers.delete(this.timerId);
-        }
-        if (enabled) fn();
-      },
-    };
     const id = setTimeout(() => {
       scheduledTimers.delete(id);
-      pendingCallbacks = pendingCallbacks.filter((x) => x !== entry);
-      entry.run();
+      if (enabled) fn();
     }, delayMs);
-    entry.timerId = id;
     scheduledTimers.add(id);
-    pendingCallbacks.push(entry);
   }
 
   function clearScheduledTimers() {
     for (const id of scheduledTimers) clearTimeout(id);
     scheduledTimers.clear();
-    for (const entry of pendingCallbacks) entry.fired = true;
-    pendingCallbacks = [];
     bgVoiceTimers = [];
   }
 
@@ -1569,7 +1520,7 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
     const lfo = track.phraseLengthLfo;
     if (!lfo || !lfo.enabled) return totalSteps;
     const period = lfo.periodSec || 180;
-    const minR = lfo.minRatio ?? 0.65;
+    const minR = lfo.minRatio ?? 0.50;
     const maxR = lfo.maxRatio ?? 1.00;
     const phase = ((totalListenedSec % period) + period) / period;
     const wave = 0.5 * (1 + Math.cos(2 * Math.PI * phase));
@@ -1578,7 +1529,7 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
     return Math.max(minSteps, Math.min(totalSteps, Math.round(totalSteps * ratio)));
   }
 
-  function triggerTrackPhrase(track = ENSO_TRACKS[trackIndex], { forceFull = false } = {}) {
+  function triggerTrackPhrase(track, { forceFull = false } = {}) {
     const phrases = track.phrases;
     if (!phrases || !phrases.length) return;
     phraseCycleCount++;
@@ -1592,12 +1543,20 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
     let cutoffIdx = lfoCutoff;
     const omittedSteps = new Set();
 
-    // Enso aleatoric phrase variations (keep 1–3 notes per phrase for spacious breathing)
-    if (!forceFull && phraseCycleCount > 2 && lfoCutoff >= 3 && Math.random() < 0.35) {
-      cutoffIdx = Math.max(2, lfoCutoff - 1);
+    // Enso aleatoric phrase variations (start-only dice or 1–2 omitted inner notes for spacious breathing)
+    if (!forceFull && phraseCycleCount > 1 && lfoCutoff >= 3 && Math.random() < 0.55) {
+      if (Math.random() < 0.42) {
+        cutoffIdx = 2 + Math.floor(Math.random() * Math.max(1, lfoCutoff - 2));
+      } else {
+        const omitCount = lfoCutoff >= 6 ? (1 + Math.floor(Math.random() * 2)) : 1;
+        for (let k = 0; k < omitCount; k++) {
+          const candidate = 1 + Math.floor(Math.random() * (lfoCutoff - 1));
+          if (lfoCutoff - (omittedSteps.size + 1) >= 2) omittedSteps.add(candidate);
+        }
+      }
     }
 
-    const speed = Math.max(0.75, track.rotationSpeed || 1.0);
+    const speed = Math.max(0.5, track.rotationSpeed || 1.0);
 
     for (let sIdx = 0; sIdx < cutoffIdx; sIdx++) {
       if (omittedSteps.has(sIdx)) continue;
@@ -1605,16 +1564,18 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
       const delayMs = Math.round((step.delayMs || 0) / speed);
 
       scheduleDelayed(() => {
-        const degs = step.deg.slice(0, 2); // At most 2 notes per step (gentle single note or open dyad)
+        const degs = step.deg;
         const octs = step.oct || [];
-        const rollMs = step.rollMs || track.chordRollMs || 115;
-        const chordScale = degs.length > 1 ? 0.90 : 1.0;
-        const vel = (step.vel || 0.82) * chordScale;
+        const rollMs = step.rollMs || track.chordRollMs || 110;
+        // Polyphonic chord headroom scaling from eno_soundscape/js/phrase-engine.js
+        const chordScale = degs.length > 1 ? (1 / Math.pow(degs.length, 0.24)) : 1.0;
+        const vel = (step.vel || 0.42) * chordScale;
 
         for (let i = 0; i < degs.length; i++) {
-          const oct = octs[i] !== undefined ? octs[i] : 1;
-          const midi = pianoDegreeToMidi(track, degs[i], oct);
-          const pan = (Math.random() * 2 - 1) * 0.28;
+          let oct = octs[i] || 0;
+          if (!forceFull && Math.random() < 0.03) oct += Math.random() < 0.5 ? 1 : -1;
+          const midi = scaleDegreeToMidi(track, degs[i], oct);
+          const pan = (Math.random() * 2 - 1) * 0.34;
           scheduleDelayed(() => {
             triggerVoice('piano', midi, vel, pan, 1.0);
           }, i * rollMs);
@@ -1640,6 +1601,7 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
       bgVoiceTimers.push(6.5);
     }
 
+    // Optionally omit 1 inner chord tone (phraseNoteGate = 0.22 in phrase-engine.js) so chords stay airy
     let indices = chord.deg.map((_, idx) => idx);
     if (indices.length >= 4 && Math.random() < 0.28) {
       const drop = 1 + Math.floor(Math.random() * (indices.length - 2));
@@ -1651,8 +1613,7 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
     const gainScale = isPianoChord ? 0.85 : 0.68;
 
     indices.forEach((cIdx, orderIdx) => {
-      const rawMidi = scaleDegreeToMidi(track, chord.deg[cIdx], chord.oct[cIdx] || 0);
-      const midi = isPianoChord ? foldPianoMidi(rawMidi) : rawMidi;
+      const midi = scaleDegreeToMidi(track, chord.deg[cIdx], chord.oct[cIdx] || 0);
       const pan = ((orderIdx / Math.max(1, indices.length - 1)) * 2 - 1) * 0.36;
       scheduleDelayed(() => {
         triggerVoice(voice, midi, vel, pan, gainScale);
@@ -1668,24 +1629,6 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
       bgVoiceTimers = bgVoiceTimers.map((t) => t - clampedDt).filter((t) => t > 0);
     }
 
-    // Advance scheduled phrase-step callbacks deterministically with tick(dt)
-    if (pendingCallbacks.length > 0) {
-      const ready = [];
-      for (let i = 0; i < pendingCallbacks.length; i++) {
-        const entry = pendingCallbacks[i];
-        entry.remainingSec -= clampedDt;
-        if (entry.remainingSec <= 0 && !entry.fired) {
-          ready.push(entry);
-        }
-      }
-      if (ready.length > 0) {
-        pendingCallbacks = pendingCallbacks.filter((x) => !x.fired && x.remainingSec > 0);
-        for (let i = 0; i < ready.length; i++) {
-          ready[i].run();
-        }
-      }
-    }
-
     // 1. 3-Minute (180s) Circle-of-Fifths Automatic Track Rotation
     if (autoRotate) {
       trackElapsedSec += clampedDt;
@@ -1699,7 +1642,7 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
         syncTrackPianoFilter(nextT);
         crossfadeWashesToTrack(nextT, nextT.washFade || 4.2);
         onTrackChange?.(nextT.label, nextT);
-        phraseTimerSec = transitionActive ? (transitionOutSec + transitionGapSec + 0.6) : 2.8;
+        phraseTimerSec = transitionActive ? (transitionOutSec + transitionGapSec + 1.0) : 2.4;
       }
     }
 
@@ -1709,12 +1652,12 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
     //    zero .ogg sample looping or decaying background sample triggers)
     tickWash(clampedDt, track);
 
-    // 3. Enso Felt Piano Phrase Engine (spaced naturally every 2.5s–6.5s in MIDI 60..84)
+    // 3. Enso Felt Piano Phrase Engine (spacious 14s–24s breathing room, never overlapping)
     phraseTimerSec -= clampedDt;
     if (phraseTimerSec <= 0) {
-      const baseCycle = Math.max(3.6, Math.min(6.0, (track.phraseCycleSec || 5.2) / Math.max(0.8, track.rotationSpeed || 1.0)));
-      phraseTimerSec = baseCycle * (0.85 + Math.random() * 0.22);
-      if (phraseCycleCount < 2 || Math.random() <= (track.phraseGateProb ?? 0.95)) {
+      const baseCycle = (track.phraseCycleSec || 16.0) / Math.max(0.6, track.rotationSpeed || 1.0);
+      phraseTimerSec = baseCycle * (0.90 + Math.random() * 0.30);
+      if (Math.random() <= (track.phraseGateProb ?? 0.76)) {
         triggerTrackPhrase(track);
       }
     }
@@ -1735,9 +1678,10 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
           washMasterGain.gain.setTargetAtTime(washLevel, audioCtx.currentTime, 0.12);
         }
       }
+      // Reset timers & phases so the opening phrase has a full 16s+ breathing window after it plays
       const track = ENSO_TRACKS[trackIndex];
       syncTrackPianoFilter(track);
-      phraseTimerSec = Math.max(3.8, Math.min(6.0, track.phraseCycleSec || 5.2));
+      phraseTimerSec = (track.phraseCycleSec || 16.0) * 1.05;
       voicePhases.pad = 0.45;
       voicePhases.bell = 0.10;
       voicePhases.choir = 0.30;
@@ -1747,8 +1691,18 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
       // Immediately start the Persistent Harmonic Synth Drone / Wash Engine
       triggerHeavenlyWash(track, { initial: true, crossfadeInSec: washFade });
 
-      // Trigger the opening felt-piano phrase in MIDI 60..84 right away
-      triggerTrackPhrase(track, { forceFull: true });
+      const fireInitial = () => {
+        if (!enabled) return;
+        const curTrack = ENSO_TRACKS[trackIndex];
+        scheduleDelayed(() => {
+          if (enabled) triggerTrackPhrase(curTrack, { forceFull: true });
+        }, 280);
+      };
+      if (sampleBank.size > 0) {
+        fireInitial();
+      } else {
+        scheduleDelayed(fireInitial, 90);
+      }
     } else {
       clearScheduledTimers();
       activeWashes = [];
@@ -1768,12 +1722,6 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
       masterGain.gain.setTargetAtTime(volume, ctx.currentTime, 0.04);
     }
     return volume;
-  }
-
-  function setPianoLevel(nextLevel) {
-    const parsed = Number(nextLevel);
-    pianoLevel = Number.isFinite(parsed) ? Math.max(0, Math.min(1, parsed)) : 0.85;
-    return pianoLevel;
   }
 
   function setWashLevel(nextLevel) {
@@ -1858,15 +1806,15 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
         onTrackChange?.(track.label, track);
         if (enabled) {
           if (transitionActive) {
-            phraseTimerSec = transitionOutSec + transitionGapSec + 0.6;
+            phraseTimerSec = transitionOutSec + transitionGapSec + 1.0;
           } else {
-            phraseTimerSec = Math.max(3.8, Math.min(6.0, track.phraseCycleSec || 5.2));
+            phraseTimerSec = (track.phraseCycleSec || 16.0) * 1.05;
             scheduleDelayed(() => {
               if (enabled) triggerTrackPhrase(track, { forceFull: true });
-            }, 180);
+            }, 260);
           }
         } else {
-          phraseTimerSec = Math.max(3.8, Math.min(6.0, track.phraseCycleSec || 5.2));
+          phraseTimerSec = (track.phraseCycleSec || 16.0) * 1.05;
         }
       } else {
         applyTrackDroneDefaults(track);
@@ -1907,15 +1855,15 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
     onTrackChange?.(track.label, track);
     if (enabled) {
       if (transitionActive) {
-        phraseTimerSec = transitionOutSec + transitionGapSec + 0.6;
+        phraseTimerSec = transitionOutSec + transitionGapSec + 1.0;
       } else {
-        phraseTimerSec = Math.max(3.8, Math.min(6.0, track.phraseCycleSec || 5.2));
+        phraseTimerSec = (track.phraseCycleSec || 16.0) * 1.05;
         scheduleDelayed(() => {
           if (enabled) triggerTrackPhrase(track, { forceFull: true });
-        }, 180);
+        }, 260);
       }
     } else {
-      phraseTimerSec = Math.max(3.8, Math.min(6.0, track.phraseCycleSec || 5.2));
+      phraseTimerSec = (track.phraseCycleSec || 16.0) * 1.05;
     }
     return track;
   }
@@ -1923,7 +1871,6 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
   return {
     get enabled() { return enabled; },
     get volume() { return volume; },
-    get pianoLevel() { return pianoLevel; },
     get washLevel() { return washLevel; },
     get droneMode() { return droneMode; },
     get washInstrument() { return washInstrument; },
@@ -1933,6 +1880,7 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
     get washPhase() { return washPhase; },
     get washEnvLevel() { return Number(washEnvLevel.toFixed(4)); },
     get washRms() { return getWashRms(); },
+    get rmsLevel() { return getRmsLevel(); },
     get pianoRms() { return getPianoRms(); },
     get transitioning() { return Boolean(transitionActive); },
     get transitionDurationSec() { return Number((transitionOutSec + transitionGapSec + (ENSO_TRACKS[trackIndex]?.washFade || 4.2)).toFixed(2)); },
@@ -1946,6 +1894,7 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
     get trackIndex() { return trackIndex; },
     get currentTrack() { return ENSO_TRACKS[trackIndex]; },
     get trackElapsedSec() { return trackElapsedSec; },
+    get pianoLevel() { return pianoLevel; },
     get notesTriggered() { return notesTriggered; },
     get pianoNotesTriggered() { return pianoNotesTriggered; },
     get lastPianoMidi() { return lastPianoMidi; },
@@ -1965,7 +1914,7 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
     get preferredFormat() { return preferredFormat; },
     get liveConvolverCount() { return 0; }, // Strictly 0 live ConvolverNodes on the main AudioContext
     get fdnNodeCount() { return fdnNodes.length; },
-    get pianoCutoffHz() { return pianoFeltFilter ? pianoFeltFilter.frequency.value : (ENSO_TRACKS[trackIndex]?.pianoCutoffHz || 2800); },
+    get pianoCutoffHz() { return pianoFeltFilter ? pianoFeltFilter.frequency.value : (ENSO_TRACKS[trackIndex]?.pianoCutoffHz || 1050); },
     get pianoFilterQ() { return pianoFeltFilter ? pianoFeltFilter.Q.value : 0.5; },
     get activeBgVoices() { return bgVoiceTimers.length; },
     tracks: ENSO_TRACKS,
@@ -1973,21 +1922,17 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
     setEnabled,
     toggle() { return setEnabled(!enabled); },
     setVolume,
-    setPianoLevel,
     setWashLevel,
     setDroneMode,
     setWashInstrument,
     setWashFade,
     setWashGap,
     getWashRms,
-    getPianoRms,
     setTrack,
     setAutoRotate,
     setReverbMode,
     nextTrack,
     triggerVoice,
-    triggerPianoNote,
-    triggerTrackPhrase,
     triggerHeavenlyWash,
     tick,
   };
