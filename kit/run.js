@@ -11,7 +11,7 @@ import { createEnsoSound } from '../sound.js';
 const DEFAULT_ZOOM_KEY = 'crystals_default_zoom';
 const SOUND_PARAM_KEYS = new Set([
   'sound', 'soundVolume', 'washLevel', 'droneMode', 'washInstrument', 'washFade', 'washGap',
-  'soundTrack', 'soundRotate', 'soundReverbMode',
+  'soundTrack', 'trackName', 'soundRotate', 'soundReverbMode',
 ]);
 const NON_MORPH_KEYS = new Set([
   'renderScale', 'targetFps', 'maxFps', 'maxDpr', 'timeScale',
@@ -57,6 +57,7 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
   if (!P.evolvePresets && P.morphPresets) P.evolvePresets = P.morphPresets;
   if (!P.complementaryBg && P.graduallyShift) P.complementaryBg = P.graduallyShift;
   if (!P.bgColour && P.studioEdge) P.bgColour = P.studioEdge;
+  if (!P.trackName && P.soundTrack) P.trackName = P.soundTrack;
 
   const baseDist = P.distance ? P.distance.default : 2.9;
   function distanceForZoom(zoomVal) {
@@ -379,7 +380,7 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
     if (P.washLevel) sound.setWashLevel(P.washLevel.value);
     if (P.soundRotate) sound.setAutoRotate(P.soundRotate.value);
     if (P.soundReverbMode) sound.setReverbMode(P.soundReverbMode.value);
-    if (changedKey === 'soundTrack' && P.soundTrack) {
+    if ((changedKey === 'soundTrack' || changedKey === 'trackName') && P.soundTrack) {
       sound.setTrack(P.soundTrack.value);
     } else if (!changedKey || changedKey === 'reset') {
       if (P.soundTrack && P.soundTrack.value !== sound.currentTrack.label) {
@@ -391,7 +392,7 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
       if (P.washGap) sound.setWashGap(P.washGap.value);
     } else if (changedKey === 'droneMode' && P.droneMode) {
       if (P.droneMode.value === 'Breathing wash' && P.washGap && Number(P.washGap.value) <= 0) {
-        const defGap = Number.isFinite(sound.currentTrack?.washGap) && sound.currentTrack.washGap > 0 ? sound.currentTrack.washGap : 2.8;
+        const defGap = Number.isFinite(sound.currentTrack?.washGap) && sound.currentTrack.washGap > 0 ? sound.currentTrack.washGap : 3.0;
         store.setValue(P.washGap, defGap);
       } else if (P.droneMode.value === 'Continuous drone' && P.washGap && Number(P.washGap.value) > 0) {
         store.setValue(P.washGap, 0);

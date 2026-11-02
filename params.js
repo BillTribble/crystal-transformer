@@ -29,13 +29,13 @@ export default [
     params: [
       { key: 'sound', label: 'Ambient sound', type: 'bool', value: false, default: false, randomize: false, noPreset: true, uniform: false, desc: 'Generative Brian Eno / Enso ambient piano & synth soundscape using 320 kbps OGG reverb-stamped instrument samples (shortcut: M).' },
       { key: 'soundVolume', label: 'Volume', type: 'range', value: 0.75, default: 0.75, min: 0, max: 1, step: 0.01, randomize: false, noPreset: true, uniform: false, desc: 'Master ambient soundscape volume.' },
-      { key: 'soundTrack', label: 'Enso track', type: 'select', options: ENSO_TRACK_NAMES, value: ENSO_TRACK_NAMES[0], default: ENSO_TRACK_NAMES[0], randomize: false, noPreset: true, uniform: false, desc: 'Active Enso modal ambient track (cycles around the Circle of Fifths).' },
+      { key: 'soundTrack', label: 'Enso track', type: 'select', options: ENSO_TRACK_NAMES, value: 'Luminous Drift (C Lydian)', default: 'Luminous Drift (C Lydian)', randomize: false, noPreset: true, uniform: false, desc: 'Active Enso modal ambient track (cycles around the Circle of Fifths).' },
       { key: 'soundRotate', label: 'Rotate tracks (3m)', type: 'bool', value: true, default: true, randomize: false, noPreset: true, uniform: false, desc: 'Automatically rotate to the next Enso track on the Circle of Fifths every 3 minutes (180s).' },
       { key: 'washLevel', label: 'Drone / wash level', type: 'range', value: 0.33, default: 0.33, min: 0, max: 1, step: 0.01, randomize: false, noPreset: true, uniform: false, desc: 'Level of the continuous low harmonic drone or breathing wash in the key of the active track.' },
-      { key: 'droneMode', label: 'Drone mode', type: 'select', options: ENSO_DRONE_MODES, value: 'Continuous drone', default: 'Continuous drone', randomize: false, noPreset: true, uniform: false, desc: 'Continuous drone sustains an uninterrupted low tonic/fifth harmonic foundation; Breathing wash fades each wash in and out with a silent gap between washes.' },
-      { key: 'washInstrument', label: 'Drone instrument', type: 'select', options: ENSO_WASH_INSTRUMENTS, value: 'drone', default: 'drone', randomize: false, noPreset: true, uniform: false, desc: 'Sustained harmonic timbre used for the active track drone or wash (drone, pad, choir, or tape).' },
-      { key: 'washFade', label: 'Wash fade (s)', type: 'range', value: 5.0, default: 5.0, min: 1.5, max: 10, step: 0.1, randomize: false, noPreset: true, uniform: false, desc: 'Smooth cosine fade-in and fade-out duration in seconds for the drone or breathing wash.' },
-      { key: 'washGap', label: 'Wash gap (s)', type: 'range', value: 0, default: 0, min: 0, max: 8, step: 0.25, randomize: false, noPreset: true, uniform: false, desc: 'Silent breathing gap in seconds after a wash fades completely out before the next wash fades in (0s = continuous drone).' },
+      { key: 'droneMode', label: 'Drone mode', type: 'select', options: ENSO_DRONE_MODES, value: 'Breathing wash', default: 'Breathing wash', randomize: false, noPreset: true, uniform: false, desc: 'Breathing wash fades each wash smoothly in and out with a silent breathing gap between washes; Continuous drone sustains an uninterrupted low tonic/fifth harmonic foundation.' },
+      { key: 'washInstrument', label: 'Drone instrument', type: 'select', options: ENSO_WASH_INSTRUMENTS, value: 'choir', default: 'choir', randomize: false, noPreset: true, uniform: false, desc: 'Sustained harmonic timbre used for the active track drone or wash (choir, drone, pad, or tape).' },
+      { key: 'washFade', label: 'Wash fade (s)', type: 'range', value: 4.2, default: 4.2, min: 1.5, max: 10, step: 0.1, randomize: false, noPreset: true, uniform: false, desc: 'Smooth cosine fade-in and fade-out duration in seconds for the drone or breathing wash.' },
+      { key: 'washGap', label: 'Wash gap (s)', type: 'range', value: 3.0, default: 3.0, min: 0, max: 8, step: 0.25, randomize: false, noPreset: true, uniform: false, desc: 'Silent breathing gap in seconds after a wash fades completely out before the next wash fades in (0s = continuous drone).' },
       { key: 'soundReverbMode', label: 'Reverb engine', type: 'select', options: ENSO_REVERB_MODES, value: ENSO_REVERB_MODES[0], default: ENSO_REVERB_MODES[0], randomize: false, noPreset: true, uniform: false, desc: 'Stamped OGG plays pre-baked 320 kbps stereo convolution-reverb samples with zero live reverb CPU; Lite FDN adds a lightweight 4-tap non-convolution delay network.' },
     ],
   },
@@ -82,7 +82,7 @@ export default [
   {
     group: 'Cluster',
     params: [
-      { key: 'crystals', label: 'Crystals', value: 4, default: 4, min: 1, max: 15, step: 0.01, uniform: false, desc: 'Total crystal points and twin offshoots in the cluster.' },
+      { key: 'crystals', label: 'Crystals', value: 4, default: 4, min: 3, max: 15, step: 0.01, uniform: false, desc: 'Total crystal points and twin offshoots in the cluster.' },
       { key: 'fan', label: 'Fan °', value: 55, min: 0, max: 85, step: 1, uniform: false, desc: 'How far the outer points lean away from upright.' },
       { key: 'crossAt', label: 'Cross point', value: 0.45, min: 0, max: 1, step: 0.01, uniform: false, desc: 'Where along their length the points cross: 0.5 through their middles, 1 at their outer tips, 0 at their roots.' },
       { key: 'lengthJitter', label: 'Length variety', value: 0.22, min: 0, max: 0.9, step: 0.01, uniform: false, desc: 'How much shorter the subsidiary points are than the tallest.' },

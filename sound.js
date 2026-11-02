@@ -24,14 +24,14 @@ export const ENSO_REVERB_MODES = [
 ];
 
 export const ENSO_DRONE_MODES = [
-  'Continuous drone',
   'Breathing wash',
+  'Continuous drone',
 ];
 
 export const ENSO_WASH_INSTRUMENTS = [
+  'choir',
   'drone',
   'pad',
-  'choir',
   'tape',
 ];
 
@@ -82,6 +82,60 @@ const VOICE_INSTRUMENT_TRIM = {
 
 export const ENSO_TRACKS = [
   {
+    id: 'reflection',
+    name: 'Luminous Drift',
+    label: 'Luminous Drift (C Lydian)',
+    keyLabel: 'C Lydian',
+    tonic: 'C',
+    rootMidi: 48,
+    intervals: [0, 2, 4, 6, 7, 9, 11],
+    degreeWeights: [0.98, 0.86, 0.42, 0.78, 0.92, 0.48, 0.32],
+    markovGravity: [0.98, 0.86, 0.35, 0.78, 0.92, 0.42, 0.28],
+    rotationSpeed: 1.00,
+    pianoCutoffHz: 980,
+    pianoShelfDb: -8.8,
+    globalAttackSec: 4.2,
+    phraseCycleSec: 17.6,
+    phraseGateProb: 0.72,
+    phraseLengthLfo: { enabled: false },
+    droneMode: 'Breathing wash',
+    washInstrument: 'choir',
+    washFade: 4.2,
+    washSustain: 7.0,
+    washGap: 3.0,
+    chordInstrument: 'choir',
+    chordRollMs: 168,
+    chordVel: 0.48,
+    voices: {
+      pad:   { cycle: 21.3, prob: 0.66, gain: 0.65, attack: 4.2, release: 9.5, octave: 0, pan: 0.38, muted: false },
+      bell:  { cycle: 19.3, prob: 0.36, gain: 0.56, attack: 0.08, release: 5.5, octave: 1, pan: 0.60, muted: false },
+      choir: { cycle: 29.9, prob: 0.48, gain: 0.60, attack: 4.5, release: 10.5, octave: 1, pan: 0.50, muted: false },
+      tape:  { cycle: 23.7, prob: 0.46, gain: 0.58, attack: 3.0, release: 6.5, octave: 0, pan: 0.40, muted: false },
+      drone: { cycle: 34.1, prob: 0.0,  gain: 0.65, attack: 4.6, release: 12.0, octave: -1, pan: 0.15, muted: true },
+    },
+    phrases: [
+      // Lydian Glass Progression & Luminous Cell from eno_soundscape/js/phrase-patterns.js
+      [
+        { deg: [0, 2, 4, 6], oct: [0, 0, 0, 0], delayMs: 0, vel: 0.44, rollMs: 162 },
+        { deg: [1, 3, 5, 0], oct: [0, 0, 0, 1], delayMs: 1950, vel: 0.38, rollMs: 178 },
+        { deg: [6, 1, 3, 5], oct: [-1, 0, 0, 0], delayMs: 4100, vel: 0.35, rollMs: 192 },
+        { deg: [0, 3, 4, 6], oct: [0, 0, 0, 0], delayMs: 6300, vel: 0.42, rollMs: 168 },
+      ],
+      [
+        { deg: [0], oct: [1], delayMs: 0, vel: 0.44, rollMs: 155 },
+        { deg: [3], oct: [1], delayMs: 840, vel: 0.36, rollMs: 155 },
+        { deg: [4], oct: [1], delayMs: 1820, vel: 0.40, rollMs: 165 },
+        { deg: [1], oct: [1], delayMs: 3040, vel: 0.34, rollMs: 175 },
+      ],
+    ],
+    chords: [
+      { deg: [0, 2, 4, 6], oct: [0, 0, 0, 0], rollMs: 162, vel: 0.46 },
+      { deg: [1, 3, 5, 0], oct: [0, 0, 0, 1], rollMs: 178, vel: 0.40 },
+      { deg: [6, 1, 3, 5], oct: [-1, 0, 0, 0], rollMs: 192, vel: 0.38 },
+      { deg: [0, 3, 4, 6], oct: [0, 0, 0, 0], rollMs: 168, vel: 0.44 },
+    ],
+  },
+  {
     id: 'thursday',
     name: 'Sunlit Atrium',
     label: 'Sunlit Atrium (G Mixolydian)',
@@ -98,10 +152,11 @@ export const ENSO_TRACKS = [
     phraseCycleSec: 15.8,
     phraseGateProb: 0.76,
     phraseLengthLfo: { enabled: true, periodSec: 180, minRatio: 0.50, maxRatio: 1.00 },
-    droneMode: 'Continuous drone',
+    droneMode: 'Breathing wash',
     washInstrument: 'drone',
-    washFade: 5.0,
-    washGap: 0,
+    washFade: 4.3,
+    washSustain: 7.0,
+    washGap: 2.8,
     chordInstrument: 'choir',
     chordRollMs: 112,
     chordVel: 0.54,
@@ -143,59 +198,6 @@ export const ENSO_TRACKS = [
     ],
   },
   {
-    id: 'reflection',
-    name: 'Luminous Drift',
-    label: 'Luminous Drift (C Lydian)',
-    keyLabel: 'C Lydian',
-    tonic: 'C',
-    rootMidi: 48,
-    intervals: [0, 2, 4, 6, 7, 9, 11],
-    degreeWeights: [0.98, 0.86, 0.42, 0.78, 0.92, 0.48, 0.32],
-    markovGravity: [0.98, 0.86, 0.35, 0.78, 0.92, 0.42, 0.28],
-    rotationSpeed: 1.00,
-    pianoCutoffHz: 980,
-    pianoShelfDb: -8.8,
-    globalAttackSec: 4.2,
-    phraseCycleSec: 17.6,
-    phraseGateProb: 0.72,
-    phraseLengthLfo: { enabled: false },
-    droneMode: 'Breathing wash',
-    washInstrument: 'choir',
-    washFade: 4.2,
-    washGap: 3.0,
-    chordInstrument: 'choir',
-    chordRollMs: 168,
-    chordVel: 0.48,
-    voices: {
-      pad:   { cycle: 21.3, prob: 0.66, gain: 0.65, attack: 4.2, release: 9.5, octave: 0, pan: 0.38, muted: false },
-      bell:  { cycle: 19.3, prob: 0.36, gain: 0.56, attack: 0.08, release: 5.5, octave: 1, pan: 0.60, muted: false },
-      choir: { cycle: 29.9, prob: 0.48, gain: 0.60, attack: 4.5, release: 10.5, octave: 1, pan: 0.50, muted: false },
-      tape:  { cycle: 23.7, prob: 0.46, gain: 0.58, attack: 3.0, release: 6.5, octave: 0, pan: 0.40, muted: false },
-      drone: { cycle: 34.1, prob: 0.0,  gain: 0.65, attack: 4.6, release: 12.0, octave: -1, pan: 0.15, muted: true },
-    },
-    phrases: [
-      // Lydian Glass Progression & Luminous Cell from eno_soundscape/js/phrase-patterns.js
-      [
-        { deg: [0, 2, 4, 6], oct: [0, 0, 0, 0], delayMs: 0, vel: 0.44, rollMs: 162 },
-        { deg: [1, 3, 5, 0], oct: [0, 0, 0, 1], delayMs: 1950, vel: 0.38, rollMs: 178 },
-        { deg: [6, 1, 3, 5], oct: [-1, 0, 0, 0], delayMs: 4100, vel: 0.35, rollMs: 192 },
-        { deg: [0, 3, 4, 6], oct: [0, 0, 0, 0], delayMs: 6300, vel: 0.42, rollMs: 168 },
-      ],
-      [
-        { deg: [0], oct: [1], delayMs: 0, vel: 0.44, rollMs: 155 },
-        { deg: [3], oct: [1], delayMs: 840, vel: 0.36, rollMs: 155 },
-        { deg: [4], oct: [1], delayMs: 1820, vel: 0.40, rollMs: 165 },
-        { deg: [1], oct: [1], delayMs: 3040, vel: 0.34, rollMs: 175 },
-      ],
-    ],
-    chords: [
-      { deg: [0, 2, 4, 6], oct: [0, 0, 0, 0], rollMs: 162, vel: 0.46 },
-      { deg: [1, 3, 5, 0], oct: [0, 0, 0, 1], rollMs: 178, vel: 0.40 },
-      { deg: [6, 1, 3, 5], oct: [-1, 0, 0, 0], rollMs: 192, vel: 0.38 },
-      { deg: [0, 3, 4, 6], oct: [0, 0, 0, 0], rollMs: 168, vel: 0.44 },
-    ],
-  },
-  {
     id: 'installations',
     name: 'Cathedral Glass',
     label: 'Cathedral Glass (F Lydian)',
@@ -212,10 +214,11 @@ export const ENSO_TRACKS = [
     phraseCycleSec: 19.4,
     phraseGateProb: 0.70,
     phraseLengthLfo: { enabled: false },
-    droneMode: 'Continuous drone',
+    droneMode: 'Breathing wash',
     washInstrument: 'drone',
-    washFade: 5.0,
-    washGap: 0,
+    washFade: 4.5,
+    washSustain: 7.2,
+    washGap: 3.2,
     chordInstrument: 'pad',
     chordRollMs: 208,
     chordVel: 0.48,
@@ -268,6 +271,7 @@ export const ENSO_TRACKS = [
     droneMode: 'Breathing wash',
     washInstrument: 'tape',
     washFade: 4.0,
+    washSustain: 6.8,
     washGap: 2.8,
     chordInstrument: 'pad',
     chordRollMs: 152,
@@ -325,6 +329,7 @@ export const ENSO_TRACKS = [
     droneMode: 'Breathing wash',
     washInstrument: 'pad',
     washFade: 4.2,
+    washSustain: 6.8,
     washGap: 2.5,
     chordInstrument: 'pad',
     chordRollMs: 72,
@@ -378,10 +383,11 @@ export const ENSO_TRACKS = [
     phraseCycleSec: 14.6,
     phraseGateProb: 0.86,
     phraseLengthLfo: { enabled: false },
-    droneMode: 'Continuous drone',
+    droneMode: 'Breathing wash',
     washInstrument: 'pad',
-    washFade: 5.0,
-    washGap: 0,
+    washFade: 4.4,
+    washSustain: 7.0,
+    washGap: 3.0,
     chordInstrument: 'tape',
     chordRollMs: 136,
     chordVel: 0.48,
@@ -420,6 +426,8 @@ export const ENSO_TRACKS = [
   },
 ];
 
+export const TRACKS = ENSO_TRACKS;
+
 export const ENSO_TRACK_NAMES = ENSO_TRACKS.map((t) => {
   if (!t.scale) t.scale = t.intervals;
   return t.label;
@@ -446,10 +454,11 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
   let autoRotate = true;
   let reverbMode = ENSO_REVERB_MODES[0];
   let trackIndex = 0;
-  let droneMode = ENSO_TRACKS[trackIndex].droneMode || 'Continuous drone';
-  let washInstrument = ENSO_TRACKS[trackIndex].washInstrument || 'drone';
-  let washFade = ENSO_TRACKS[trackIndex].washFade ?? 5.0;
-  let washGap = ENSO_TRACKS[trackIndex].washGap ?? 0;
+  let droneMode = ENSO_TRACKS[trackIndex].droneMode || 'Breathing wash';
+  let washInstrument = ENSO_TRACKS[trackIndex].washInstrument || 'choir';
+  let washFade = ENSO_TRACKS[trackIndex].washFade ?? 4.2;
+  let washSustain = ENSO_TRACKS[trackIndex].washSustain ?? 7.0;
+  let washGap = ENSO_TRACKS[trackIndex].washGap ?? 3.0;
   let trackElapsedSec = 0;
   let totalListenedSec = 0;
   let phraseTimerSec = 15.0;
@@ -465,6 +474,8 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
   let preferredFormat = 'ogg';
 
   // Persistent Harmonic Synth Drone / Wash Engine (0% sample decay, 0% ConvolverNode CPU)
+  const VIBRATO_RATE_HZ = 5.2;
+  const VIBRATO_DEPTH_CENTS = 3.0;
   let washMasterGain = null;
   let washEnvGain = null;
   let washAnalyser = null;
@@ -474,28 +485,33 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
   let washWarmShelf = null;
   let washFdnTap = null;
   let droneBank = [];
-  let tapeWowLfo = null;
-  let tapeWowGain = null;
+  let vibratoLfo = null;
+  let vibratoGain = null;
   let washPhase = 'fadeIn';
   let washPhaseElapsed = 0;
   let washStartFloor = 0.0;
   let washEnvLevel = 0.0;
   let washTimerSec = 6.2;
-  let currentWashCycleSec = 6.4;
+  let currentWashCycleSec = 18.4;
   let washesTriggered = 0;
-  let washColourStep = 0;
+  let transitionActive = false;
+  let transitionStartLevel = 0.0;
+  let transitionOutSec = 4.5;
+  let transitionGapSec = 1.5;
+  let pendingRetune = false;
   let lastWashChordMidis = [];
   let lastWashTrackId = ENSO_TRACKS[0].id;
-  let lastWashInstrument = ENSO_TRACKS[0].washInstrument || 'drone';
+  let lastWashInstrument = ENSO_TRACKS[0].washInstrument || 'choir';
   let lastWashVoices = [];
   let activeWashes = [];
 
   function applyTrackDroneDefaults(track) {
     if (!track) return;
-    droneMode = track.droneMode || 'Continuous drone';
-    washInstrument = track.washInstrument || 'drone';
-    washFade = Number.isFinite(track.washFade) ? track.washFade : (droneMode === 'Continuous drone' ? 5.0 : 4.2);
-    washGap = Number.isFinite(track.washGap) ? track.washGap : (droneMode === 'Continuous drone' ? 0 : 2.8);
+    droneMode = track.droneMode || 'Breathing wash';
+    washInstrument = track.washInstrument || 'choir';
+    washFade = Number.isFinite(track.washFade) ? track.washFade : 4.2;
+    washSustain = Number.isFinite(track.washSustain) ? track.washSustain : 7.0;
+    washGap = Number.isFinite(track.washGap) ? track.washGap : (droneMode === 'Continuous drone' ? 0 : 3.0);
   }
 
   // Map<voice, Array<{ midi, buffer, source: 'ogg'|'mp3'|'offline' }>>
@@ -839,7 +855,7 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
     if (fdnSend) washFdnTap.connect(fdnSend);
 
     washEnvGain = ctx.createGain();
-    washEnvGain.gain.value = 0.0001;
+    washEnvGain.gain.value = 0.0;
     washEnvGain.connect(washMasterGain);
 
     if (ctx.createAnalyser) {
@@ -878,83 +894,77 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
     return ctx;
   }
 
-  function pickModalColourSemitones(track, stepIdx) {
-    const scale = track.scale || track.intervals || [0, 2, 4, 5, 7, 9, 11];
-    const third = (scale[2] ?? 4) + 12;
-    const fourth = (scale[3] ?? 5) + 12; // Lydian #11 (+18st) on C Lydian & F Lydian
-    const sixth = scale[5] ?? 9;
-    const seventh = scale[6] ?? 11;
-    const ninth = (scale[1] ?? 2) + 12;
-    const isLydian = (scale[3] ?? 5) === 6;
-    const palette = isLydian
-      ? [third, fourth, seventh, ninth, sixth + 12]
-      : [third, seventh, ninth, sixth, fourth];
-    return palette[stepIdx % palette.length];
-  }
-
-  function computeWashVoiceSpecs(track, instName, colourIdx) {
-    const rawInst = instName || track.washInstrument || 'drone';
+  function computeWashVoiceSpecs(track, instName) {
+    const rawInst = instName || track.washInstrument || 'choir';
     const washVoice = (rawInst === 'piano' || rawInst === 'bell') ? 'pad' : rawInst;
     const scale = track.scale || track.intervals || [0, 2, 4, 5, 7, 9, 11];
     const rootMidi = track.rootMidi || 48;
     const fifthMidi = rootMidi + (scale[4] ?? 7);
     const thirdMidi = rootMidi + (scale[2] ?? 4) + 12;
     const octaveMidi = rootMidi + 12;
-    const colourSemitones = pickModalColourSemitones(track, colourIdx);
-    const colourMidi = rootMidi + colourSemitones;
+    const ninthMidi = rootMidi + (scale[1] ?? 2) + 12;
 
-    // 6 orthogonal harmonic partials (distinct pitches -> zero destructive phase beating!)
+    // 6 orthogonal, pitch-locked harmonic partials per track (distinct pitches -> zero phase beating, zero pitch drift)
     let specs;
     let filterCfg;
     if (washVoice === 'drone') {
       specs = [
-        { voice: washVoice, type: 'sine',     midi: rootMidi - 12,   gain: 0.135, pan: -0.06, tapeWow: 0 },
-        { voice: washVoice, type: 'triangle', midi: rootMidi,        gain: 0.112, pan: -0.22, tapeWow: 0 },
-        { voice: washVoice, type: 'sine',     midi: fifthMidi - 12,  gain: 0.092, pan: +0.22, tapeWow: 0 },
-        { voice: washVoice, type: 'sine',     midi: octaveMidi,      gain: 0.056, pan: +0.14, tapeWow: 0 },
-        { voice: washVoice, type: 'triangle', midi: fifthMidi,       gain: 0.048, pan: -0.26, tapeWow: 0 },
-        { voice: washVoice, type: 'sine',     midi: colourMidi - 12, gain: 0.046, pan: +0.24, tapeWow: 0 },
+        { voice: washVoice, type: 'sine',     midi: rootMidi - 12,   gain: 0.135, pan: -0.06 },
+        { voice: washVoice, type: 'triangle', midi: rootMidi,        gain: 0.112, pan: -0.22 },
+        { voice: washVoice, type: 'sine',     midi: fifthMidi - 12,  gain: 0.092, pan: +0.22 },
+        { voice: washVoice, type: 'sine',     midi: octaveMidi,      gain: 0.056, pan: +0.14 },
+        { voice: washVoice, type: 'triangle', midi: fifthMidi,       gain: 0.048, pan: -0.26 },
+        { voice: washVoice, type: 'sine',     midi: ninthMidi - 12,  gain: 0.046, pan: +0.24 },
       ];
       filterCfg = { cutoffHz: 460, q: 0.5, formantHz: 190, formantGainDb: 2.2, shelfDb: -9.5 };
     } else if (washVoice === 'choir') {
       specs = [
-        { voice: washVoice, type: 'sine',     midi: rootMidi,        gain: 0.105, pan: -0.20, tapeWow: 0 },
-        { voice: washVoice, type: 'triangle', midi: fifthMidi,       gain: 0.092, pan: +0.22, tapeWow: 0 },
-        { voice: washVoice, type: 'triangle', midi: octaveMidi,      gain: 0.084, pan: -0.28, tapeWow: 0 },
-        { voice: washVoice, type: 'sine',     midi: colourMidi,      gain: 0.076, pan: +0.28, tapeWow: 0 },
-        { voice: washVoice, type: 'sine',     midi: thirdMidi,       gain: 0.062, pan: -0.14, tapeWow: 0 },
-        { voice: washVoice, type: 'sine',     midi: fifthMidi + 12,  gain: 0.048, pan: +0.16, tapeWow: 0 },
+        { voice: washVoice, type: 'sine',     midi: rootMidi,        gain: 0.105, pan: -0.20 },
+        { voice: washVoice, type: 'triangle', midi: fifthMidi,       gain: 0.092, pan: +0.22 },
+        { voice: washVoice, type: 'triangle', midi: octaveMidi,      gain: 0.084, pan: -0.28 },
+        { voice: washVoice, type: 'sine',     midi: ninthMidi,       gain: 0.076, pan: +0.28 },
+        { voice: washVoice, type: 'sine',     midi: thirdMidi,       gain: 0.062, pan: -0.14 },
+        { voice: washVoice, type: 'sine',     midi: fifthMidi + 12,  gain: 0.048, pan: +0.16 },
       ];
       filterCfg = { cutoffHz: 860, q: 0.55, formantHz: 560, formantGainDb: 3.0, shelfDb: -7.0 };
     } else if (washVoice === 'tape') {
       specs = [
-        { voice: washVoice, type: 'sine',     midi: rootMidi - 12,   gain: 0.075, pan: -0.08, tapeWow: 0.5 },
-        { voice: washVoice, type: 'triangle', midi: rootMidi,        gain: 0.110, pan: -0.24, tapeWow: 1.0 },
-        { voice: washVoice, type: 'triangle', midi: fifthMidi - 12,  gain: 0.082, pan: +0.24, tapeWow: 1.0 },
-        { voice: washVoice, type: 'sine',     midi: fifthMidi,       gain: 0.076, pan: -0.20, tapeWow: 1.0 },
-        { voice: washVoice, type: 'triangle', midi: octaveMidi,      gain: 0.064, pan: +0.26, tapeWow: 1.0 },
-        { voice: washVoice, type: 'sine',     midi: colourMidi,      gain: 0.058, pan: +0.16, tapeWow: 1.0 },
+        { voice: washVoice, type: 'sine',     midi: rootMidi - 12,   gain: 0.075, pan: -0.08 },
+        { voice: washVoice, type: 'triangle', midi: rootMidi,        gain: 0.110, pan: -0.24 },
+        { voice: washVoice, type: 'triangle', midi: fifthMidi - 12,  gain: 0.082, pan: +0.24 },
+        { voice: washVoice, type: 'sine',     midi: fifthMidi,       gain: 0.076, pan: -0.20 },
+        { voice: washVoice, type: 'triangle', midi: octaveMidi,      gain: 0.064, pan: +0.26 },
+        { voice: washVoice, type: 'sine',     midi: thirdMidi,       gain: 0.058, pan: +0.16 },
       ];
       filterCfg = { cutoffHz: 620, q: 0.5, formantHz: 290, formantGainDb: 2.2, shelfDb: -8.5 };
     } else {
       // 'pad' (warm CS-80 ribbon pad)
       specs = [
-        { voice: washVoice, type: 'sine',     midi: rootMidi - 12,   gain: 0.085, pan: -0.08, tapeWow: 0 },
-        { voice: washVoice, type: 'triangle', midi: rootMidi,        gain: 0.112, pan: -0.26, tapeWow: 0 },
-        { voice: washVoice, type: 'triangle', midi: fifthMidi,       gain: 0.088, pan: +0.26, tapeWow: 0 },
-        { voice: washVoice, type: 'sine',     midi: octaveMidi,      gain: 0.072, pan: -0.18, tapeWow: 0 },
-        { voice: washVoice, type: 'sine',     midi: colourMidi,      gain: 0.064, pan: +0.22, tapeWow: 0 },
-        { voice: washVoice, type: 'sine',     midi: fifthMidi + 12,  gain: 0.044, pan: -0.14, tapeWow: 0 },
+        { voice: washVoice, type: 'sine',     midi: rootMidi - 12,   gain: 0.085, pan: -0.08 },
+        { voice: washVoice, type: 'triangle', midi: rootMidi,        gain: 0.112, pan: -0.26 },
+        { voice: washVoice, type: 'triangle', midi: fifthMidi,       gain: 0.088, pan: +0.26 },
+        { voice: washVoice, type: 'sine',     midi: octaveMidi,      gain: 0.072, pan: -0.18 },
+        { voice: washVoice, type: 'sine',     midi: thirdMidi,       gain: 0.064, pan: +0.22 },
+        { voice: washVoice, type: 'sine',     midi: fifthMidi + 12,  gain: 0.044, pan: -0.14 },
       ];
       filterCfg = { cutoffHz: 720, q: 0.5, formantHz: 340, formantGainDb: 1.8, shelfDb: -8.0 };
     }
     return { washVoice, specs, filterCfg };
   }
 
+  function updateWashTargetMetadata(track = ENSO_TRACKS[trackIndex], instName = washInstrument) {
+    const { washVoice, specs, filterCfg } = computeWashVoiceSpecs(track, instName);
+    lastWashChordMidis = specs.map((s) => s.midi);
+    lastWashTrackId = track.id;
+    lastWashInstrument = washVoice;
+    lastWashVoices = specs.map(() => washVoice);
+    return { washVoice, specs, filterCfg };
+  }
+
   function initPersistentDroneBank(audioCtx, track) {
     if (droneBank.length > 0 || !audioCtx || !washFormantFilter) return;
     const now = audioCtx.currentTime;
-    const { washVoice, specs, filterCfg } = computeWashVoiceSpecs(track, washInstrument, washColourStep);
+    const { specs, filterCfg } = updateWashTargetMetadata(track, washInstrument);
 
     washSilkFilter.frequency.setValueAtTime(filterCfg.cutoffHz, now);
     washSilkFilter.Q.setValueAtTime(filterCfg.q, now);
@@ -962,21 +972,23 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
     washFormantFilter.gain.setValueAtTime(filterCfg.formantGainDb, now);
     washWarmShelf.gain.setValueAtTime(filterCfg.shelfDb, now);
 
-    // Subtle slow 0.32 Hz tape-wow LFO (active only when washInstrument === 'tape')
-    tapeWowLfo = audioCtx.createOscillator();
-    tapeWowLfo.type = 'sine';
-    tapeWowLfo.frequency.setValueAtTime(0.32, now);
-    tapeWowGain = audioCtx.createGain();
-    tapeWowGain.gain.setValueAtTime(washVoice === 'tape' ? 3.2 : 0.0, now);
-    tapeWowLfo.connect(tapeWowGain);
-    tapeWowLfo.start(now);
+    // Subtle vibrato-rate LFO (5.2 Hz, ±3.0 cents) for natural shimmer without slow rising/falling pitch drift
+    vibratoLfo = audioCtx.createOscillator();
+    vibratoLfo.type = 'sine';
+    vibratoLfo.frequency.setValueAtTime(VIBRATO_RATE_HZ, now);
+    vibratoGain = audioCtx.createGain();
+    vibratoGain.gain.setValueAtTime(VIBRATO_DEPTH_CENTS, now);
+    vibratoLfo.connect(vibratoGain);
+    vibratoLfo.start(now);
 
     for (let i = 0; i < specs.length; i++) {
       const sp = specs[i];
       const osc = audioCtx.createOscillator();
       osc.type = sp.type;
-      osc.frequency.setValueAtTime(midiToHz(sp.midi), now);
-      if (tapeWowGain) tapeWowGain.connect(osc.detune);
+      const hz = midiToHz(sp.midi);
+      osc.frequency.setValueAtTime(hz, now);
+      osc.frequency.value = hz;
+      if (vibratoGain) vibratoGain.connect(osc.detune);
 
       const vGain = audioCtx.createGain();
       vGain.gain.setValueAtTime(sp.gain * 1.45, now);
@@ -998,71 +1010,75 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
     }
   }
 
-  function retuneDroneBank(track = ENSO_TRACKS[trackIndex], { instant = false, glideSec = 1.6, colourOnly = false } = {}) {
-    const { washVoice, specs, filterCfg } = computeWashVoiceSpecs(track, washInstrument, washColourStep);
-    lastWashChordMidis = specs.map((s) => s.midi);
-    lastWashTrackId = track.id;
-    lastWashInstrument = washVoice;
-    lastWashVoices = specs.map(() => washVoice);
+  // Strictly snaps oscillator base frequencies via setValueAtTime ONLY when washEnvLevel === 0 (silent gap).
+  // Never calls setTargetAtTime or linearRampToValueAtTime on oscillator frequency!
+  function retuneDroneBank(track = ENSO_TRACKS[trackIndex], { forceAtZero = false } = {}) {
+    const { washVoice, specs, filterCfg } = updateWashTargetMetadata(track, washInstrument);
 
     if (!ctx || !droneBank.length) return { washVoice, specs };
+    if (enabled && washEnvLevel > 0.0001 && !forceAtZero) {
+      pendingRetune = true;
+      return { washVoice, specs };
+    }
+
+    pendingRetune = false;
     const now = ctx.currentTime;
-    const tau = instant ? 0.015 : Math.max(0.18, glideSec * 0.32);
 
     if (washSilkFilter && washFormantFilter && washWarmShelf) {
       washSilkFilter.frequency.cancelScheduledValues(now);
-      washSilkFilter.frequency.setTargetAtTime(filterCfg.cutoffHz, now, tau);
-      washSilkFilter.Q.setTargetAtTime(filterCfg.q, now, tau);
+      washSilkFilter.frequency.setValueAtTime(filterCfg.cutoffHz, now);
+      washSilkFilter.Q.setValueAtTime(filterCfg.q, now);
       washFormantFilter.frequency.cancelScheduledValues(now);
-      washFormantFilter.frequency.setTargetAtTime(filterCfg.formantHz, now, tau);
+      washFormantFilter.frequency.setValueAtTime(filterCfg.formantHz, now);
       washFormantFilter.gain.cancelScheduledValues(now);
-      washFormantFilter.gain.setTargetAtTime(filterCfg.formantGainDb, now, tau);
+      washFormantFilter.gain.setValueAtTime(filterCfg.formantGainDb, now);
       washWarmShelf.gain.cancelScheduledValues(now);
-      washWarmShelf.gain.setTargetAtTime(filterCfg.shelfDb, now, tau);
-    }
-    if (tapeWowGain) {
-      tapeWowGain.gain.cancelScheduledValues(now);
-      tapeWowGain.gain.setTargetAtTime(washVoice === 'tape' ? 3.2 : 0.0, now, tau);
+      washWarmShelf.gain.setValueAtTime(filterCfg.shelfDb, now);
     }
 
     for (let i = 0; i < droneBank.length && i < specs.length; i++) {
-      if (colourOnly && i < 5) continue;
       const node = droneBank[i];
       const sp = specs[i];
       const targetHz = midiToHz(sp.midi);
-      if (instant) {
-        node.osc.frequency.setValueAtTime(targetHz, now);
-      } else {
-        node.osc.frequency.setTargetAtTime(targetHz, now, tau);
-      }
-      node.vGain.gain.setTargetAtTime(sp.gain * 1.45, now, tau);
+      node.osc.type = sp.type;
+      node.osc.frequency.cancelScheduledValues(now);
+      node.osc.frequency.setValueAtTime(targetHz, now);
+      node.osc.frequency.value = targetHz;
+      node.vGain.gain.cancelScheduledValues(now);
+      node.vGain.gain.setValueAtTime(sp.gain * 1.45, now);
       if (node.panner) {
-        node.panner.pan.setTargetAtTime(sp.pan, now, tau);
+        node.panner.pan.cancelScheduledValues(now);
+        node.panner.pan.setValueAtTime(sp.pan, now);
       }
       node.midi = sp.midi;
       node.gain = sp.gain;
+      node.type = sp.type;
     }
     return { washVoice, specs };
   }
 
-  function syncTrackWashFilter(track) {
-    retuneDroneBank(track, { instant: false, glideSec: washFade });
-  }
-
   function applyWashEnvelopeGain(level, timeConstant = 0.08) {
-    washEnvLevel = Math.max(0, Math.min(1, Number(level) || 0));
+    const clamped = Math.max(0, Math.min(1, Number(level) || 0));
+    washEnvLevel = clamped <= 0.0001 ? 0 : clamped;
     if (ctx && washEnvGain) {
       const now = ctx.currentTime;
-      washEnvGain.gain.setTargetAtTime(Math.max(0.00001, washEnvLevel), now, timeConstant);
+      if (washEnvLevel === 0) {
+        washEnvGain.gain.cancelScheduledValues(now);
+        washEnvGain.gain.setValueAtTime(0.0, now);
+        washEnvGain.gain.value = 0.0;
+      } else {
+        washEnvGain.gain.setTargetAtTime(washEnvLevel, now, timeConstant);
+      }
     }
   }
 
   function refreshActiveWashesRecord(track = ENSO_TRACKS[trackIndex]) {
-    if (!enabled || washPhase === 'gap' || washEnvLevel <= 0.0005) {
+    if (!enabled || washPhase === 'gap' || washPhase === 'transitionGap' || washEnvLevel <= 0.0005) {
       activeWashes = [];
     } else {
-      const fadeSec = Math.max(1.5, Math.min(10.0, Number(washFade) || 5.0));
-      const totalDur = droneMode === 'Continuous drone' ? fadeSec * 3.5 : (fadeSec * 2 + 7.0);
+      const fadeSec = Math.max(1.5, Math.min(10.0, Number(washFade) || 4.2));
+      const sustainSec = Math.max(3.0, Math.min(12.0, Number(washSustain) || 7.0));
+      const totalDur = droneMode === 'Continuous drone' ? fadeSec * 3.5 : (fadeSec * 2 + sustainSec);
       activeWashes = [{
         id: Math.max(1, washesTriggered),
         trackId: track.id,
@@ -1085,56 +1101,105 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
       audioCtx.resume().catch(() => {});
     }
 
-    const fadeSec = Math.max(1.5, Math.min(10.0, Number(crossfadeInSec || washFade) || 5.0));
+    const fadeSec = Math.max(1.5, Math.min(10.0, Number(crossfadeInSec || washFade) || 4.2));
+    const sustainSec = Math.max(3.0, Math.min(12.0, Number(washSustain) || 7.0));
     const gapSec = Math.max(0, Math.min(8.0, Number(washGap) || 0));
     const isContinuous = (droneMode === 'Continuous drone') && (gapSec <= 0.05);
 
-    washColourStep++;
-    retuneDroneBank(track, { instant: initial || washEnvLevel < 0.02, glideSec: fadeSec });
+    if (!initial && washEnvLevel > 0.0005) {
+      // Smooth ~10s track transition: fade out current wash at locked pitch -> silent gap -> retune at 0 -> fade in
+      updateWashTargetMetadata(track, washInstrument);
+      transitionActive = true;
+      pendingRetune = true;
+      transitionStartLevel = washEnvLevel;
+      transitionOutSec = 4.5;
+      transitionGapSec = 1.5;
+      washPhase = 'transitionOut';
+      washPhaseElapsed = 0;
+      refreshActiveWashesRecord(track);
+      return true;
+    }
+
+    transitionActive = false;
+    applyWashEnvelopeGain(0.0, 0);
+    retuneDroneBank(track, { forceAtZero: true });
     washesTriggered++;
 
     if (isContinuous) {
       currentWashCycleSec = fadeSec;
       washTimerSec = currentWashCycleSec;
-      if (!initial && washEnvLevel >= 0.85) {
-        washPhase = 'continuous';
-        washPhaseElapsed = 0;
-        applyWashEnvelopeGain(1.0, 0.12);
-      } else {
-        washPhase = 'fadeIn';
-        washPhaseElapsed = 0;
-        washStartFloor = initial ? 0.22 : Math.max(0.05, washEnvLevel);
-        applyWashEnvelopeGain(washStartFloor, 0.08);
-      }
+      washPhase = 'fadeIn';
+      washPhaseElapsed = 0;
+      washStartFloor = 0.0;
+      applyWashEnvelopeGain(0.001, 0.06);
     } else {
-      const sustainSec = 7.0;
-      const effectiveGap = gapSec > 0.05 ? gapSec : 2.8;
+      const effectiveGap = gapSec > 0.05 ? gapSec : 3.0;
       currentWashCycleSec = fadeSec * 2 + sustainSec + effectiveGap;
       washTimerSec = currentWashCycleSec;
       washPhase = 'fadeIn';
       washPhaseElapsed = 0;
       washStartFloor = 0.0;
-      applyWashEnvelopeGain(0.0002, 0.06);
+      applyWashEnvelopeGain(0.001, 0.06);
     }
 
     refreshActiveWashesRecord(track);
     return true;
   }
 
-  // Smoothly crossfade/retune the drone/wash into the new track's tonic key, mode, and washInstrument
-  function crossfadeWashesToTrack(nextTrackObj, fadeSec = nextTrackObj?.washFade || 5.0) {
+  // Smooth ~10s transition between tracks: fades out outgoing wash over 4.5s at locked pitch,
+  // rests 1.5s in complete silence (retuning oscillators at 0.0 gain), and fades in new track over 4.2-4.5s.
+  function crossfadeWashesToTrack(nextTrackObj, fadeSec = nextTrackObj?.washFade || 4.2) {
     applyTrackDroneDefaults(nextTrackObj);
+    updateWashTargetMetadata(nextTrackObj, washInstrument);
     if (enabled) {
       triggerHeavenlyWash(nextTrackObj, { initial: false, crossfadeInSec: fadeSec });
     } else {
-      retuneDroneBank(nextTrackObj, { instant: true });
+      applyWashEnvelopeGain(0.0, 0);
+      retuneDroneBank(nextTrackObj, { forceAtZero: true });
     }
   }
 
   function tickWash(dt, track) {
-    const fadeSec = Math.max(1.5, Math.min(10.0, Number(washFade) || 5.0));
+    const fadeSec = Math.max(1.5, Math.min(10.0, Number(washFade) || 4.2));
+    const sustainSec = Math.max(3.0, Math.min(12.0, Number(washSustain) || 7.0));
     const gapSec = Math.max(0, Math.min(8.0, Number(washGap) || 0));
     const isContinuous = (droneMode === 'Continuous drone') && (gapSec <= 0.05);
+
+    // Handle long, smooth ~10s track transition phases ('transitionOut' -> 'transitionGap' -> 'fadeIn')
+    if (washPhase === 'transitionOut') {
+      washPhaseElapsed += dt;
+      if (washPhaseElapsed >= transitionOutSec) {
+        washPhase = 'transitionGap';
+        washPhaseElapsed = 0;
+        applyWashEnvelopeGain(0.0, 0);
+        retuneDroneBank(track, { forceAtZero: true });
+      } else {
+        const u = Math.max(0, Math.min(1, washPhaseElapsed / transitionOutSec));
+        const lvl = transitionStartLevel * 0.5 * (1.0 + Math.cos(Math.PI * u));
+        applyWashEnvelopeGain(lvl, 0.06);
+      }
+      refreshActiveWashesRecord(track);
+      return;
+    }
+
+    if (washPhase === 'transitionGap') {
+      washPhaseElapsed += dt;
+      applyWashEnvelopeGain(0.0, 0);
+      if (pendingRetune) {
+        retuneDroneBank(track, { forceAtZero: true });
+      }
+      if (washPhaseElapsed >= transitionGapSec) {
+        transitionActive = false;
+        retuneDroneBank(track, { forceAtZero: true });
+        washesTriggered++;
+        washPhase = 'fadeIn';
+        washPhaseElapsed = 0;
+        washStartFloor = 0.0;
+        applyWashEnvelopeGain(0.001, 0.06);
+      }
+      refreshActiveWashesRecord(track);
+      return;
+    }
 
     if (isContinuous) {
       if (washPhase === 'gap' || washPhase === 'fadeOut' || washPhase === 'sustain') {
@@ -1143,7 +1208,7 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
           washPhaseElapsed = 0;
           applyWashEnvelopeGain(1.0, 0.10);
         } else {
-          washStartFloor = Math.max(0.05, washEnvLevel);
+          washStartFloor = washEnvLevel;
           washPhase = 'fadeIn';
           washPhaseElapsed = 0;
         }
@@ -1157,24 +1222,16 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
         } else {
           const u = Math.max(0, Math.min(1, washPhaseElapsed / fadeSec));
           const lvl = washStartFloor + (1.0 - washStartFloor) * 0.5 * (1.0 - Math.cos(Math.PI * u));
-          applyWashEnvelopeGain(lvl, 0.08);
+          applyWashEnvelopeGain(Math.max(0.001, lvl), 0.08);
         }
       } else {
         washPhase = 'continuous';
         washPhaseElapsed += dt;
         applyWashEnvelopeGain(1.0, 0.12);
-        // Gentle modal colour overtone evolution every 12s while keeping the root/fifth drone 100% unbroken
-        if (washPhaseElapsed >= 12.0) {
-          washPhaseElapsed -= 12.0;
-          washColourStep++;
-          retuneDroneBank(track, { instant: false, glideSec: 4.8, colourOnly: true });
-          washesTriggered++;
-        }
       }
     } else {
-      // Breathing wash mode: long smooth fade-in -> 7.0s long sustained hold -> long fade-out to 0 -> silent gap (2.5s-3.5s)
-      const sustainSec = 7.0;
-      const effectiveGap = gapSec > 0.05 ? gapSec : 2.8;
+      // Breathing wash mode: smooth cosine fade-in (4.0-4.5s) -> warm sustain (6.8-7.2s) -> cosine fade-out (4.0-4.5s) -> silent gap (2.5-3.2s)
+      const effectiveGap = gapSec > 0.05 ? gapSec : 3.0;
       currentWashCycleSec = fadeSec * 2 + sustainSec + effectiveGap;
 
       if (washPhase === 'continuous') {
@@ -1205,7 +1262,10 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
         if (washPhaseElapsed >= fadeSec) {
           washPhase = 'gap';
           washPhaseElapsed = 0;
-          applyWashEnvelopeGain(0.0, 0.06);
+          applyWashEnvelopeGain(0.0, 0);
+          if (pendingRetune) {
+            retuneDroneBank(track, { forceAtZero: true });
+          }
         } else {
           const u = Math.max(0, Math.min(1, washPhaseElapsed / fadeSec));
           const lvl = 0.5 * (1.0 + Math.cos(Math.PI * u));
@@ -1213,10 +1273,12 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
         }
       } else if (washPhase === 'gap') {
         washPhaseElapsed += dt;
-        applyWashEnvelopeGain(0.0, 0.05);
+        applyWashEnvelopeGain(0.0, 0);
+        if (pendingRetune) {
+          retuneDroneBank(track, { forceAtZero: true });
+        }
         if (washPhaseElapsed >= effectiveGap) {
-          washColourStep++;
-          retuneDroneBank(track, { instant: true });
+          retuneDroneBank(track, { forceAtZero: true });
           washesTriggered++;
           washPhase = 'fadeIn';
           washPhaseElapsed = 0;
@@ -1533,15 +1595,16 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
     if (autoRotate) {
       trackElapsedSec += clampedDt;
       if (trackElapsedSec >= TRACK_ROTATE_SECONDS) {
+        clearScheduledTimers();
         trackElapsedSec = 0;
         trackIndex = (trackIndex + 1) % ENSO_TRACKS.length;
         phraseCycleCount = 0;
         chordStepIdx = 0;
         const nextT = ENSO_TRACKS[trackIndex];
         syncTrackPianoFilter(nextT);
-        crossfadeWashesToTrack(nextT, 4.8);
+        crossfadeWashesToTrack(nextT, nextT.washFade || 4.2);
         onTrackChange?.(nextT.label, nextT);
-        phraseTimerSec = 2.4;
+        phraseTimerSec = transitionActive ? (transitionOutSec + transitionGapSec + 1.0) : 2.4;
       }
     }
 
@@ -1655,7 +1718,16 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
     if (ENSO_WASH_INSTRUMENTS.includes(nextInst)) {
       washInstrument = nextInst;
       const track = ENSO_TRACKS[trackIndex];
-      retuneDroneBank(track, { instant: false, glideSec: 0.9 });
+      const { filterCfg } = updateWashTargetMetadata(track, washInstrument);
+      if (ctx && washSilkFilter && washFormantFilter && washWarmShelf) {
+        const now = ctx.currentTime;
+        washSilkFilter.frequency.setTargetAtTime(filterCfg.cutoffHz, now, 0.25);
+        washSilkFilter.Q.setTargetAtTime(filterCfg.q, now, 0.25);
+        washFormantFilter.frequency.setTargetAtTime(filterCfg.formantHz, now, 0.25);
+        washFormantFilter.gain.setTargetAtTime(filterCfg.formantGainDb, now, 0.25);
+        washWarmShelf.gain.setTargetAtTime(filterCfg.shelfDb, now, 0.25);
+      }
+      retuneDroneBank(track);
       refreshActiveWashesRecord(track);
     }
     return washInstrument;
@@ -1692,23 +1764,33 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
         phraseCycleCount = 0;
         chordStepIdx = 0;
         syncTrackPianoFilter(track);
-        crossfadeWashesToTrack(track, track.washFade || 4.8);
-        phraseTimerSec = (track.phraseCycleSec || 16.0) * 1.05;
+        crossfadeWashesToTrack(track, track.washFade || 4.2);
         onTrackChange?.(track.label, track);
         if (enabled) {
-          scheduleDelayed(() => {
-            if (enabled) triggerTrackPhrase(track, { forceFull: true });
-          }, 260);
+          if (transitionActive) {
+            phraseTimerSec = transitionOutSec + transitionGapSec + 1.0;
+          } else {
+            phraseTimerSec = (track.phraseCycleSec || 16.0) * 1.05;
+            scheduleDelayed(() => {
+              if (enabled) triggerTrackPhrase(track, { forceFull: true });
+            }, 260);
+          }
+        } else {
+          phraseTimerSec = (track.phraseCycleSec || 16.0) * 1.05;
         }
       } else {
-        crossfadeWashesToTrack(track, track.washFade || 4.8);
+        applyTrackDroneDefaults(track);
+        updateWashTargetMetadata(track, washInstrument);
+        if (!enabled || washEnvLevel <= 0.0005) {
+          retuneDroneBank(track, { forceAtZero: true });
+        }
         onTrackChange?.(track.label, track);
       }
     }
     return ENSO_TRACKS[trackIndex];
   }
 
-  retuneDroneBank(ENSO_TRACKS[trackIndex], { instant: true });
+  retuneDroneBank(ENSO_TRACKS[trackIndex], { forceAtZero: true });
 
   function setAutoRotate(bool) {
     autoRotate = !!bool;
@@ -1731,13 +1813,19 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
     chordStepIdx = 0;
     const track = ENSO_TRACKS[trackIndex];
     syncTrackPianoFilter(track);
-    crossfadeWashesToTrack(track, track.washFade || 4.8);
-    phraseTimerSec = (track.phraseCycleSec || 16.0) * 1.05;
+    crossfadeWashesToTrack(track, track.washFade || 4.2);
     onTrackChange?.(track.label, track);
     if (enabled) {
-      scheduleDelayed(() => {
-        if (enabled) triggerTrackPhrase(track, { forceFull: true });
-      }, 260);
+      if (transitionActive) {
+        phraseTimerSec = transitionOutSec + transitionGapSec + 1.0;
+      } else {
+        phraseTimerSec = (track.phraseCycleSec || 16.0) * 1.05;
+        scheduleDelayed(() => {
+          if (enabled) triggerTrackPhrase(track, { forceFull: true });
+        }, 260);
+      }
+    } else {
+      phraseTimerSec = (track.phraseCycleSec || 16.0) * 1.05;
     }
     return track;
   }
@@ -1749,10 +1837,17 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
     get droneMode() { return droneMode; },
     get washInstrument() { return washInstrument; },
     get washFade() { return washFade; },
+    get washSustain() { return washSustain; },
     get washGap() { return washGap; },
     get washPhase() { return washPhase; },
     get washEnvLevel() { return Number(washEnvLevel.toFixed(4)); },
     get washRms() { return getWashRms(); },
+    get transitioning() { return Boolean(transitionActive); },
+    get transitionDurationSec() { return Number((transitionOutSec + transitionGapSec + (ENSO_TRACKS[trackIndex]?.washFade || 4.2)).toFixed(2)); },
+    get oscFrequencies() { return droneBank.map((n) => Number(n.osc.frequency.value.toFixed(4))); },
+    get oscMidis() { return droneBank.map((n) => n.midi); },
+    get vibratoRateHz() { return vibratoLfo ? Number(vibratoLfo.frequency.value.toFixed(2)) : VIBRATO_RATE_HZ; },
+    get vibratoDepthCents() { return vibratoGain ? Number(vibratoGain.gain.value.toFixed(2)) : VIBRATO_DEPTH_CENTS; },
     get autoRotate() { return autoRotate; },
     get reverbMode() { return reverbMode; },
     get rotateIntervalSec() { return TRACK_ROTATE_SECONDS; },
