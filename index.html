@@ -6542,6 +6542,44 @@ bool convexHit(int row, vec3 ro, vec3 rd, out float tn, out float tf, out int kn
     else if (t < tf) { tf = t; kf = k; }
     if (tn > tf) return false;
   }
+  if (tf <= max(tn, 0.0)) return false;
+  if (u_edgeChips > 0.01) {
+    vec3 ax = body(row, 1).xyz;
+    vec3 rt = body(row, 3).xyz;
+    for (int m = 0; m < 2; m++) {
+      vec4 ec = body(row, PA + CP + m);
+      if (ec.w <= 1e-4) continue;
+      vec3 oc = ro - ec.xyz;
+      float b = dot(oc, rd);
+      float h = b * b - dot(oc, oc) + ec.w * ec.w;
+      if (h <= 0.0) continue;
+      float s = sqrt(h);
+      float tc0 = -b - s, tc1 = -b + s;
+      vec3 radDir = normalize(ec.xyz - rt - ax * dot(ec.xyz - rt, ax));
+      vec3 nUp = normalize(ax + radDir * 0.42);
+      vec3 nDn = normalize(-ax + radDir * 0.48);
+      float dUp = ec.w * 0.62 - dot(nUp, oc);
+      float dnUp = dot(nUp, rd);
+      if (abs(dnUp) > 1e-6) {
+        float tUp = dUp / dnUp;
+        if (dnUp < 0.0) tc0 = max(tc0, tUp); else tc1 = min(tc1, tUp);
+      } else if (dUp < 0.0) continue;
+      float dDn = ec.w * 0.66 - dot(nDn, oc);
+      float dnDn = dot(nDn, rd);
+      if (abs(dnDn) > 1e-6) {
+        float tDn = dDn / dnDn;
+        if (dnDn < 0.0) tc0 = max(tc0, tDn); else tc1 = min(tc1, tDn);
+      } else if (dDn < 0.0) continue;
+      if (tc1 > tc0) {
+        float tStart = max(tn, 0.0);
+        if (tc0 <= tStart + 1e-3 && tc1 > tStart) {
+          tn = tc1;
+          kn = CP + m;
+          if (tn >= tf) return false;
+        }
+      }
+    }
+  }
   return tf > max(tn, 0.0);
 }
 
@@ -6798,8 +6836,11 @@ vec3 faceNormal(int id, int k, vec3 n, vec3 p, float rough, float footprint, flo
     n = normalize(n + tangent * (u_hopper * 0.28 * riser * mask));
   }
   if (rough > 0.0) {
-    vec3 cell = floor(p * 900.0);
-    n = normalize(n + rough * 0.06 * (vec3(hash(cell), hash(cell + 1.3), hash(cell + 2.7)) - 0.5));
+    vec3 pLoc = p - body(id, 3).xyz;
+    vec3 cell = floor(pLoc * 820.0);
+    vec3 patchCell = floor(pLoc * 140.0);
+    float patchMod = 0.55 + 0.75 * hash(patchCell + uid * 3.1);
+    n = normalize(n + rough * 0.068 * patchMod * (vec3(hash(cell), hash(cell + 1.3), hash(cell + 2.7)) - 0.5));
   }
   return n;
 }
@@ -6816,6 +6857,11 @@ float n3(vec3 p) {
 }
 
 float edgeDist(int id, int k, vec3 p, out vec3 adjN) {
+  if (k >= CP) {
+    vec4 ec = body(id, PA + k);
+    adjN = normalize(ec.xyz - p);
+    return max(0.0, ec.w - length(p - ec.xyz));
+  }
   float dmin = 1e9;
   vec3 nk = body(id, PA + k).xyz;
   adjN = nk;
@@ -6970,15 +7016,17 @@ void main() {
     float frostRoll = hash(vec3(uid, float(k), f_seed + 0.5));
     float frostW = smoothstep(frostRoll - 0.15, frostRoll + 0.15, u_frostShare);
     float rough = u_frost * frostW;
-    vec3 adjN = body(id, PA + k).xyz;
+    bool isEdgeIncursion = (k >= CP);
+    bool isCornerNip = (k >= 18 && k < CP);
+    vec3 rawFaceN = isEdgeIncursion ? normalize(body(id, PA + k).xyz - p) : body(id, PA + k).xyz;
+    vec3 adjN = rawFaceN;
     float dEdge = (u_edgeWear > 0.0 || u_edgeChips > 0.01 || u_hopper > 0.0 || u_iridescence > 0.0 || u_bloom > 0.0) ? edgeDist(id, k, p, adjN) : 1.0;
     float eDist = dEdge;
     float chip = wearFromDist(id, p, dEdge);
     rough = max(rough, chip * 0.6);
-    vec3 n = faceNormal(id, k, body(id, PA + k).xyz, p, rough, footprint, dEdge);
+    vec3 n = faceNormal(id, k, rawFaceN, p, rough, footprint, dEdge);
     float inChip = 0.0;
-    bool isCornerNip = (k >= 18);
-    if (u_edgeChips > 0.01 && (isCornerNip || eDist < 0.014)) {
+    if (u_edgeChips > 0.01 && (isEdgeIncursion || isCornerNip || eDist < 0.014)) {
       vec3 axis = body(id, 1).xyz, root = body(id, 3).xyz;
       float r = max(body(id, 2).w, 0.03);
       vec3 p0 = body(id, PA).xyz;
@@ -6988,12 +7036,29 @@ void main() {
       vec3 t2 = cross(axis, t1);
       vec3 rel = p - root;
       vec3 lp = vec3(dot(rel, t1), dot(rel, axis), dot(rel, t2));
-      if (isCornerNip) {
-        // Literal 3D chipped corner facet: crisp conchoidal micro-fracture + subtle frosted mineral surface
+      if (isEdgeIncursion) {
+        // Literal 3D concave V-notch / conchoidal smash incursion carved into the crystal edge
+        vec4 ec = body(id, PA + k);
+        vec3 relC = p - ec.xyz;
+        vec3 radDir = normalize(ec.xyz - root - axis * dot(ec.xyz - root, axis));
+        vec3 nUp = normalize(axis + radDir * 0.42);
+        vec3 nDn = normalize(-axis + radDir * 0.48);
+        float dSph = max(0.0, ec.w - length(relC));
+        float dUp = max(0.0, ec.w * 0.62 - dot(nUp, relC));
+        float dDn = max(0.0, ec.w * 0.66 - dot(nDn, relC));
+        vec3 cavWallN = (dUp < dSph && dUp < dDn) ? -nUp : ((dDn < dSph) ? -nDn : -normalize(relC + 1e-5));
+        float incFeather = smoothstep(0.0, max(1e-3, ec.w * 0.25), min(dSph, min(dUp, dDn)) + ec.w * 0.12);
+        vec3 chipN = normalize(vec3(n3(lp * 62.0) - 0.5, n3(lp * 62.0 + 7.1) - 0.5, n3(lp * 62.0 + 13.3) - 0.5));
+        n = normalize(cavWallN + chipN * (0.11 * incFeather));
+        inChip = 0.38 * incFeather * clamp(u_edgeChips * 1.4, 0.0, 1.0);
+        rough = max(rough, 0.28 * incFeather);
+      } else if (isCornerNip) {
+        // Literal 3D chipped corner facet: smooth feather near edge so merging in/out never pops
+        float nipFeather = smoothstep(0.0, r * 0.012, eDist);
         vec3 chipN = normalize(vec3(n3(lp * 58.0) - 0.5, n3(lp * 58.0 + 7.1) - 0.5, n3(lp * 58.0 + 13.3) - 0.5));
-        n = normalize(n + chipN * 0.085);
-        inChip = 0.42 * clamp(u_edgeChips * 1.5, 0.0, 1.0);
-        rough = max(rough, 0.24);
+        n = normalize(n + chipN * (0.065 * nipFeather));
+        inChip = 0.28 * nipFeather * clamp(u_edgeChips * 1.4, 0.0, 1.0);
+        rough = max(rough, 0.22 * nipFeather);
       } else {
         // Sparse 1/8th frequency isolated edge nips along facet ridges
         float chipZone = smoothstep(0.81, 0.91, n3(lp * 14.5 + vec3(float(id) * 5.3 + float(k) * 2.7)));
@@ -7280,8 +7345,8 @@ const __default_params = [
     params: [
       { key: 'striations', label: 'Striations', value: 0.12, min: 0, max: 1, step: 0.01, desc: 'Fine horizontal growth ridges across the prism faces.' },
       { key: 'striationScale', label: 'Ridge spacing', value: 140, min: 20, max: 400, step: 1, desc: 'Ridges per unit of length.', when: { key: 'striations', not: [0] } },
-      { key: 'frostShare', label: 'Frosted faces', value: 0.22, min: 0, max: 1, step: 0.01, desc: 'Share of faces that are etched and translucent rather than polished.' },
-      { key: 'frost', label: 'Frost', value: 0.3, min: 0, max: 1, step: 0.01, desc: 'How rough a frosted face is.', when: { key: 'frostShare', not: [0] } },
+      { key: 'frostShare', label: 'Frosted faces', value: 0.55, default: 0.55, min: 0, max: 1, step: 0.01, desc: 'Share of faces that are etched with grainy micro-crystalline mineral texture rather than mirror-polished.' },
+      { key: 'frost', label: 'Frost', value: 0.36, default: 0.36, min: 0, max: 1, step: 0.01, desc: 'Intensity of the grainy micro-crystalline surface etching on frosted faces.', when: { key: 'frostShare', not: [0] } },
       { key: 'edgeChips', label: 'Edge chipping', value: 0.28, default: 0.28, min: 0, max: 1, step: 0.01, desc: 'Occasional localized conchoidal nicks and frosted micro-cracks along crystal ridges, as in raw crystals cracked out of the ground.' },
       { key: 'edgeWear', label: 'Edge wear', value: 0.55, min: 0, max: 1, step: 0.01, desc: 'Chips and bruising along facet edges.' },
       { key: 'edgeWidth', label: 'Wear width', value: 0.05, min: 0.005, max: 0.2, step: 0.001, desc: 'How far the wear reaches from an edge.', when: { key: 'edgeWear', not: [0] } },
@@ -7368,6 +7433,8 @@ const presets = {
     ior: 1.544,
     fire: 0.036,
     striations: 0.18,
+    frostShare: 0.52,
+    frost: 0.36,
     edgeChips: 0.32,
     milk: 0.28,
     milkBase: 0.78,
@@ -7407,8 +7474,8 @@ const presets = {
     ior: 1.31,
     fire: 0.022,
     striations: 0.08,
-    frostShare: 0.48,
-    frost: 0.42,
+    frostShare: 0.62,
+    frost: 0.44,
     edgeChips: 0.26,
     milk: 0.85,
     milkBase: 0.4,
@@ -7419,6 +7486,54 @@ const presets = {
     fractures: 0.65,
     fractureGlow: 1.9,
     hueShift: 180,
+    iridescence: 0.42,
+    flash: 0.45,
+  },
+  'High-Dispersion Diamond': {
+    seed: 88,
+    habit: 'Octahedral Fluorite',
+    growth: 1,
+    symmetry: 4,
+    taper: 0,
+    chamfer: 0.26,
+    twinShare: 0.35,
+    twinAngle: 60,
+    cavityCurve: 0,
+    hopper: 0,
+    crystals: 3,
+    fan: 42,
+    crossAt: 0.5,
+    lengthJitter: 0.28,
+    thickness: 0.24,
+    faceJitter: 0.12,
+    tipAngle: 54.7,
+    tipJitter: 0.1,
+    faceDominance: 0.08,
+    stoneColour: '#f8fafc',
+    colourDepth: 0.18,
+    colourZoning: 0.1,
+    biColour: 0,
+    ior: 2.417,
+    fire: 0.072,
+    fireSamples: 8,
+    bounces: 8,
+    depth: 4,
+    striations: 0,
+    frostShare: 0.58,
+    frost: 0.38,
+    edgeChips: 0.22,
+    edgeWear: 0.1,
+    milk: 0.02,
+    veils: 0.12,
+    phantom: 0,
+    phantomRate: 0,
+    phantomLayers: 1,
+    needles: 0,
+    fractures: 0.18,
+    fractureGlow: 1.15,
+    hueShift: 180,
+    keyLight: 11,
+    rimLight: 18,
     iridescence: 0.42,
     flash: 0.45,
   },
@@ -7450,6 +7565,8 @@ const presets = {
     ior: 1.582,
     fire: 0.024,
     striations: 0.18,
+    frostShare: 0.48,
+    frost: 0.34,
     edgeChips: 0.34,
     milk: 0.18,
     veils: 1.85,
@@ -7493,7 +7610,8 @@ const presets = {
     fire: 0.065,
     striations: 0.38,
     striationScale: 55,
-    frostShare: 0.1,
+    frostShare: 0.46,
+    frost: 0.35,
     edgeChips: 0.22,
     edgeWear: 0.25,
     milk: 0.05,
@@ -7507,53 +7625,6 @@ const presets = {
     rimLight: 16,
     iridescence: 0.58,
     flash: 0.55,
-  },
-  'High-Dispersion Diamond': {
-    seed: 88,
-    habit: 'Octahedral Fluorite',
-    growth: 1,
-    symmetry: 4,
-    taper: 0,
-    chamfer: 0.26,
-    twinShare: 0.35,
-    twinAngle: 60,
-    cavityCurve: 0,
-    hopper: 0,
-    crystals: 3,
-    fan: 42,
-    crossAt: 0.5,
-    lengthJitter: 0.28,
-    thickness: 0.24,
-    faceJitter: 0.12,
-    tipAngle: 54.7,
-    tipJitter: 0.1,
-    faceDominance: 0.08,
-    stoneColour: '#f8fafc',
-    colourDepth: 0.18,
-    colourZoning: 0.1,
-    biColour: 0,
-    ior: 2.417,
-    fire: 0.072,
-    fireSamples: 8,
-    bounces: 8,
-    depth: 4,
-    striations: 0,
-    frostShare: 0.04,
-    edgeChips: 0.05,
-    edgeWear: 0.1,
-    milk: 0.02,
-    veils: 0.12,
-    phantom: 0,
-    phantomRate: 0,
-    phantomLayers: 1,
-    needles: 0,
-    fractures: 0.18,
-    fractureGlow: 1.15,
-    hueShift: 180,
-    keyLight: 11,
-    rimLight: 18,
-    iridescence: 0.42,
-    flash: 0.45,
   },
   'Ruby Druzy Spire': {
     seed: 31,
@@ -7580,6 +7651,8 @@ const presets = {
     ior: 1.768,
     fire: 0.045,
     striations: 0.14,
+    frostShare: 0.52,
+    frost: 0.36,
     edgeChips: 0.28,
     milk: 0.2,
     veils: 0.9,
@@ -7622,8 +7695,8 @@ const presets = {
     fire: 0.0317,
     striations: 0.72,
     striationScale: 217.9037,
-    frostShare: 0.2268,
-    frost: 0.3031,
+    frostShare: 0.50,
+    frost: 0.36,
     edgeChips: 0.36,
     milk: 0.1683,
     milkBase: 0.7408,
@@ -7664,6 +7737,8 @@ const presets = {
     ior: 1.544,
     fire: 0.038,
     striations: 0.32,
+    frostShare: 0.54,
+    frost: 0.38,
     edgeChips: 0.38,
     milk: 0.12,
     veils: 0.75,
@@ -7707,6 +7782,8 @@ const presets = {
     fire: 0.03,
     striations: 0.55,
     striationScale: 180,
+    frostShare: 0.48,
+    frost: 0.34,
     edgeChips: 0.28,
     milk: 0.15,
     veils: 0.95,
@@ -7746,6 +7823,8 @@ const presets = {
     fire: 0.028,
     striations: 0.48,
     striationScale: 165,
+    frostShare: 0.55,
+    frost: 0.36,
     edgeChips: 0.34,
     milk: 0.65,
     milkBase: 0.88,
@@ -7821,8 +7900,8 @@ function randomize(store) {
     depth: 3,
     striations: range(0.05, 0.65),
     striationScale: range(60, 240, 1),
-    frostShare: range(0.05, 0.35),
-    frost: range(0.15, 0.42),
+    frostShare: range(0.42, 0.72),
+    frost: range(0.30, 0.50),
     edgeChips: range(0.15, 0.42),
     edgeWear: range(0.18, 0.6),
     milk: range(0.05, 0.65),

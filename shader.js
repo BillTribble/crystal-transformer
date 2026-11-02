@@ -266,6 +266,44 @@ bool convexHit(int row, vec3 ro, vec3 rd, out float tn, out float tf, out int kn
     else if (t < tf) { tf = t; kf = k; }
     if (tn > tf) return false;
   }
+  if (tf <= max(tn, 0.0)) return false;
+  if (u_edgeChips > 0.01) {
+    vec3 ax = body(row, 1).xyz;
+    vec3 rt = body(row, 3).xyz;
+    for (int m = 0; m < 2; m++) {
+      vec4 ec = body(row, PA + CP + m);
+      if (ec.w <= 1e-4) continue;
+      vec3 oc = ro - ec.xyz;
+      float b = dot(oc, rd);
+      float h = b * b - dot(oc, oc) + ec.w * ec.w;
+      if (h <= 0.0) continue;
+      float s = sqrt(h);
+      float tc0 = -b - s, tc1 = -b + s;
+      vec3 radDir = normalize(ec.xyz - rt - ax * dot(ec.xyz - rt, ax));
+      vec3 nUp = normalize(ax + radDir * 0.42);
+      vec3 nDn = normalize(-ax + radDir * 0.48);
+      float dUp = ec.w * 0.62 - dot(nUp, oc);
+      float dnUp = dot(nUp, rd);
+      if (abs(dnUp) > 1e-6) {
+        float tUp = dUp / dnUp;
+        if (dnUp < 0.0) tc0 = max(tc0, tUp); else tc1 = min(tc1, tUp);
+      } else if (dUp < 0.0) continue;
+      float dDn = ec.w * 0.66 - dot(nDn, oc);
+      float dnDn = dot(nDn, rd);
+      if (abs(dnDn) > 1e-6) {
+        float tDn = dDn / dnDn;
+        if (dnDn < 0.0) tc0 = max(tc0, tDn); else tc1 = min(tc1, tDn);
+      } else if (dDn < 0.0) continue;
+      if (tc1 > tc0) {
+        float tStart = max(tn, 0.0);
+        if (tc0 <= tStart + 1e-3 && tc1 > tStart) {
+          tn = tc1;
+          kn = CP + m;
+          if (tn >= tf) return false;
+        }
+      }
+    }
+  }
   return tf > max(tn, 0.0);
 }
 
@@ -522,8 +560,11 @@ vec3 faceNormal(int id, int k, vec3 n, vec3 p, float rough, float footprint, flo
     n = normalize(n + tangent * (u_hopper * 0.28 * riser * mask));
   }
   if (rough > 0.0) {
-    vec3 cell = floor(p * 900.0);
-    n = normalize(n + rough * 0.06 * (vec3(hash(cell), hash(cell + 1.3), hash(cell + 2.7)) - 0.5));
+    vec3 pLoc = p - body(id, 3).xyz;
+    vec3 cell = floor(pLoc * 820.0);
+    vec3 patchCell = floor(pLoc * 140.0);
+    float patchMod = 0.55 + 0.75 * hash(patchCell + uid * 3.1);
+    n = normalize(n + rough * 0.068 * patchMod * (vec3(hash(cell), hash(cell + 1.3), hash(cell + 2.7)) - 0.5));
   }
   return n;
 }
@@ -540,6 +581,11 @@ float n3(vec3 p) {
 }
 
 float edgeDist(int id, int k, vec3 p, out vec3 adjN) {
+  if (k >= CP) {
+    vec4 ec = body(id, PA + k);
+    adjN = normalize(ec.xyz - p);
+    return max(0.0, ec.w - length(p - ec.xyz));
+  }
   float dmin = 1e9;
   vec3 nk = body(id, PA + k).xyz;
   adjN = nk;
@@ -694,15 +740,17 @@ void main() {
     float frostRoll = hash(vec3(uid, float(k), f_seed + 0.5));
     float frostW = smoothstep(frostRoll - 0.15, frostRoll + 0.15, u_frostShare);
     float rough = u_frost * frostW;
-    vec3 adjN = body(id, PA + k).xyz;
+    bool isEdgeIncursion = (k >= CP);
+    bool isCornerNip = (k >= 18 && k < CP);
+    vec3 rawFaceN = isEdgeIncursion ? normalize(body(id, PA + k).xyz - p) : body(id, PA + k).xyz;
+    vec3 adjN = rawFaceN;
     float dEdge = (u_edgeWear > 0.0 || u_edgeChips > 0.01 || u_hopper > 0.0 || u_iridescence > 0.0 || u_bloom > 0.0) ? edgeDist(id, k, p, adjN) : 1.0;
     float eDist = dEdge;
     float chip = wearFromDist(id, p, dEdge);
     rough = max(rough, chip * 0.6);
-    vec3 n = faceNormal(id, k, body(id, PA + k).xyz, p, rough, footprint, dEdge);
+    vec3 n = faceNormal(id, k, rawFaceN, p, rough, footprint, dEdge);
     float inChip = 0.0;
-    bool isCornerNip = (k >= 18);
-    if (u_edgeChips > 0.01 && (isCornerNip || eDist < 0.014)) {
+    if (u_edgeChips > 0.01 && (isEdgeIncursion || isCornerNip || eDist < 0.014)) {
       vec3 axis = body(id, 1).xyz, root = body(id, 3).xyz;
       float r = max(body(id, 2).w, 0.03);
       vec3 p0 = body(id, PA).xyz;
@@ -712,12 +760,29 @@ void main() {
       vec3 t2 = cross(axis, t1);
       vec3 rel = p - root;
       vec3 lp = vec3(dot(rel, t1), dot(rel, axis), dot(rel, t2));
-      if (isCornerNip) {
-        // Literal 3D chipped corner facet: crisp conchoidal micro-fracture + subtle frosted mineral surface
+      if (isEdgeIncursion) {
+        // Literal 3D concave V-notch / conchoidal smash incursion carved into the crystal edge
+        vec4 ec = body(id, PA + k);
+        vec3 relC = p - ec.xyz;
+        vec3 radDir = normalize(ec.xyz - root - axis * dot(ec.xyz - root, axis));
+        vec3 nUp = normalize(axis + radDir * 0.42);
+        vec3 nDn = normalize(-axis + radDir * 0.48);
+        float dSph = max(0.0, ec.w - length(relC));
+        float dUp = max(0.0, ec.w * 0.62 - dot(nUp, relC));
+        float dDn = max(0.0, ec.w * 0.66 - dot(nDn, relC));
+        vec3 cavWallN = (dUp < dSph && dUp < dDn) ? -nUp : ((dDn < dSph) ? -nDn : -normalize(relC + 1e-5));
+        float incFeather = smoothstep(0.0, max(1e-3, ec.w * 0.25), min(dSph, min(dUp, dDn)) + ec.w * 0.12);
+        vec3 chipN = normalize(vec3(n3(lp * 62.0) - 0.5, n3(lp * 62.0 + 7.1) - 0.5, n3(lp * 62.0 + 13.3) - 0.5));
+        n = normalize(cavWallN + chipN * (0.11 * incFeather));
+        inChip = 0.38 * incFeather * clamp(u_edgeChips * 1.4, 0.0, 1.0);
+        rough = max(rough, 0.28 * incFeather);
+      } else if (isCornerNip) {
+        // Literal 3D chipped corner facet: smooth feather near edge so merging in/out never pops
+        float nipFeather = smoothstep(0.0, r * 0.012, eDist);
         vec3 chipN = normalize(vec3(n3(lp * 58.0) - 0.5, n3(lp * 58.0 + 7.1) - 0.5, n3(lp * 58.0 + 13.3) - 0.5));
-        n = normalize(n + chipN * 0.085);
-        inChip = 0.42 * clamp(u_edgeChips * 1.5, 0.0, 1.0);
-        rough = max(rough, 0.24);
+        n = normalize(n + chipN * (0.065 * nipFeather));
+        inChip = 0.28 * nipFeather * clamp(u_edgeChips * 1.4, 0.0, 1.0);
+        rough = max(rough, 0.22 * nipFeather);
       } else {
         // Sparse 1/8th frequency isolated edge nips along facet ridges
         float chipZone = smoothstep(0.81, 0.91, n3(lp * 14.5 + vec3(float(id) * 5.3 + float(k) * 2.7)));
