@@ -174,7 +174,7 @@ function writeCornerNipPlane(rowIdx, slotIdx, pA, pB, kPrism0, kPrism1, cHoriz, 
   const nl = Math.hypot(nx, ny, nz) || 1;
   nx /= nl; ny /= nl; nz /= nl;
 
-  const effDepth = Math.min(depth, ridgeLen * 0.022);
+  const effDepth = Math.min(depth, ridgeLen * 0.012);
   const wNip = (nx * vx + ny * vy + nz * vz) - effDepth;
   slot(rowIdx, PLANES_AT + slotIdx, nx, ny, nz, wNip);
   return true;
@@ -605,7 +605,7 @@ export function stepEvolution(P, dt, viewportW = 0, viewportH = 0) {
 export function buildCluster(P, viewportW = 0, viewportH = 0) {
   const seedVal = P?.seed ? Number(P.seed.value) : 7;
   const evolveOn = P?.evolve ? !!P.evolve.value : true;
-  const floatC = Math.max(1.0, Math.min(MAX_CRYSTALS, P?.crystals ? Number(P.crystals.value) : 9.0));
+  const floatC = Math.max(3.0, Math.min(MAX_CRYSTALS, P?.crystals ? Number(P.crystals.value) : 4.0));
   const nActive = Math.min(MAX_CRYSTALS, Math.ceil(floatC - 1e-4));
   cluster.floatCrystals = floatC;
 
@@ -709,13 +709,6 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
     node.presence = presence;
     node.twinW = twinW;
     node.isSecondary = twinW >= 0.5;
-    if (presence < 2e-3) {
-      node.worldL = 0;
-      node.worldFullL = 0;
-      node.worldR = 0;
-      node.frameInit = false;
-      continue;
-    }
 
     // Combine node lifecycle growth with manual P.growth slider
     const manualProgress = (!evolveOn && growth < 1.0)
@@ -978,6 +971,13 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
 
     node.frameInit = true;
 
+    // Pull emerging/shrinking crystals smoothly into the heart of the cluster core (0, 0, 0)
+    // so disappearing crystals retract inside the permanent core (crystals 0..2) before vanishing.
+    const corePull = i < 3 ? 1.0 : smooth01(Math.min(1.0, presence / 0.42));
+    root[0] *= corePull;
+    root[1] *= corePull;
+    root[2] *= corePull;
+
     // Apply procedural growth scaling and continuous crystal count presence to L and r
     const L = Math.max(1e-4, baseL * gScale * presence);
     const r = Math.max(1e-4, baseR * Math.pow(gScale, 0.78) * presence);
@@ -988,10 +988,13 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
       node.worldAxis[k] = ax[k];
       node.worldSide[k] = sx[k];
     }
-    node.worldL = L;
+    node.worldL = presence < 2e-3 ? 0 : L;
     node.worldFullL = baseL * presence;
-    node.worldR = r;
+    node.worldR = presence < 2e-3 ? 0 : r;
     node.worldTwist = tw;
+    if (presence < 2e-3) {
+      continue;
+    }
 
     const rowIdx = activeCount++;
     const fs = node.faceSeeds;
@@ -1108,17 +1111,17 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
     const kt0 = 1;
     const kt1 = 2;
 
-    const nipDepth1 = r * (0.009 + 0.018 * edgeChipsVal) * node.smoothChip1;
+    const nipDepth1 = r * (0.005 + 0.010 * edgeChipsVal) * node.smoothChip1;
     writeCornerNipPlane(rowIdx, 18, k0, k1, k0, k1, shHoriz1, shVert1, nipDepth1, 0.85, 1.15);
 
-    const nipDepth2 = r * (0.008 + 0.016 * edgeChipsVal) * node.smoothChip2;
+    const nipDepth2 = r * (0.0045 + 0.009 * edgeChipsVal) * node.smoothChip2;
     writeCornerNipPlane(rowIdx, 19, k2, k3, k2, k3, shHoriz2, shVert2, nipDepth2, 1.12, 0.88);
 
-    const nipDepth3 = r * (0.006 + 0.014 * edgeChipsVal) * node.smoothChip3;
+    const nipDepth3 = r * (0.0035 + 0.008 * edgeChipsVal) * node.smoothChip3;
     writeCornerNipPlane(rowIdx, 20, 8 + kt0, 8 + kt1, kt0, kt1, tipHoriz, tipVert, nipDepth3, 0.90, 1.10);
 
     const half = 0.5 * L;
-    const nodeAlpha = Math.max(0.0, Math.min(1.0, node.alpha * smooth01(Math.min(1.0, presence / 0.35))));
+    const nodeAlpha = Math.max(0.0, Math.min(1.0, node.alpha * smooth01(Math.min(1.0, presence / 0.12))));
     const scx = root[0] + ax[0] * half;
     const scy = root[1] + ax[1] * half;
     const scz = root[2] + ax[2] * half;
