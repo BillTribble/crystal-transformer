@@ -1,6 +1,12 @@
 # Crystal Transformer
 
-An interactive real-time WebGL2 crystal ray-tracing studio (**Crystal Transformer**) built on **[Jack Bush](https://github.com/jackbush)**'s [`geode` sketch in `jackbush/glimmers`](https://github.com/jackbush/glimmers/tree/main/src/sketches/geode).
+<p align="center">
+  <a href="https://billtribble.github.io/crystal-transformer/">
+    <img src="preview.png" width="540" alt="Crystal Transformer — 1080x1080 Preview" />
+  </a>
+</p>
+
+An interactive real-time WebGL2 crystal ray-tracing studio (**Crystal Transformer**) forked from **[Jack Bush (@jackbush)](https://github.com/jackbush)**'s [`geode` sketch in `jackbush/glimmers`](https://github.com/jackbush/glimmers/tree/main/src/sketches/geode).
 
 ## Credits & Attribution
 
