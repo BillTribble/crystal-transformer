@@ -41,7 +41,7 @@ const STICKY_USER_KEYS = new Set([
   'timeScale', 'defaultZoom', 'evolve', 'evolveSpeed', 'morphPresets', 'morphTime',
   'autoGrow', 'growSpeed', 'growth', 'spinStart', 'spin', 'tilt', 'fov',
   'bloom', 'faceGlare', 'mirrorMode', 'mirrorScale', 'mirrorStrength', 'mirrorDepthFade', 'mirrorLiquid', 'mirrorChecker', 'mirrorComplement',
-  'occlusionStyle', 'occlusion',
+  'occlusionStyle', 'occlusionType', 'occlusion',
 ]);
 const DISCRETE_INT_KEYS = new Set(['seed', 'fireSamples', 'bounces', 'depth', 'filmFps', 'targetFps', 'maxFps']);
 

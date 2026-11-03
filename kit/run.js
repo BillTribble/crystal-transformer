@@ -18,7 +18,7 @@ const NON_MORPH_KEYS = new Set([
   'defaultZoom', 'distance', 'fov', 'tilt', 'spin', 'spinStart', 'sway', 'swaySpeed',
   'evolve', 'evolveSpeed', 'morphPresets', 'morphTime', 'autoGrow', 'growth', 'growSpeed',
   'graduallyShift', 'complementaryBg', 'hueShift', 'studioEdge',
-  'mirrorMode', 'mirrorScale', 'mirrorStrength', 'mirrorDepthFade', 'mirrorLiquid', 'mirrorChecker', 'mirrorComplement', 'occlusionStyle', 'occlusion',
+  'mirrorMode', 'mirrorScale', 'mirrorStrength', 'mirrorDepthFade', 'mirrorLiquid', 'mirrorChecker', 'mirrorComplement', 'occlusionStyle', 'occlusionType', 'occlusion',
   'seed', 'filmFps', 'fireSamples', 'bounces', 'depth', 'bloom', 'faceGlare',
   ...SOUND_PARAM_KEYS,
 ]);
@@ -775,36 +775,56 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
       stepEvolution(P, dt, canvas.clientWidth || window.innerWidth, canvas.clientHeight || window.innerHeight);
       sound.tick(dt);
       if (P.occlusion && P.occlusionStyle) {
-        const occStyle = String(P.occlusionStyle.value || 'Auto drift (1/3 time)');
+        const occStyle = String(P.occlusionStyle.value || 'Auto alternate (Ovoids & Invisible Crystals)');
         if (occlusionManualHold > 0) {
           occlusionManualHold = Math.max(0, occlusionManualHold - dt);
           targetOcclusion = Number(P.occlusion.value) || 0;
           smoothOcclusion = targetOcclusion;
         } else {
-          if (occStyle === 'Always on (Massive)') {
+          if (occStyle === 'Always on (Invisible Crystals)') {
             targetOcclusion = 0.92;
+            if (P.occlusionType && Math.abs(Number(P.occlusionType.value) - 1.0) > 1e-3) {
+              store.setSmooth(P.occlusionType, 1.0);
+              P.occlusionType.base = 1.0;
+              needsUiSync = true;
+            }
+          } else if (occStyle === 'Always on (Ovoids)' || occStyle === 'Always on (Massive)') {
+            targetOcclusion = 0.92;
+            if (P.occlusionType && Math.abs(Number(P.occlusionType.value) - 0.0) > 1e-3) {
+              store.setSmooth(P.occlusionType, 0.0);
+              P.occlusionType.base = 0.0;
+              needsUiSync = true;
+            }
           } else if (occStyle === 'Subtle') {
             targetOcclusion = 0.38;
           } else if (occStyle === 'Off') {
             targetOcclusion = 0.0;
-          } else if (occStyle === 'Auto drift (1/3 time)' && P.evolve?.value) {
+          } else if ((occStyle === 'Auto alternate (Ovoids & Invisible Crystals)' || occStyle === 'Auto drift (1/3 time)') && P.evolve?.value) {
             occlusionDriftTime += dt;
-            // 72-second cycle: 44s at 0.0, 8s slow fade-in (44..52s), 12s hold at 0.92 (52..64s), 8s slow fade-out (64..72s)
-            const cyc = occlusionDriftTime % 72.0;
-            if (cyc >= 44.0 && cyc < 52.0) {
-              const u = (cyc - 44.0) / 8.0;
+            // 90-second cycle (active 30s = 1/3 of the time) alternating between Ovoids (even cycles) and Invisible Crystals (odd cycles):
+            // 60s clear at 0.0 (0..60s), 12s slow fade-in (60..72s), 6s hold in the middle at 0.92 (72..78s), 12s slow fade-out (78..90s)
+            const cyc = occlusionDriftTime % 90.0;
+            const cycleIdx = Math.floor(occlusionDriftTime / 90.0);
+            const desiredType = (cycleIdx % 2 === 1) ? 1.0 : 0.0;
+            if (P.occlusionType && smoothOcclusion < 0.02 && Math.abs(Number(P.occlusionType.value) - desiredType) > 1e-3) {
+              store.setSmooth(P.occlusionType, desiredType);
+              P.occlusionType.base = desiredType;
+              needsUiSync = true;
+            }
+            if (cyc >= 60.0 && cyc < 72.0) {
+              const u = (cyc - 60.0) / 12.0;
               targetOcclusion = 0.92 * (0.5 - 0.5 * Math.cos(Math.PI * u));
-            } else if (cyc >= 52.0 && cyc < 64.0) {
+            } else if (cyc >= 72.0 && cyc < 78.0) {
               targetOcclusion = 0.92;
-            } else if (cyc >= 64.0) {
-              const u = (cyc - 64.0) / 8.0;
+            } else if (cyc >= 78.0) {
+              const u = (cyc - 78.0) / 12.0;
               targetOcclusion = 0.92 * (0.5 + 0.5 * Math.cos(Math.PI * u));
             } else {
               targetOcclusion = 0.0;
             }
           }
-          // Rate-limit smoothOcclusion to at most 1.0 / 8.0 (0.125/s, or 0.92 over 8.0 seconds) so voids always appear/disappear over 8 full seconds
-          const maxStep = (0.92 / 8.0) * dt;
+          // Rate-limit smoothOcclusion to at most 0.92 / 12.0 per second so voids always appear/disappear over a full 12.0 seconds
+          const maxStep = (0.92 / 12.0) * dt;
           const diff = targetOcclusion - smoothOcclusion;
           if (Math.abs(diff) <= maxStep) {
             smoothOcclusion = targetOcclusion;

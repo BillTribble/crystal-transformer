@@ -1111,13 +1111,17 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
     const kt0 = 1;
     const kt1 = 2;
 
-    const nipDepth1 = r * (0.005 + 0.010 * edgeChipsVal) * node.smoothChip1;
+    const nipSizeMult1 = 0.40 + 1.25 * Math.pow(((node.uid * 41 + 11) % 29) / 28, 1.35);
+    const nipSizeMult2 = 0.40 + 1.25 * Math.pow(((node.uid * 59 + 17) % 31) / 30, 1.35);
+    const nipSizeMult3 = 0.40 + 1.25 * Math.pow(((node.uid * 67 + 23) % 37) / 36, 1.35);
+
+    const nipDepth1 = r * (0.005 + 0.012 * edgeChipsVal) * nipSizeMult1 * node.smoothChip1;
     writeCornerNipPlane(rowIdx, 18, k0, k1, k0, k1, shHoriz1, shVert1, nipDepth1, 0.85, 1.15);
 
-    const nipDepth2 = r * (0.0045 + 0.009 * edgeChipsVal) * node.smoothChip2;
+    const nipDepth2 = r * (0.0045 + 0.011 * edgeChipsVal) * nipSizeMult2 * node.smoothChip2;
     writeCornerNipPlane(rowIdx, 19, k2, k3, k2, k3, shHoriz2, shVert2, nipDepth2, 1.12, 0.88);
 
-    const nipDepth3 = r * (0.0035 + 0.008 * edgeChipsVal) * node.smoothChip3;
+    const nipDepth3 = r * (0.004 + 0.010 * edgeChipsVal) * nipSizeMult3 * node.smoothChip3;
     writeCornerNipPlane(rowIdx, 20, 8 + kt0, 8 + kt1, kt0, kt1, tipHoriz, tipVert, nipDepth3, 0.90, 1.10);
 
     const half = 0.5 * L;

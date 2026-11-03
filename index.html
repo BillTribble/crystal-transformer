@@ -1257,7 +1257,7 @@ const STICKY_USER_KEYS = new Set([
   'timeScale', 'defaultZoom', 'evolve', 'evolveSpeed', 'morphPresets', 'morphTime',
   'autoGrow', 'growSpeed', 'growth', 'spinStart', 'spin', 'tilt', 'fov',
   'bloom', 'faceGlare', 'mirrorMode', 'mirrorScale', 'mirrorStrength', 'mirrorDepthFade', 'mirrorLiquid', 'mirrorChecker', 'mirrorComplement',
-  'occlusionStyle', 'occlusion',
+  'occlusionStyle', 'occlusionType', 'occlusion',
 ]);
 const DISCRETE_INT_KEYS = new Set(['seed', 'fireSamples', 'bounces', 'depth', 'filmFps', 'targetFps', 'maxFps']);
 function createModel(schema, storageKey, presets = {}) {
@@ -3470,13 +3470,17 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
     const kt0 = 1;
     const kt1 = 2;
 
-    const nipDepth1 = r * (0.005 + 0.010 * edgeChipsVal) * node.smoothChip1;
+    const nipSizeMult1 = 0.40 + 1.25 * Math.pow(((node.uid * 41 + 11) % 29) / 28, 1.35);
+    const nipSizeMult2 = 0.40 + 1.25 * Math.pow(((node.uid * 59 + 17) % 31) / 30, 1.35);
+    const nipSizeMult3 = 0.40 + 1.25 * Math.pow(((node.uid * 67 + 23) % 37) / 36, 1.35);
+
+    const nipDepth1 = r * (0.005 + 0.012 * edgeChipsVal) * nipSizeMult1 * node.smoothChip1;
     writeCornerNipPlane(rowIdx, 18, k0, k1, k0, k1, shHoriz1, shVert1, nipDepth1, 0.85, 1.15);
 
-    const nipDepth2 = r * (0.0045 + 0.009 * edgeChipsVal) * node.smoothChip2;
+    const nipDepth2 = r * (0.0045 + 0.011 * edgeChipsVal) * nipSizeMult2 * node.smoothChip2;
     writeCornerNipPlane(rowIdx, 19, k2, k3, k2, k3, shHoriz2, shVert2, nipDepth2, 1.12, 0.88);
 
-    const nipDepth3 = r * (0.0035 + 0.008 * edgeChipsVal) * node.smoothChip3;
+    const nipDepth3 = r * (0.004 + 0.010 * edgeChipsVal) * nipSizeMult3 * node.smoothChip3;
     writeCornerNipPlane(rowIdx, 20, 8 + kt0, 8 + kt1, kt0, kt1, tipHoriz, tipVert, nipDepth3, 0.90, 1.10);
 
     const half = 0.5 * L;
@@ -5568,7 +5572,7 @@ const NON_MORPH_KEYS = new Set([
   'defaultZoom', 'distance', 'fov', 'tilt', 'spin', 'spinStart', 'sway', 'swaySpeed',
   'evolve', 'evolveSpeed', 'morphPresets', 'morphTime', 'autoGrow', 'growth', 'growSpeed',
   'graduallyShift', 'complementaryBg', 'hueShift', 'studioEdge',
-  'mirrorMode', 'mirrorScale', 'mirrorStrength', 'mirrorDepthFade', 'mirrorLiquid', 'mirrorChecker', 'mirrorComplement', 'occlusionStyle', 'occlusion',
+  'mirrorMode', 'mirrorScale', 'mirrorStrength', 'mirrorDepthFade', 'mirrorLiquid', 'mirrorChecker', 'mirrorComplement', 'occlusionStyle', 'occlusionType', 'occlusion',
   'seed', 'filmFps', 'fireSamples', 'bounces', 'depth', 'bloom', 'faceGlare',
   ...SOUND_PARAM_KEYS,
 ]);
@@ -6322,36 +6326,56 @@ function run(slug, { manifest, params, presets, randomize, sketch }) {
       stepEvolution(P, dt, canvas.clientWidth || window.innerWidth, canvas.clientHeight || window.innerHeight);
       sound.tick(dt);
       if (P.occlusion && P.occlusionStyle) {
-        const occStyle = String(P.occlusionStyle.value || 'Auto drift (1/3 time)');
+        const occStyle = String(P.occlusionStyle.value || 'Auto alternate (Ovoids & Invisible Crystals)');
         if (occlusionManualHold > 0) {
           occlusionManualHold = Math.max(0, occlusionManualHold - dt);
           targetOcclusion = Number(P.occlusion.value) || 0;
           smoothOcclusion = targetOcclusion;
         } else {
-          if (occStyle === 'Always on (Massive)') {
+          if (occStyle === 'Always on (Invisible Crystals)') {
             targetOcclusion = 0.92;
+            if (P.occlusionType && Math.abs(Number(P.occlusionType.value) - 1.0) > 1e-3) {
+              store.setSmooth(P.occlusionType, 1.0);
+              P.occlusionType.base = 1.0;
+              needsUiSync = true;
+            }
+          } else if (occStyle === 'Always on (Ovoids)' || occStyle === 'Always on (Massive)') {
+            targetOcclusion = 0.92;
+            if (P.occlusionType && Math.abs(Number(P.occlusionType.value) - 0.0) > 1e-3) {
+              store.setSmooth(P.occlusionType, 0.0);
+              P.occlusionType.base = 0.0;
+              needsUiSync = true;
+            }
           } else if (occStyle === 'Subtle') {
             targetOcclusion = 0.38;
           } else if (occStyle === 'Off') {
             targetOcclusion = 0.0;
-          } else if (occStyle === 'Auto drift (1/3 time)' && P.evolve?.value) {
+          } else if ((occStyle === 'Auto alternate (Ovoids & Invisible Crystals)' || occStyle === 'Auto drift (1/3 time)') && P.evolve?.value) {
             occlusionDriftTime += dt;
-            // 72-second cycle: 44s at 0.0, 8s slow fade-in (44..52s), 12s hold at 0.92 (52..64s), 8s slow fade-out (64..72s)
-            const cyc = occlusionDriftTime % 72.0;
-            if (cyc >= 44.0 && cyc < 52.0) {
-              const u = (cyc - 44.0) / 8.0;
+            // 90-second cycle (active 30s = 1/3 of the time) alternating between Ovoids (even cycles) and Invisible Crystals (odd cycles):
+            // 60s clear at 0.0 (0..60s), 12s slow fade-in (60..72s), 6s hold in the middle at 0.92 (72..78s), 12s slow fade-out (78..90s)
+            const cyc = occlusionDriftTime % 90.0;
+            const cycleIdx = Math.floor(occlusionDriftTime / 90.0);
+            const desiredType = (cycleIdx % 2 === 1) ? 1.0 : 0.0;
+            if (P.occlusionType && smoothOcclusion < 0.02 && Math.abs(Number(P.occlusionType.value) - desiredType) > 1e-3) {
+              store.setSmooth(P.occlusionType, desiredType);
+              P.occlusionType.base = desiredType;
+              needsUiSync = true;
+            }
+            if (cyc >= 60.0 && cyc < 72.0) {
+              const u = (cyc - 60.0) / 12.0;
               targetOcclusion = 0.92 * (0.5 - 0.5 * Math.cos(Math.PI * u));
-            } else if (cyc >= 52.0 && cyc < 64.0) {
+            } else if (cyc >= 72.0 && cyc < 78.0) {
               targetOcclusion = 0.92;
-            } else if (cyc >= 64.0) {
-              const u = (cyc - 64.0) / 8.0;
+            } else if (cyc >= 78.0) {
+              const u = (cyc - 78.0) / 12.0;
               targetOcclusion = 0.92 * (0.5 + 0.5 * Math.cos(Math.PI * u));
             } else {
               targetOcclusion = 0.0;
             }
           }
-          // Rate-limit smoothOcclusion to at most 1.0 / 8.0 (0.125/s, or 0.92 over 8.0 seconds) so voids always appear/disappear over 8 full seconds
-          const maxStep = (0.92 / 8.0) * dt;
+          // Rate-limit smoothOcclusion to at most 0.92 / 12.0 per second so voids always appear/disappear over a full 12.0 seconds
+          const maxStep = (0.92 / 12.0) * dt;
           const diff = targetOcclusion - smoothOcclusion;
           if (Math.abs(diff) <= maxStep) {
             smoothOcclusion = targetOcclusion;
@@ -6606,9 +6630,10 @@ const __default_params = [
       { key: 'striationScale', label: 'Ridge spacing', value: 140, min: 20, max: 400, step: 1, desc: 'Ridges per unit of length.', when: { key: 'striations', not: [0] } },
       { key: 'frostShare', label: 'Frosted faces', value: 0.55, default: 0.55, min: 0, max: 1, step: 0.01, desc: 'Share of faces that are etched with grainy micro-crystalline mineral texture rather than mirror-polished.' },
       { key: 'frost', label: 'Frost', value: 0.36, default: 0.36, min: 0, max: 1, step: 0.01, desc: 'Intensity of the grainy micro-crystalline surface etching on frosted faces.', when: { key: 'frostShare', not: [0] } },
-      { key: 'edgeChips', label: 'Edge chipping', value: 0.28, default: 0.28, min: 0, max: 1, step: 0.01, desc: 'Tiny, crystal-locked 3D nicks and elongated conchoidal flake scars concentrated around crystal corners and edges.' },
-      { key: 'occlusionStyle', label: 'Occlusion mode', type: 'select', options: ['Auto drift (1/3 time)', 'Always on (Massive)', 'Subtle', 'Off'], value: 'Auto drift (1/3 time)', default: 'Auto drift (1/3 time)', randomize: false, noPreset: true, uniform: false, desc: 'Auto drift smoothly brings the massive abstract occlusion voids in and out ~1/3 of the time independent of preset; or lock Always on (Massive), Subtle, or Off.' },
-      { key: 'occlusion', label: 'Occlusion voids', value: 0, default: 0, min: 0, max: 1, step: 0.01, randomize: false, noPreset: true, desc: 'Massive abstract invisible 3D displacing objects that carve sweeping concave architectural gaps and hollows out of the crystals.' },
+      { key: 'edgeChips', label: 'Edge chipping', value: 0.42, default: 0.42, min: 0, max: 1, step: 0.01, desc: 'Crystal-locked 3D nicks, 3-vector vertex chips, and varied conchoidal flake scars concentrated where three vectors/faces meet and along broad shoulders.' },
+      { key: 'occlusionStyle', label: 'Occlusion mode', type: 'select', options: ['Auto alternate (Ovoids & Invisible Crystals)', 'Always on (Invisible Crystals)', 'Always on (Ovoids)', 'Subtle', 'Off'], value: 'Auto alternate (Ovoids & Invisible Crystals)', default: 'Auto alternate (Ovoids & Invisible Crystals)', randomize: false, noPreset: true, uniform: false, desc: 'Auto alternate smoothly brings Ovoids and Invisible Crystals (of the same shape and form as the current batch) in and out over 12s; or lock Always on (Invisible Crystals), Always on (Ovoids), Subtle, or Off.' },
+      { key: 'occlusionType', label: 'Occlusion shape', value: 0, default: 0, min: 0, max: 1, step: 0.01, randomize: false, noPreset: true, desc: 'Occlusion cutout geometry: 0 = smooth abstract Ovoids, 1 = Invisible Crystals of the exact same shape and form as the current batch.' },
+      { key: 'occlusion', label: 'Occlusion voids', value: 0, default: 0, min: 0, max: 1, step: 0.01, randomize: false, noPreset: true, desc: 'Massive abstract Ovoids or Invisible Crystals that carve negative-space architectural gaps and faceted crystal cutouts out of the visible crystals.' },
       { key: 'edgeWear', label: 'Edge wear', value: 0.55, min: 0, max: 1, step: 0.01, desc: 'Chips and bruising along facet edges.' },
       { key: 'edgeWidth', label: 'Wear width', value: 0.05, min: 0.005, max: 0.2, step: 0.001, desc: 'How far the wear reaches from an edge.', when: { key: 'edgeWear', not: [0] } },
     ],
@@ -6703,7 +6728,7 @@ const presets = {
     striations: 0.18,
     frostShare: 0.52,
     frost: 0.36,
-    edgeChips: 0.32,
+    edgeChips: 0.42,
     milk: 0.28,
     milkBase: 0.78,
     veils: 1.2,
@@ -6744,7 +6769,7 @@ const presets = {
     striations: 0.08,
     frostShare: 0.62,
     frost: 0.44,
-    edgeChips: 0.26,
+    edgeChips: 0.38,
     milk: 0.85,
     milkBase: 0.4,
     veils: 2.2,
@@ -6789,7 +6814,7 @@ const presets = {
     striations: 0,
     frostShare: 0.58,
     frost: 0.38,
-    edgeChips: 0.22,
+    edgeChips: 0.42,
     edgeWear: 0.1,
     milk: 0.02,
     veils: 0.12,
@@ -6835,7 +6860,7 @@ const presets = {
     striations: 0.18,
     frostShare: 0.48,
     frost: 0.34,
-    edgeChips: 0.34,
+    edgeChips: 0.44,
     milk: 0.18,
     veils: 1.85,
     phantom: 0.85,
@@ -6880,7 +6905,7 @@ const presets = {
     striationScale: 55,
     frostShare: 0.46,
     frost: 0.35,
-    edgeChips: 0.22,
+    edgeChips: 0.42,
     occlusion: 0.65,
     edgeWear: 0.25,
     milk: 0.05,
@@ -6922,7 +6947,7 @@ const presets = {
     striations: 0.14,
     frostShare: 0.52,
     frost: 0.36,
-    edgeChips: 0.28,
+    edgeChips: 0.40,
     milk: 0.2,
     veils: 0.9,
     phantom: 0,
@@ -6966,7 +6991,7 @@ const presets = {
     striationScale: 217.9037,
     frostShare: 0.50,
     frost: 0.36,
-    edgeChips: 0.36,
+    edgeChips: 0.46,
     milk: 0.1683,
     milkBase: 0.7408,
     veils: 1.421,
@@ -7008,7 +7033,7 @@ const presets = {
     striations: 0.32,
     frostShare: 0.54,
     frost: 0.38,
-    edgeChips: 0.38,
+    edgeChips: 0.48,
     occlusion: 0.58,
     milk: 0.12,
     veils: 0.75,
@@ -7054,7 +7079,7 @@ const presets = {
     striationScale: 180,
     frostShare: 0.48,
     frost: 0.34,
-    edgeChips: 0.28,
+    edgeChips: 0.40,
     milk: 0.15,
     veils: 0.95,
     phantom: 0,
@@ -7095,7 +7120,7 @@ const presets = {
     striationScale: 165,
     frostShare: 0.55,
     frost: 0.36,
-    edgeChips: 0.34,
+    edgeChips: 0.42,
     milk: 0.65,
     milkBase: 0.88,
     veils: 1.5,
@@ -7172,7 +7197,7 @@ function randomize(store) {
     striationScale: range(60, 240, 1),
     frostShare: range(0.42, 0.72),
     frost: range(0.30, 0.50),
-    edgeChips: range(0.15, 0.42),
+    edgeChips: range(0.34, 0.56),
     occlusion: r() < 0.28 ? range(0.35, 0.85) : 0,
     edgeWear: range(0.18, 0.6),
     milk: range(0.05, 0.65),
@@ -7473,8 +7498,8 @@ bool sphereHit(vec3 ro, vec3 rd, vec4 s, float tMax) {
   return -b + h > 0.0 && -b - h < tMax;
 }
 
-// 1. Massive Abstract Architectural Occlusion Voids (u_occlusion): fixed-radius 3D displacing spheres/wedges (from next crystal row) whose negative-space cutout opacity cross-dissolves smoothly over 8 seconds via rawAlpha
-float evalMassiveOcclusionVoid(int row, vec3 ro, vec3 rd, float tEntry, out vec3 outWallN, out float outRim) {
+// 1a. Massive Abstract Ovoid Occlusion Voids (u_occlusionType == 0): fixed-radius 3D displacing spheres/wedges
+float evalOvoidOcclusionVoid(int row, vec3 ro, vec3 rd, float tEntry, out vec3 outWallN, out float outRim) {
   outWallN = vec3(0.0, 1.0, 0.0);
   outRim = 0.0;
   if (u_occlusion <= 0.001) return 0.0;
@@ -7525,7 +7550,101 @@ float evalMassiveOcclusionVoid(int row, vec3 ro, vec3 rd, float tEntry, out vec3
   return clamp(bestCut, 0.0, 1.0);
 }
 
-// 2. Tiny Crystal-Locked 3D Edge Chips (u_edgeChips): concentrated around corners + varied length (micro-nicks & longer conchoidal scars)
+vec3 rotateAroundAxis(vec3 v, vec3 k, float cosA, float sinA) {
+  return v * cosA + cross(k, v) * sinA + k * dot(k, v) * (1.0 - cosA);
+}
+
+// 1b. Invisible Crystal Occlusions (u_occlusionType == 1): invisible crystals of the exact same shape & form (facet planes 0..17) as the current batch occluding visible crystals
+float evalInvisibleCrystalVoid(int row, vec3 ro, vec3 rd, float tEntry, out vec3 outWallN, out float outRim) {
+  outWallN = vec3(0.0, 1.0, 0.0);
+  outRim = 0.0;
+  if (u_occlusion <= 0.001) return 0.0;
+  vec3 axRow = body(row, 1).xyz;
+  float LRow = max(body(row, 1).w, 0.08);
+  float rRow = max(body(row, 2).w, 0.02);
+  vec3 rtRow = body(row, 3).xyz;
+  vec3 p0 = body(row, PA).xyz;
+  vec3 side1 = p0 - axRow * dot(p0, axRow);
+  float sLen = length(side1);
+  side1 = sLen > 1e-4 ? (side1 / sLen) : normalize(cross(axRow, vec3(0.577, 0.577, 0.577)));
+  vec3 side2 = cross(axRow, side1);
+
+  int nc = max(1, int(f_crystals + 0.5));
+  float bestCut = 0.0;
+
+  for (int m = 0; m < 2; m++) {
+    int tRow = (row + 1 + m) % nc;
+    vec3 axTpl = body(tRow, 1).xyz;
+    float LTpl = max(body(tRow, 1).w, 0.08);
+    float rTpl = max(body(tRow, 2).w, 0.02);
+    vec3 rtTpl = body(tRow, 3).xyz;
+    vec3 cTpl = rtTpl + axTpl * (LTpl * 0.48);
+
+    float hFrac = (m == 0) ? 0.44 : 0.72;
+    vec3 cAnchor = rtRow + axRow * (LRow * hFrac) + ((m == 0) ? side1 : side2) * (rRow * 0.22);
+    vec3 rotAxis = (m == 0) ? normalize(side2 + axRow * 0.25) : normalize(side1 - axRow * 0.22);
+    float ang = (m == 0) ? 1.08 : -0.96;
+    float cosA = cos(ang), sinA = sin(ang);
+    float invScale = clamp((rTpl / max(rRow, 0.02)) * 0.80, 0.55, 1.35);
+
+    vec3 roTpl = cTpl + rotateAroundAxis((ro - cAnchor) * invScale, rotAxis, cosA, sinA);
+    vec3 rdTpl = rotateAroundAxis(rd * invScale, rotAxis, cosA, sinA);
+
+    float tc0 = -1e9, tc1 = 1e9;
+    vec3 hitN = vec3(0.0, 1.0, 0.0);
+    for (int k = 0; k < 18; k++) {
+      vec4 pl = body(tRow, PA + k);
+      float dn = dot(pl.xyz, rdTpl);
+      float dist = pl.w - dot(pl.xyz, roTpl);
+      if (abs(dn) < 1e-8) {
+        if (dist < 0.0) { tc0 = 1e9; break; }
+        continue;
+      }
+      float tPl = dist / dn;
+      if (dn < 0.0) {
+        if (tPl > tc0) { tc0 = tPl; hitN = pl.xyz; }
+      } else if (tPl < tc1) {
+        tc1 = tPl;
+      }
+      if (tc0 > tc1) break;
+    }
+
+    if (tc1 > tc0 && tc1 > tEntry) {
+      float feather = rRow * 0.06;
+      float frontSoft = smoothstep(tEntry + feather * 1.4, tEntry - feather * 0.4, tc0);
+      float span = max(0.0, tc1 - max(tc0, tEntry));
+      float depthSoft = smoothstep(0.0, max(rRow * 0.14, 1e-3), span);
+      float cut = frontSoft * depthSoft;
+      if (cut > bestCut) {
+        bestCut = cut;
+        vec3 worldWallN = rotateAroundAxis(hitN, rotAxis, cosA, -sinA);
+        outWallN = -normalize(worldWallN + 1e-5);
+        outRim = clamp(cut * (1.0 - cut) * 4.0, 0.0, 1.0);
+      }
+    }
+  }
+  return clamp(bestCut, 0.0, 1.0);
+}
+
+// Unified Occlusion Void Evaluator (blends Ovoids at u_occlusionType=0 and Invisible Crystals at u_occlusionType=1)
+float evalMassiveOcclusionVoid(int row, vec3 ro, vec3 rd, float tEntry, out vec3 outWallN, out float outRim) {
+  float kType = clamp(u_occlusionType, 0.0, 1.0);
+  if (kType <= 0.01) {
+    return evalOvoidOcclusionVoid(row, ro, rd, tEntry, outWallN, outRim);
+  }
+  if (kType >= 0.99) {
+    return evalInvisibleCrystalVoid(row, ro, rd, tEntry, outWallN, outRim);
+  }
+  vec3 nOvoid, nCryst;
+  float rOvoid, rCryst;
+  float cOvoid = evalOvoidOcclusionVoid(row, ro, rd, tEntry, nOvoid, rOvoid);
+  float cCryst = evalInvisibleCrystalVoid(row, ro, rd, tEntry, nCryst, rCryst);
+  outWallN = normalize(mix(nOvoid, nCryst, kType) + vec3(1e-5));
+  outRim = mix(rOvoid, rCryst, kType);
+  return mix(cOvoid, cCryst, kType);
+}
+
+// 2. Tiny Crystal-Locked 3D Edge & 3-Vector Vertex Chips (u_edgeChips): concentrated where 3 vectors/faces meet + broad shoulders, with wide size variation (0.45x..2.65x)
 bool applyTinyEdgeChip(int row, int ka, int kb, vec3 ro, vec3 rd, inout float tn, inout float tf, inout int kn) {
   if (u_edgeChips <= 0.01 || ka >= 16 || kb >= 16 || ka == kb) return true;
   vec4 plA = body(row, PA + ka);
@@ -7550,20 +7669,24 @@ bool applyTinyEdgeChip(int row, int ka, int kb, vec3 ro, vec3 rd, inout float tn
   float tStart = max(tn, 0.0);
   vec3 pStart = ro + rd * tStart;
   float dRidge = wAB - dot(nAB, pStart);
-  float maxPossibleCut = r * (0.016 + 0.036 * u_edgeChips) * nodePresence * symWeight;
+  float maxPossibleCut = r * (0.032 + 0.078 * u_edgeChips) * nodePresence * symWeight;
   if (dRidge >= maxPossibleCut) return true;
 
-  // Distance to nearest 3rd plane (corner vertex where 3 faces meet) to concentrate chips around corners
+  // Find nearest 3rd plane (3-vector vertex where three crystal faces/vectors meet)
   float dCorner = 1e9;
+  int kCorner = -1;
   for (int m = 0; m < 18; m++) {
     if (m == ka || m == kb) continue;
     vec4 plM = body(row, PA + m);
     float cM = dot(plM.xyz, nAB);
     if (cM > 0.92 || cM < -0.55) continue;
     float dM = plM.w - dot(plM.xyz, pStart);
-    if (dM < dCorner) dCorner = dM;
+    if (dM < dCorner) {
+      dCorner = dM;
+      kCorner = m;
+    }
   }
-  float cornerProximity = exp(-max(0.0, dCorner) / (r * 0.45));
+  float cornerProximity = exp(-max(0.0, dCorner) / (r * 0.48));
 
   vec3 edgeDir = cross(plA.xyz, plB.xyz);
   float edLen = length(edgeDir);
@@ -7572,56 +7695,96 @@ bool applyTinyEdgeChip(int row, int ka, int kb, vec3 ro, vec3 rd, inout float tn
   if (dot(edgeDir, ax) < 0.0) edgeDir = -edgeDir;
 
   float alongEdge = dot(pStart - rt, edgeDir) / L;
-  if (alongEdge < 0.03 || alongEdge > 0.97) return true;
+  if (alongEdge < 0.02 || alongEdge > 0.98) return true;
 
   int kLo = min(ka, kb), kHi = max(ka, kb);
-  float baseCut = r * (0.008 + 0.019 * u_edgeChips) * nodePresence * symWeight;
+  float baseCut = r * (0.0085 + 0.021 * u_edgeChips) * nodePresence * symWeight;
   float chipCut = 0.0;
   int wallBit = 0;
+  vec3 activeClipN = nAB;
+  float activeDist = dRidge;
 
-  // Scale A: Crisp micro-nicks & medium chips (16 slots along edge, concentrated around corners, varied length & depth)
+  // Scale V: 3-Vector Vertex Chips where 3 faces/vectors meet (ka, kb, kCorner) — high frequency (~72% of vertices) & wide size variation (0.45x..2.65x)
+  if (kCorner >= 0) {
+    int v0 = min(kLo, kCorner);
+    int v2 = max(kHi, kCorner);
+    int v1 = (kLo + kHi + kCorner) - v0 - v2;
+    float hV = hash(vec3(uid * 11.0 + float(v0) * 29.0, float(v1) * 17.0 + float(v2), 43.0));
+    if (hV > 0.28) {
+      float sizeMultV = mix(0.45, 2.65, pow(fract(hV * 19.3), 1.45));
+      float vSpan = r * (0.036 + 0.068 * u_edgeChips) * sizeMultV;
+      if (dCorner < vSpan) {
+        vec4 plC = body(row, PA + kCorner);
+        vec3 nTri = normalize(plA.xyz + plB.xyz + plC.xyz);
+        float dA = max(0.0, plA.w - dot(plA.xyz, pStart));
+        float dB = max(0.0, plB.w - dot(plB.xyz, pStart));
+        float dTri = (dA + dB + max(0.0, dCorner)) * 0.57735027;
+        float uV = clamp(dCorner / max(vSpan, 1e-4), 0.0, 1.0);
+        float scallopV = 0.84 + 0.24 * sin(dCorner / max(r * 0.012, 1e-4) + hV * 6.283);
+        float profV = (1.0 - uV * uV) * scallopV;
+        float cutV = baseCut * sizeMultV * 1.35 * smoothstep(0.28, 0.42, hV) * profV;
+        if (cutV > dTri) {
+          chipCut = cutV;
+          activeClipN = nTri;
+          activeDist = dTri;
+          wallBit = fract(hV * 31.7) >= 0.5 ? 0 : 1;
+        }
+      }
+    }
+  }
+
+  // Scale A: Crisp micro-nicks & medium chips on broad shoulders/edges (16 slots along edge, wider size variation 0.45x..2.35x)
   float slotCoordA = alongEdge * 16.0;
   float slotIdA = floor(slotCoordA);
   float localUA = fract(slotCoordA) - 0.5;
   float hA = hash(vec3(uid * 5.0 + float(kLo) * 19.0 + float(kHi), slotIdA + 17.0, 11.0));
-  float threshA = mix(0.90, 0.46, cornerProximity);
+  float threshA = mix(0.88, 0.42, cornerProximity);
   if (hA > threshA) {
-    float halfSpanA = mix(0.16, 0.46, pow(fract(hA * 7.3), 1.5));
+    float sizeMultA = mix(0.45, 2.35, pow(fract(hA * 19.3), 1.5));
+    float halfSpanA = mix(0.15, 0.48, pow(fract(hA * 7.3), 1.4));
     float uNormA = localUA / halfSpanA;
     if (abs(uNormA) < 1.0) {
       float profA = (1.0 - uNormA * uNormA);
-      float depthMultA = mix(0.55, 1.45, fract(hA * 13.7)) * (1.0 + 0.35 * cornerProximity);
-      chipCut = baseCut * depthMultA * smoothstep(threshA, min(0.99, threshA + 0.08), hA) * profA;
-      wallBit = localUA >= 0.0 ? 0 : 1;
+      float depthMultA = sizeMultA * (1.0 + 0.40 * cornerProximity);
+      float cutA = baseCut * depthMultA * smoothstep(threshA, min(0.99, threshA + 0.08), hA) * profA;
+      if (cutA - dRidge > chipCut - activeDist) {
+        chipCut = cutA;
+        activeClipN = nAB;
+        activeDist = dRidge;
+        wallBit = localUA >= 0.0 ? 0 : 1;
+      }
     }
   }
 
-  // Scale B: Longer elongated conchoidal flake scars (5.5 slots along edge — 2.5x to 4x longer along the ridge)
+  // Scale B: Longer elongated conchoidal flake scars on broad shoulders (5.5 slots along edge, wider size variation 0.55x..2.65x)
   float slotCoordB = alongEdge * 5.5 + 0.37;
   float slotIdB = floor(slotCoordB);
   float localUB = fract(slotCoordB) - 0.5;
   float hB = hash(vec3(uid * 7.0 + float(kLo) * 23.0 + float(kHi), slotIdB + 41.0, 29.0));
-  float threshB = mix(0.92, 0.54, cornerProximity);
+  float threshB = mix(0.90, 0.48, cornerProximity);
   if (hB > threshB) {
-    float halfSpanB = mix(0.24, 0.47, fract(hB * 9.1));
+    float sizeMultB = mix(0.55, 2.65, pow(fract(hB * 17.3), 1.45));
+    float halfSpanB = mix(0.22, 0.48, fract(hB * 9.1));
     float uNormB = localUB / halfSpanB;
     if (abs(uNormB) < 1.0) {
       float scallop = 0.82 + 0.26 * sin(localUB * 18.0 + hB * 6.283);
       float profB = (1.0 - abs(uNormB)) * (1.0 + 0.35 * (1.0 - abs(uNormB))) * scallop;
-      float depthMultB = mix(0.75, 1.60, fract(hB * 17.3)) * (1.0 + 0.30 * cornerProximity);
+      float depthMultB = sizeMultB * (1.0 + 0.35 * cornerProximity);
       float cutB = baseCut * depthMultB * smoothstep(threshB, min(0.99, threshB + 0.08), hB) * profB;
-      if (cutB > chipCut) {
+      if (cutB - dRidge > chipCut - activeDist) {
         chipCut = cutB;
+        activeClipN = nAB;
+        activeDist = dRidge;
         wallBit = sin(localUB * 18.0 + hB * 6.283) >= 0.0 ? 0 : 1;
       }
     }
   }
 
-  if (chipCut <= 1e-5 || dRidge >= chipCut) return true;
+  if (chipCut <= 1e-5 || activeDist >= chipCut) return true;
 
-  float dnAB = dot(nAB, rd);
-  if (dnAB < -0.02) {
-    float tChip = tStart + (chipCut - dRidge) / (-dnAB);
+  float dnClip = dot(activeClipN, rd);
+  if (dnClip < -0.02) {
+    float tChip = tStart + (chipCut - activeDist) / (-dnClip);
     if (tChip >= tf) return false;
     tn = tChip;
     kn = CP + 5000 + (kLo * 18 + kHi) * 2 + wallBit;
@@ -7653,17 +7816,15 @@ bool convexHit(int row, vec3 ro, vec3 rd, out float tn, out float tf, out int kn
     vec3 nk = body(row, PA + kn).xyz;
     int kAdj = -1;
     float dAdjMin = 1e9;
-    int kBase = (kn < 8) ? 0 : 8;
-    for (int j = 0; j < 8; j++) {
-      int kCand = kBase + j;
+    for (int kCand = 0; kCand < 16; kCand++) {
       if (kCand == kn) continue;
       vec4 plJ = body(row, PA + kCand);
       float cAng = dot(plJ.xyz, nk);
-      if (cAng > 0.96 || cAng < 0.1) continue;
+      if (cAng > 0.96 || cAng < 0.05) continue;
       float dJ = plJ.w - dot(plJ.xyz, pStart);
       if (dJ < dAdjMin) { dAdjMin = dJ; kAdj = kCand; }
     }
-    if (kAdj >= 0 && dAdjMin < r * 0.048) {
+    if (kAdj >= 0 && dAdjMin < r * 0.088) {
       if (!applyTinyEdgeChip(row, kn, kAdj, ro, rd, tn, tf, kn)) return false;
     }
   }
