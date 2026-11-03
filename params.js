@@ -32,7 +32,7 @@ export const MIRROR_MODES = [
 ];
 
 export default [
-  playback({ timeScale: 1.5, maxDpr: 1, maxFps: 30 }, {
+  playback({ timeScale: 1.5, fxaa: 1, targetFps: 30, maxDpr: 1.5, maxFps: 30 }, {
     quality: true,
     extra: [
       { key: 'seed', label: 'Seed', value: 7, min: 0, max: 100, step: 1, uniform: false, desc: 'A different cluster: layout, faces and inclusions.' },
@@ -130,18 +130,18 @@ export default [
     group: 'Surface',
     params: [
       { key: 'patinaMacro', label: 'Natural wear & patina (macro)', value: 1.0, default: 1.0, min: 0, max: 2, step: 0.01, randomize: false, noPreset: true, desc: 'Master macro fader for the entire natural-specimen patina, contoured edges, micro-scratches, and hairline fractures (0 = pristine digital clarity, 1 = natural mineral specimen, 2 = heavily weathered).' },
-      { key: 'edgeMacro', label: 'Contoured edges & chipping (macro)', value: 1.0, default: 1.0, min: 0, max: 2, step: 0.01, randomize: false, noPreset: true, desc: 'Macro multiplier for non-digital edge contouring, corner chipping, and bruised edge wear combined.' },
-      { key: 'surfaceMacro', label: 'Surface scratches & fractures (macro)', value: 1.0, default: 1.0, min: 0, max: 2, step: 0.01, randomize: false, noPreset: true, desc: 'Macro multiplier for directional surface micro-scratch patina, growth-hillock etch steps, and sub-surface hairline fractures.' },
-      { key: 'edgeIrregularity', label: 'Edge irregularity', value: 0.78, default: 0.78, min: 0, max: 1, step: 0.01, randomize: false, noPreset: true, desc: 'Organic non-digital edge contour, scallop, and stepped micro-chipping along ~85% of crystal ridges and termination edges.' },
+      { key: 'edgeMacro', label: 'Contoured edges & chipping (macro)', value: 0.38, default: 0.38, min: 0, max: 2, step: 0.01, randomize: false, noPreset: true, desc: 'Macro multiplier for 3D CSG edge contouring, corner chipping, and stepped facet bevels.' },
+      { key: 'surfaceMacro', label: 'Surface scratches & fractures (macro)', value: 1.05, default: 1.05, min: 0, max: 2, step: 0.01, randomize: false, noPreset: true, desc: 'Macro multiplier for directional surface micro-scratch patina, growth-hillock etch steps, and sub-surface hairline fractures.' },
+      { key: 'edgeIrregularity', label: 'Edge irregularity', value: 0.78, default: 0.78, min: 0, max: 1, step: 0.01, randomize: false, noPreset: true, desc: 'Organic non-digital 3D CSG stepped bevel facets and conchoidal chips along crystal ridges and termination edges.' },
       { key: 'patina', label: 'Patina & micro-scratches', value: 0.65, default: 0.65, min: 0, max: 1, step: 0.01, randomize: false, noPreset: true, desc: 'Directional anisotropic micro-scratches, faint growth-hillock etch steps, and tiny surface pits that catch grazing specular light on crystal faces without clouding internal clarity.' },
       { key: 'hairlineFractures', label: 'Hairline fractures', value: 0.55, default: 0.55, min: 0, max: 1, step: 0.01, randomize: false, noPreset: true, desc: 'Razor-thin, high-contrast internal and sub-surface silvery hairline cracks and feathery cleavage wisps near terminations and edges.' },
       { key: 'striations', label: 'Striations', value: 0.12, min: 0, max: 1, step: 0.01, desc: 'Fine horizontal growth ridges across the prism faces.' },
       { key: 'striationScale', label: 'Ridge spacing', value: 140, min: 20, max: 400, step: 1, desc: 'Ridges per unit of length.', when: { key: 'striations', not: [0] } },
       { key: 'frostShare', label: 'Frosted faces', value: 0.55, default: 0.55, min: 0, max: 1, step: 0.01, desc: 'Share of faces that are etched with grainy micro-crystalline mineral texture rather than mirror-polished.' },
       { key: 'frost', label: 'Frost', value: 0.36, default: 0.36, min: 0, max: 1, step: 0.01, desc: 'Intensity of the grainy micro-crystalline surface etching on frosted faces.', when: { key: 'frostShare', not: [0] } },
-      { key: 'edgeChips', label: 'Edge chipping', value: 0.42, default: 0.42, min: 0, max: 1, step: 0.01, desc: 'Crystal-locked 3D corner chips and fine conchoidal flake scars concentrated where three or four crystal edges meet.' },
-      { key: 'chipSize', label: 'Chip size', value: 1.5, default: 1.5, min: 0.1, max: 3.0, step: 0.05, randomize: false, noPreset: true, desc: 'Size and cut depth of corner chips and nicks (lower = subtle micro-nicks, higher = deeper corner chips).' },
-      { key: 'edgeGranularity', label: 'Edge wear granularity', value: 1.4, default: 1.4, min: 0.2, max: 3.0, step: 0.05, randomize: false, noPreset: true, desc: 'Spatial frequency of micro-fracture cells, conchoidal steps, and granular corner wear (higher = finer, more granular crystalline texture).' },
+      { key: 'edgeChips', label: 'Edge chipping', value: 0.42, default: 0.42, min: 0, max: 1, step: 0.01, desc: 'Crystal-locked 3D CSG corner chips and stepped conchoidal fracture facets where crystal edges meet.' },
+      { key: 'chipSize', label: 'Chip size', value: 3, default: 3, min: 0.1, max: 3.0, step: 0.05, randomize: false, noPreset: true, desc: 'Size and cut depth of 3D CSG corner chips and stepped ridge nicks (lower = subtle micro-nicks, higher = deeper 3D corner chips).' },
+      { key: 'edgeGranularity', label: 'Edge wear granularity', value: 3, default: 3, min: 0.2, max: 3.0, step: 0.05, randomize: false, noPreset: true, desc: 'Spatial frequency of 3D micro-fracture cells, conchoidal steps, and granular corner wear (higher = finer, more granular crystalline texture).' },
       { key: 'occlusionStyle', label: 'Occlusion mode', type: 'select', options: ['Auto alternate (Ovoids & Invisible Crystals)', 'Always on (Invisible Crystals)', 'Always on (Ovoids)', 'Subtle', 'Off'], value: 'Auto alternate (Ovoids & Invisible Crystals)', default: 'Auto alternate (Ovoids & Invisible Crystals)', randomize: false, noPreset: true, uniform: false, desc: 'Auto alternate smoothly brings Ovoids and Invisible Crystals (of the same shape and form as the current batch) in and out over 12s; or lock Always on (Invisible Crystals), Always on (Ovoids), Subtle, or Off.' },
       { key: 'occlusionType', label: 'Occlusion shape', value: 0, default: 0, min: 0, max: 1, step: 0.01, randomize: false, noPreset: true, desc: 'Occlusion cutout geometry: 0 = smooth abstract Ovoids, 1 = Invisible Crystals of the exact same shape and form as the current batch.' },
       { key: 'occlusion', label: 'Occlusion voids', value: 0, default: 0, min: 0, max: 1, step: 0.01, randomize: false, noPreset: true, desc: 'Massive abstract Ovoids or Invisible Crystals that carve negative-space architectural gaps and faceted crystal cutouts out of the visible crystals.' },

@@ -14,7 +14,7 @@ const SOUND_PARAM_KEYS = new Set([
   'soundTrack', 'trackName', 'soundRotate', 'soundReverbMode',
 ]);
 const NON_MORPH_KEYS = new Set([
-  'renderScale', 'targetFps', 'maxFps', 'maxDpr', 'timeScale',
+  'renderScale', 'targetFps', 'maxFps', 'maxDpr', 'timeScale', 'fxaa',
   'defaultZoom', 'distance', 'fov', 'tilt', 'spin', 'spinStart', 'sway', 'swaySpeed',
   'evolve', 'evolveSpeed', 'morphPresets', 'morphTime', 'autoGrow', 'growth', 'growSpeed',
   'graduallyShift', 'complementaryBg', 'hueShift', 'studioEdge',
@@ -27,7 +27,7 @@ const NON_MORPH_KEYS = new Set([
 
 export function computeDeviceDpr() {
   const isMobile = window.innerWidth <= 820 || (window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
-  const dpr = Math.min(window.devicePixelRatio || 1, isMobile ? 1.25 : 2);
+  const dpr = Math.min(window.devicePixelRatio || 1, isMobile ? 1.5 : 2);
   return dpr;
 }
 

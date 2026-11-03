@@ -16,61 +16,20 @@ export function createLoop(canvas, P, sketch) {
   let judgingDrop = false, preDropScale = 1, preDropAvg = 0, holdDown = 0, holdDownLen = 5;
   let settling = false;
 
-  function adaptive() { return !!P_targetFps && !loop.fixed; }
+  // Automatic resolution downgrading is disabled so watching on phones or desktops
+  // never degrades render quality over time; resolution is controlled solely by P_renderScale & P_maxDpr.
+  function adaptive() { return false; }
 
-  function adapt(dt) {
-    if (!adaptive()) { dynScale = 1; return; }
-    winTime += dt;
-    winFrames++;
-    sinceChange += dt;
-    ceilingAge += dt;
-    holdDown -= dt;
-    if (winTime < 0.5) return;
-    const avg = winTime / winFrames;
-    winTime = 0;
-    winFrames = 0;
-    if (settling) { settling = false; return; }
-    const cap = cappedFps();
-    const budget = 1 / Math.min(P_targetFps ? P_targetFps.value : 60, cap || Infinity);
-
-    if (judgingDrop) {
-      judgingDrop = false;
-      if (avg > preDropAvg * 0.92) {
-        dynScale = preDropScale;
-        ceiling = 1;
-        holdDown = holdDownLen;
-        holdDownLen = Math.min(holdDownLen * 2, 60);
-        sinceChange = 0;
-        settling = true;
-        return;
-      }
-      holdDownLen = 5;
-    }
-    if (avg > budget * 1.2 && dynScale > MIN_SCALE && holdDown <= 0 && sinceChange > 0.5) {
-      preDropScale = dynScale;
-      preDropAvg = avg;
-      dynScale = Math.max(MIN_SCALE, dynScale * 0.8);
-      ceiling = preDropScale;
-      ceilingAge = 0;
-      judgingDrop = true;
-      sinceChange = 0;
-      settling = true;
-    } else if (avg < budget * 1.08 && dynScale < 1 && sinceChange > 2) {
-      const next = Math.min(1, dynScale * 1.12);
-      if (next < ceiling * 0.97 || ceilingAge > 20) {
-        dynScale = next;
-        sinceChange = 0;
-        settling = true;
-      }
-    }
+  function adapt(_dt) {
+    dynScale = 1;
   }
 
   function resizeIfNeeded(s) {
     const isMobile = window.innerWidth <= 820 || (window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
-    const dpr = Math.min(window.devicePixelRatio || 1, isMobile ? 1.25 : 2);
-    const maxDpr = P_maxDpr ? P_maxDpr.value : 2;
+    const dpr = Math.min(window.devicePixelRatio || 1, isMobile ? 1.5 : 2);
+    const maxDpr = P_maxDpr ? P_maxDpr.value : 1.5;
     const scale = P_renderScale ? P_renderScale.value : 1;
-    const ratio = Math.min(dpr, maxDpr) * scale * dynScale;
+    const ratio = Math.min(dpr, maxDpr) * scale;
     const cw = canvas.clientWidth, ch = canvas.clientHeight;
     const w = Math.max(1, Math.round(cw * ratio));
     const h = Math.max(1, Math.round(ch * ratio));
@@ -137,7 +96,7 @@ export function createLoop(canvas, P, sketch) {
     },
     stop() { cancelAnimationFrame(raf); raf = 0; },
     step(dt) { render(dt); },
-    degrade(factor) { dynScale = Math.max(MIN_SCALE, dynScale * factor); },
+    degrade(_factor) { dynScale = 1; },
     snapshot(width, height, pxRatio) {
       const s = sketch();
       if (!s) return Promise.reject(new Error('The sketch is not running.'));
