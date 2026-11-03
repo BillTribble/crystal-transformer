@@ -274,6 +274,28 @@ function primaryCountFor(n, habit, twinShare) {
   return nPrimary;
 }
 
+/**
+ * Magnetic overlap repulsion weight by crystal system (post-015442, post-015454):
+ * - Normal prismatic crystals (Trigonal & Hexagonal: Classic Quartz Prism, Amethyst Cathedral,
+ *   Rutilated Smoky Scepter, Glacial Ice, Emerald, Tourmaline, Ruby Druzy, Aquamarine) = 0.0
+ *   so their shared radiating cluster base is 100% untouched.
+ * - Cubic / Isometric (Diamond) = 1.0 so equant octahedra don't clump concentric at the origin.
+ * - Chunky non-hexagonal systems (Tetragonal, Orthorhombic, Monoclinic, Triclinic) = 0.50..0.62
+ *   so heavily overlapping polyhedra push apart cleanly when sitting on top of each other.
+ */
+function habitRepelWeight(habit) {
+  const sys = resolveHabitSystem(habit);
+  if (sys === 'Cubic / Isometric') return 1.0;
+  if (sys === 'Tetragonal' || sys === 'Orthorhombic') return 0.62;
+  if (sys === 'Monoclinic' || sys === 'Triclinic') return 0.50;
+  return 0.0;
+}
+
+const activeNodes = new Array(MAX_CRYSTALS);
+const initRootX = new Float32Array(MAX_CRYSTALS);
+const initRootY = new Float32Array(MAX_CRYSTALS);
+const initRootZ = new Float32Array(MAX_CRYSTALS);
+
 function setLocalPlane(outLx, outLy, outLz, outOffR, outOffL, k, lx, ly, lz, offR, offL) {
   const inv = 1 / (Math.hypot(lx, ly, lz) || 1);
   outLx[k] = lx * inv;
@@ -1316,7 +1338,126 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
       continue;
     }
 
-    const rowIdx = activeCount++;
+    initRootX[activeCount] = root[0];
+    initRootY[activeCount] = root[1];
+    initRootZ[activeCount] = root[2];
+    activeNodes[activeCount++] = node;
+  }
+
+  const curHabit = P.habit ? String(P.habit.value) : 'Trigonal';
+  const morphBlend = Number(cluster.morphHabitBlend) || 0;
+  const hFrom = cluster.morphHabitFrom ? resolveHabitSystem(cluster.morphHabitFrom) : '';
+  const hTo = cluster.morphHabitTo ? resolveHabitSystem(cluster.morphHabitTo) : '';
+  const curSys = resolveHabitSystem(curHabit);
+  const repelStrength = (morphBlend > 1e-4 && morphBlend < 1 - 1e-4 && hFrom && hTo && hFrom !== hTo)
+    ? habitRepelWeight(hFrom) * (1 - morphBlend) + habitRepelWeight(hTo) * morphBlend
+    : habitRepelWeight(curSys);
+  const cubicBlend = (morphBlend > 1e-4 && morphBlend < 1 - 1e-4 && hFrom && hTo && hFrom !== hTo)
+    ? (hFrom === 'Cubic / Isometric' ? 1 - morphBlend : 0) + (hTo === 'Cubic / Isometric' ? morphBlend : 0)
+    : (curSys === 'Cubic / Isometric' ? 1 : 0);
+
+  // Simple pairwise magnetic repulsion strictly for high-overlap shapes like Diamond (post-015442, post-015454)
+  if (repelStrength > 1e-4 && activeCount > 1) {
+    const centerFrac = 0.46 + 0.06 * cubicBlend;
+    for (let iter = 0; iter < 4; iter++) {
+      for (let a = 0; a < activeCount - 1; a++) {
+        const nodeA = activeNodes[a];
+        const rootA = nodeA.worldRoot, axA = nodeA.worldAxis;
+        const La = nodeA.worldL, ra = nodeA.worldR;
+        const radA = cubicBlend * Math.max(1.22 * ra, 0.34 * La) + (1 - cubicBlend) * Math.max(1.28 * ra, 0.22 * La);
+        const cax = rootA[0] + axA[0] * centerFrac * La;
+        const cay = rootA[1] + axA[1] * centerFrac * La;
+        const caz = rootA[2] + axA[2] * centerFrac * La;
+        const azA = nodeA.az0 || (nodeA.cohortIdx * GOLDEN);
+
+        for (let b = a + 1; b < activeCount; b++) {
+          const nodeB = activeNodes[b];
+          const rootB = nodeB.worldRoot, axB = nodeB.worldAxis;
+          const Lb = nodeB.worldL, rb = nodeB.worldR;
+          const radB = cubicBlend * Math.max(1.22 * rb, 0.34 * Lb) + (1 - cubicBlend) * Math.max(1.28 * rb, 0.22 * Lb);
+          const cbx = rootB[0] + axB[0] * centerFrac * Lb;
+          const cby = rootB[1] + axB[1] * centerFrac * Lb;
+          const cbz = rootB[2] + axB[2] * centerFrac * Lb;
+
+          const dcx = cax - cbx, dcy = cay - cby, dcz = caz - cbz;
+          const dist = Math.hypot(dcx, dcy, dcz);
+          const pairPres = Math.min(nodeA.presence, nodeB.presence);
+          const minSep = (radA + radB) * (0.72 + 0.32 * cubicBlend) * repelStrength * pairPres;
+
+          if (dist < minSep) {
+            const rawGap = minSep - dist;
+            const softKnee = 0.08 * minSep + 1e-4;
+            const overlap = rawGap < softKnee ? (rawGap * rawGap) / (2 * softKnee) : rawGap - 0.5 * softKnee;
+            const azB = nodeB.az0 || (nodeB.cohortIdx * GOLDEN);
+
+            let vx = dcx + 0.32 * (La * axA[0] - Lb * axB[0]) + 0.08 * (Math.cos(azA) - Math.cos(azB));
+            let vy = (dcy + 0.16 * (La * axA[1] - Lb * axB[1])) * 0.42;
+            let vz = dcz + 0.32 * (La * axA[2] - Lb * axB[2]) + 0.08 * (Math.sin(azA) - Math.sin(azB));
+            const vl = Math.hypot(vx, vy, vz) || 1;
+            vx /= vl; vy /= vl; vz /= vl;
+
+            const push = overlap * 0.50;
+            const wA = a === 0 ? 0.42 : 0.5;
+            const wB = 1.0 - wA;
+            rootA[0] += vx * push * wA;
+            rootA[1] += vy * push * wA;
+            rootA[2] += vz * push * wA;
+            rootB[0] -= vx * push * wB;
+            rootB[1] -= vy * push * wB;
+            rootB[2] -= vz * push * wB;
+
+            const tiltPush = (overlap / Math.max(0.35, La + Lb)) * 0.14 * repelStrength;
+            axA[0] += vx * tiltPush * wA;
+            axA[1] = Math.max(0.15, axA[1] + vy * tiltPush * wA);
+            axA[2] += vz * tiltPush * wA;
+            const alA = Math.hypot(axA[0], axA[1], axA[2]) || 1;
+            axA[0] /= alA; axA[1] /= alA; axA[2] /= alA;
+
+            axB[0] -= vx * tiltPush * wB;
+            axB[1] = Math.max(0.15, axB[1] - vy * tiltPush * wB);
+            axB[2] -= vz * tiltPush * wB;
+            const alB = Math.hypot(axB[0], axB[1], axB[2]) || 1;
+            axB[0] /= alB; axB[1] /= alB; axB[2] /= alB;
+          }
+        }
+      }
+    }
+
+    // Re-center net magnetic translation so the cluster stays centered at the origin
+    let shiftX = 0, shiftY = 0, shiftZ = 0, shiftW = 0;
+    for (let a = 0; a < activeCount; a++) {
+      const nA = activeNodes[a];
+      const w = nA.presence * nA.worldL;
+      shiftX += (nA.worldRoot[0] - initRootX[a]) * w;
+      shiftY += (nA.worldRoot[1] - initRootY[a]) * w;
+      shiftZ += (nA.worldRoot[2] - initRootZ[a]) * w;
+      shiftW += w;
+    }
+    if (shiftW > 1e-6) {
+      shiftX /= shiftW; shiftY /= shiftW; shiftZ /= shiftW;
+      for (let a = 0; a < activeCount; a++) {
+        activeNodes[a].worldRoot[0] -= shiftX;
+        activeNodes[a].worldRoot[1] -= shiftY;
+        activeNodes[a].worldRoot[2] -= shiftZ;
+      }
+    }
+  }
+
+  for (let rowIdx = 0; rowIdx < activeCount; rowIdx++) {
+    const node = activeNodes[rowIdx];
+    const presence = node.presence;
+    const L = node.worldL;
+    const r = node.worldR;
+    const nodeSymmetry = symmetry;
+    for (let k = 0; k < 3; k++) {
+      ax[k] = node.worldAxis[k];
+      root[k] = node.worldRoot[k];
+    }
+    buildSideBasis(node.worldTwist);
+    for (let k = 0; k < 3; k++) {
+      node.worldSide[k] = sx[k];
+    }
+
     const fs = node.faceSeeds;
     let rMax = r * 1.45;
 
@@ -1328,11 +1469,6 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
     const dynDom = P.faceDominance.value;
     const dynTipJitter = Math.max(0.06, P.tipJitter.value);
     const dynChamfer = Math.max(0, chamfer);
-
-    const curHabit = P.habit ? String(P.habit.value) : 'Trigonal';
-    const morphBlend = Number(cluster.morphHabitBlend) || 0;
-    const hFrom = cluster.morphHabitFrom ? resolveHabitSystem(cluster.morphHabitFrom) : '';
-    const hTo = cluster.morphHabitTo ? resolveHabitSystem(cluster.morphHabitTo) : '';
 
     if (morphBlend > 1e-4 && morphBlend < 1 - 1e-4 && hFrom && hTo && hFrom !== hTo) {
       computeSystemPlanes(

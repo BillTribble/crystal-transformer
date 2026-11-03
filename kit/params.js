@@ -487,8 +487,15 @@ export function createModel(schema, storageKey, presets = {}) {
           byKey.iridescence.base = pDef;
           migrated = true;
         }
+        if ((saved.values.ditherBlend === 0.52 || Number(saved.values.ditherBlend) === 0.52) && byKey.ditherBlend) {
+          assign(byKey.ditherBlend, 0);
+          byKey.ditherBlend.base = 0;
+          delete saved.values.ditherBlend;
+          if (saved.bases) delete saved.bases.ditherBlend;
+          migrated = true;
+        }
         if (preset && presets?.[preset]) {
-          for (const rk of ['habit', 'fire', 'fractures', 'fractureGlow', 'phantom', 'phantomRate', 'phantomLayers', 'frostShare', 'frost', 'ditherBlend']) {
+          for (const rk of ['habit', 'fire', 'fractures', 'fractureGlow', 'phantom', 'phantomRate', 'phantomLayers', 'frostShare', 'frost', 'ditherBlend', 'glimmer']) {
             if (presets[preset][rk] !== undefined && byKey[rk]) {
               assign(byKey[rk], presets[preset][rk]);
               byKey[rk].base = presets[preset][rk];

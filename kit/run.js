@@ -149,8 +149,8 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
   const morphState = {
     stageIndex: 0,
     diceRolls: 0,
-    fromPreset: standardPresetNames[0] || 'Amethyst Cathedral',
-    toPreset: standardPresetNames[1] || 'High-Dispersion Diamond',
+    fromPreset: standardPresetNames[0] || 'Classic Quartz Prism',
+    toPreset: standardPresetNames[1] || 'Amethyst Cathedral',
     elapsed: 0,
     holdRemaining: 0,
     progress: 0,
@@ -312,7 +312,7 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
 
   // Initialize initial seed-to-full-size evolution & preset morph pipeline
   resetEvolution(P, { startFromSeed: !capture && !sp.has('growth') && !!P.evolve?.value });
-  resetMorphFromPreset(store.preset || standardPresetNames[0] || 'Amethyst Cathedral');
+  resetMorphFromPreset(store.preset || standardPresetNames[0] || 'Classic Quartz Prism');
 
   let occlusionDriftTime = 0;
   let occlusionManualHold = 0;

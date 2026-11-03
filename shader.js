@@ -879,9 +879,13 @@ vec3 insideVolume(int id, vec3 ro, vec3 rd, float len, float jitter, int maxStep
   float dt = len / float(n);
   float absorbDt = max(len, r * 0.45) / float(n);
   float dither = clamp(u_ditherBlend, 0.0, 1.0);
+  float glimmer = clamp(u_glimmer, 0.0, 2.0);
+  float g1 = clamp(glimmer, 0.0, 1.0);
+  float effOpticalScale = mix(opticalScale, 1.0, g1);
+  float effAbsorbDt = mix(absorbDt, dt, g1);
   float effMilk = u_milk * (1.0 - 0.45 * dither);
   float effVeils = u_veils * (1.0 - 0.35 * dither);
-  bool needInclTex = (effMilk > 0.01 || effVeils > 0.01 || u_iridescence > 0.01 || u_colourZoning > 0.01);
+  bool needInclTex = (effMilk > 0.01 || effVeils > 0.01 || u_iridescence > 0.01 || u_colourZoning > 0.01 || g1 > 0.01);
   for (int s = 0; s < n; s++) {
     vec3 pp = ro + rd * (dt * (float(s) + jitter));
     vec3 rel = pp - root;
@@ -892,15 +896,17 @@ vec3 insideVolume(int id, vec3 ro, vec3 rd, float len, float jitter, int maxStep
     vec3 baseSigma = mix(f_sigma, f_sigmaCore, coreMix);
     vec3 gemBodyCol = exp(-baseSigma * 0.38);
     vec3 tintedLightIn = lightIn * mix(vec3(1.0), normalize(gemBodyCol + vec3(0.04)) * 1.28, clamp(length(baseSigma) * 0.24, 0.0, 0.88));
+    vec3 effLightIn = mix(tintedLightIn, mix(lightIn, tintedLightIn, 0.28), g1);
     vec4 v = needInclTex ? texture(u_incl, pp * u_inclusionScale + off) : vec4(0.0, 0.0, 0.5, 0.0);
     float a = 0.0;
     if (effMilk > 0.01 || effVeils > 0.01) {
       float milk = effMilk * v.r * mix(1.0, 2.2 * pow(1.0 - hgt, 2.0), u_milkBase);
       float veil = effVeils * v.g;
-      float dens = (milk + veil) * 5.2;
+      float dens = (milk + veil) * mix(5.2, 6.0, g1);
       a = 1.0 - exp(-dens * dt);
       float bloomSparkle = u_bloom > 0.0 ? (1.0 + u_bloom * 1.6 * pow(v.a, 8.0)) : 1.0;
-      scat += T * a * tintedLightIn * (1.0 + 2.8 * veil * pow(v.a, 6.0) * bloomSparkle);
+      vec3 vSparkCol = mix(vec3(1.0), spectralRainbow(v.a * 7.3 + hgt * 2.1 + dot(rd, axis) * 1.7 + hueOff), 0.55 * g1) * (1.0 + 3.5 * glimmer * pow(v.a, 8.0));
+      scat += T * a * effLightIn * (1.0 + mix(2.8, 3.2, g1) * veil * pow(v.a, 6.0) * bloomSparkle * vSparkCol);
     }
     if (schillerResonance > 1e-3) {
       vec3 radialVec = (rel - axis * axial) - flashCenterOffset;
@@ -912,27 +918,28 @@ vec3 insideVolume(int id, vec3 ro, vec3 rd, float len, float jitter, int maxStep
       vec3 schillerTint = spectralRainbow(hueOff + cosFlashAng * 0.35);
       vec3 deepFlashCol = mix(coreGemGlow, schillerTint * (coreGemGlow + vec3(0.22)), 0.32);
       float flashPower = u_flash * (0.65 + 0.45 * u_flash);
-      scat += T * coreEnvelope * singleGlow * schillerResonance * deepFlashCol * (f_ambient * 2.2 + vec3(0.38)) * flashPower * opticalScale * dt * 2.4;
+      scat += T * coreEnvelope * singleGlow * schillerResonance * deepFlashCol * (f_ambient * 2.2 + vec3(0.38)) * flashPower * effOpticalScale * dt * 2.4;
     }
-    if (u_iridescence > 0.01 && u_rainbow > 0.001) {
+    if (u_iridescence > 0.01 && u_rainbow * (1.0 - 0.85 * g1) > 0.001) {
       float iridPhase = hgt * mix(1.85, 1.45, dither) + radFrac * mix(1.25, 0.95, dither) + dot(rd, axis) * mix(1.15, 0.95, dither) + hueOff + v.b * mix(0.75, 0.55, dither);
       vec3 iridWave = spectralRainbow(iridPhase);
-      float veilBand = (0.03 + 0.14 * v.g + 0.06 * v.r) * clamp(u_iridescence * 0.48, 0.0, 1.3) * u_rainbow * (1.0 - 0.32 * dither);
-      scat += T * iridWave * tintedLightIn * veilBand * dt * mix(2.1, 1.45, dither);
+      float veilBand = (0.03 + 0.14 * v.g + 0.06 * v.r) * clamp(u_iridescence * 0.48, 0.0, 1.3) * u_rainbow * (1.0 - 0.85 * g1) * (1.0 - 0.32 * dither);
+      scat += T * iridWave * effLightIn * veilBand * dt * mix(2.1, 1.45, dither);
     }
-    vec3 sigma = baseSigma * opticalScale * (1.0 + u_colourZoning * (2.0 * hgt - 1.0)) * (0.75 + 0.5 * v.b);
-    T *= (1.0 - a) * exp(-sigma * absorbDt);
+    vec3 sigma = baseSigma * effOpticalScale * (1.0 + u_colourZoning * (2.0 * hgt - 1.0)) * (0.75 + 0.5 * v.b);
+    T *= (1.0 - a) * exp(-sigma * effAbsorbDt);
   }
 
-  // Deep internal iridescent cleavage plane (blends glossy f50bae4 rainbow pipeline with transparent 555e23b cleavage via u_ditherBlend)
-  if ((u_fractures > 0.01 || u_iridescence > 0.01 || u_flash > 0.01) && u_rainbow > 0.001) {
+  // Deep internal iridescent cleavage plane (blends glossy f50bae4 rainbow pipeline with transparent 555e23b cleavage via u_ditherBlend, and Jack Bush thin-film rainbow cracks via u_glimmer)
+  float crackRainbowGate = max(u_rainbow, g1);
+  if ((u_fractures > 0.01 || u_iridescence > 0.01 || u_flash > 0.01) && crackRainbowGate > 0.001) {
     float uid = crystalUid(id);
-    float bounceCleaveW = (maxSteps > 5) ? 1.0 : (1.0 - 0.88 * dither);
-    float effFractures = clamp(u_fractures + u_iridescence * 0.22 + u_flash * 0.25, 0.0, 1.0);
-    float fracRoll = hash(vec3(uid, f_seed, 91.0));
-    float fracW = smoothstep(fracRoll - 0.14, fracRoll + 0.14, effFractures) * bounceCleaveW;
+    float bounceCleaveW = (maxSteps > 5) ? 1.0 : mix(1.0 - 0.88 * dither, 1.0, g1);
+    float effFractures = mix(clamp(u_fractures + u_iridescence * 0.22 + u_flash * 0.25, 0.0, 1.0), u_fractures, g1);
+    float fracRoll = mix(hash(vec3(uid, f_seed, 91.0)), hash(vec3(float(id), f_seed, 91.0)), g1);
+    float fracW = mix(smoothstep(fracRoll - 0.14, fracRoll + 0.14, effFractures), step(fracRoll, effFractures), g1) * bounceCleaveW;
     if (fracW > 1e-4) {
-      vec3 hj = vec3(uid, f_seed, 93.0);
+      vec3 hj = mix(vec3(uid, f_seed, 93.0), vec3(float(id), f_seed, 93.0), g1);
       vec3 fn = normalize(vec3(hash(hj), hash(hj + 1.0), hash(hj + 2.0)) - 0.5);
       vec3 fc = root + axis * L * (0.25 + 0.4 * hash(hj + 3.0));
       float dn = dot(fn, rd);
@@ -941,23 +948,26 @@ vec3 insideVolume(int id, vec3 ro, vec3 rd, float len, float jitter, int maxStep
         if (t > 0.0 && t < len) {
           vec3 hp = ro + rd * t;
           vec4 v = texture(u_incl, hp * 2.5 + off);
-          float extent = length(hp - fc) / (r * (1.6 + 0.35 * u_iridescence));
-          float mask = fracW * (1.0 - smoothstep(0.55, 0.78, extent + 0.45 * (v.b - 0.5) + 0.25 * v.r));
+          float extent = length(hp - fc) / (r * (1.6 + 0.35 * u_iridescence * (1.0 - g1)));
+          float mask = fracW * (1.0 - smoothstep(0.55, mix(0.78, 0.75, g1), extent + 0.45 * (v.b - 0.5) + 0.25 * v.r));
           if (mask > 0.0) {
-            float filmGloss = v.b * 2.5 + length(hp - fc) * 6.0 + hueOff + abs(dn) * 2.2;
+            float filmGloss = v.b * 2.5 + length(hp - fc) * 6.0 + (hueOff + abs(dn) * 2.2) * (1.0 - g1);
             float filmDither = v.b * 0.85 + length(hp - fc) * 1.4 + hueOff + abs(dn) * 1.2 + (hash(floor((hp - root) * 520.0)) - 0.5) * 0.32;
             float film = mix(filmGloss, filmDither, dither);
-            vec3 irid = mix(spectralRainbow(film), mix(vec3(0.96, 0.97, 1.0), spectralRainbow(film), clamp(u_iridescence * 0.72, 0.0, 0.85)), dither);
+            vec3 jbIrid = 0.5 + 0.5 * cos(TAU * (film + vec3(0.0, 0.33, 0.67)));
+            vec3 baseIrid = mix(spectralRainbow(film), mix(vec3(0.96, 0.97, 1.0), spectralRainbow(film), clamp(u_iridescence * 0.72, 0.0, 0.85)), dither);
+            vec3 irid = mix(baseIrid, jbIrid, g1);
             float fr = mix(0.18 + 0.82 * pow(1.0 - abs(dn), 3.2), 0.12 + 0.78 * pow(1.0 - abs(dn), 3.4), dither);
+            fr = mix(fr, 0.15 + 0.85 * pow(1.0 - abs(dn), 4.0), g1);
             vec3 rawRefl = env(reflect(rd, fn), mix(0.03, 0.05, dither));
-            vec3 reflGloss = rawRefl + f_ambient * (0.35 * u_flash + 0.2 * u_iridescence);
+            vec3 reflGloss = rawRefl + f_ambient * (0.35 * u_flash + 0.2 * u_iridescence) * (1.0 - g1);
             vec3 reflDither = (rawRefl / (1.0 + 1.1 * max(rawRefl.r, max(rawRefl.g, rawRefl.b)))) + f_ambient * (0.16 * u_flash + 0.18 * u_iridescence);
             vec3 refl = mix(reflGloss, reflDither, dither);
-            float glowGloss = u_fractureGlow * (1.0 + u_iridescence * 1.2 + u_flash * 1.45) * u_rainbow;
-            float glowDither = min(u_fractureGlow, 2.2) * 0.65 * u_rainbow;
+            float glowGloss = mix(u_fractureGlow * (1.0 + u_iridescence * 1.2 + u_flash * 1.45) * u_rainbow, u_fractureGlow * glimmer, g1);
+            float glowDither = min(u_fractureGlow, 2.2) * 0.65 * mix(u_rainbow, glimmer, g1);
             float glowBoost = mix(glowGloss, glowDither, dither);
             scat += T * mask * glowBoost * fr * irid * refl;
-            T *= 1.0 - mix(0.55, 0.26, dither) * mask * fr * clamp(u_rainbow, 0.0, 1.0);
+            T *= 1.0 - mix(mix(0.55, 0.26, dither), 0.6, g1) * mask * fr * clamp(mix(u_rainbow, glimmer, g1), 0.0, 1.0);
           }
         }
       }
@@ -1127,11 +1137,13 @@ void insidePrimaryExtras(int id, vec3 ro, vec3 rd, float len, float travelled, i
   }
 }
 
-// Bend a face's normal: growth ridges across prism faces, stepped hopper terraces, and smooth/Gaussian-dithered mineral frost relief.
+// Bend a face's normal: growth ridges across prism faces, stepped hopper terraces, and smooth/Gaussian-dithered/Jack-Bush-druzy mineral frost relief.
 vec3 faceNormal(int id, int k, vec3 n, vec3 p, float rough, float footprint, float dEdge) {
   vec4 ax = body(id, 1);
   float uid = crystalUid(id);
   float dither = clamp(u_ditherBlend, 0.0, 1.0);
+  float glimmer = clamp(u_glimmer, 0.0, 2.0);
+  float g1 = clamp(glimmer, 0.0, 1.0);
   if (k < 8 && u_striations > 0.0) {
     float axialY = dot(p - body(id, 3).xyz, ax.xyz);
     float fFine = u_striationScale * 0.30;
@@ -1141,7 +1153,7 @@ vec3 faceNormal(int id, int k, vec3 n, vec3 p, float rough, float footprint, flo
     float amp = texture(u_incl, vec3(axialY * 1.8, uid * 0.37, 0.5)).b;
     float ridge = aaCoarse * 0.68 * sin(TAU * axialY * fCoarse + 1.5 * sin(axialY * 11.0))
                 + aaFine * 0.32 * sin(TAU * axialY * fFine);
-    n = normalize(n + ax.xyz * (u_striations * (1.0 - 0.55 * dither) * 0.026 * amp * ridge));
+    n = normalize(n + ax.xyz * (u_striations * (1.0 - 0.55 * dither) * mix(0.026, 0.074, g1) * amp * ridge));
   }
   float effHopper = u_hopper * pow(1.0 - dither, 1.5);
   if (effHopper > 0.0) {
@@ -1168,7 +1180,11 @@ vec3 faceNormal(int id, int k, vec3 n, vec3 p, float rough, float footprint, flo
     float patchMod = 0.55 + 0.75 * hash(patchCell + uid * 3.1);
     vec3 hCell = vec3(hash(cell), hash(cell + 1.3), hash(cell + 2.7)) - 0.5;
     vec3 nDither = rough * 0.068 * patchMod * hCell;
-    n = normalize(n + mix(nSmooth, nDither, dither));
+    vec3 jbCell = floor(pRaw * 900.0);
+    vec3 hJb = vec3(hash(jbCell), hash(jbCell + 1.3), hash(jbCell + 2.7)) - 0.5;
+    float glintSpark = step(0.82, hash(jbCell + 5.1));
+    vec3 nJack = rough * (0.062 + 0.12 * glintSpark) * glimmer * hJb;
+    n = normalize(n + mix(nSmooth, nDither, dither) * (1.0 - 0.65 * g1) + nJack);
   }
   return n;
 }
@@ -1350,7 +1366,47 @@ vec3 softFacetRefl(vec3 rawEnv) {
   float lum = max(rawEnv.r, max(rawEnv.g, rawEnv.b));
   float glare = clamp(u_faceGlare, 0.0, 1.0);
   vec3 compressed = rawEnv / (1.0 + (2.1 - 1.2 * glare) * lum);
-  return mix(compressed * (0.18 + 0.82 * gemCol), compressed, 0.28 * glare);
+  vec3 softCol = mix(compressed * (0.18 + 0.82 * gemCol), compressed, 0.28 * glare);
+  return mix(softCol, rawEnv, clamp(u_glimmer, 0.0, 1.0));
+}
+
+// High-contrast analytic refraction strip lights around the refraction cone behind the cluster (active when u_glimmer > 0)
+// so rays refracting through our 7 crystal-system geometries catch sharp studio softbox edges and split into Jack Bush rainbow flourishes.
+vec3 glimmerStripLights(vec3 d, float rough) {
+  float g = clamp(u_glimmer, 0.0, 2.0);
+  if (g <= 0.001 || d.z >= -0.05) return vec3(0.0);
+  vec3 lCol = vec3(f_lights[2 * LS + 9], f_lights[2 * LS + 10], f_lights[2 * LS + 11]);
+  vec3 sum = vec3(0.0);
+  for (int i = 0; i < 6; i++) {
+    vec3 c = (i == 0) ? normalize(vec3(-0.46,  0.18, -0.87))
+           : (i == 1) ? normalize(vec3( 0.44, -0.16, -0.88))
+           : (i == 2) ? normalize(vec3(-0.26,  0.42, -0.87))
+           : (i == 3) ? normalize(vec3( 0.28, -0.38, -0.88))
+           : (i == 4) ? normalize(vec3(-0.34, -0.30, -0.89))
+                      : normalize(vec3( 0.32,  0.34, -0.88));
+    float cs = dot(d, c);
+    if (cs <= 0.15) continue;
+    vec3 p = d / cs;
+    vec3 uAx = normalize(vec3(c.z, 0.0, -c.x));
+    vec3 vAx = cross(c, uAx);
+    if (i >= 2) {
+      float ca = 0.80;
+      float sa = ((i & 1) == 0) ? 0.60 : -0.60;
+      vec3 uRot = uAx * ca + vAx * sa;
+      vAx = -uAx * sa + vAx * ca;
+      uAx = uRot;
+    }
+    float hw = (i < 2) ? 0.042 : 0.035;
+    float hh = (i < 2) ? 0.58 : 0.44;
+    float s = max(u_lightSoftness * 0.65 * min(hw, hh) + rough * 0.55, 1e-3);
+    float u = dot(p, uAx);
+    float v = dot(p, vAx);
+    float m = (1.0 - smoothstep(hw - s, hw + s, abs(u))) * (1.0 - smoothstep(hh - s, hh + s, abs(v)));
+    m *= 1.0 - 0.55 * clamp(dot(vec2(u / hw, v / hh), vec2(u / hw, v / hh)), 0.0, 1.0);
+    m *= hw * hh / ((hw + s) * (hh + s));
+    sum += m * lCol * 0.95;
+  }
+  return sum * g;
 }
 
 vec3 refractedEnv(vec3 dir, float rough, float refAlpha) {
@@ -1361,7 +1417,9 @@ vec3 refractedEnv(vec3 dir, float rough, float refAlpha) {
   float ltLum = max(lt.r, max(lt.g, lt.b));
   vec3 gemCol = exp(-f_sigma * 0.48);
   vec3 softLt = (lt / (1.0 + (2.6 - 1.5 * glare) * ltLum)) * mix(gemCol * 0.88, gemCol * 0.55 + vec3(0.45), 0.25 * glare);
-  return bg + mix(lt, softLt, refAlpha);
+  vec3 curEnv = bg + mix(lt, softLt, refAlpha);
+  vec3 jbEnv = bg + lt + glimmerStripLights(d, rough) * refAlpha;
+  return mix(curEnv, jbEnv, clamp(u_glimmer, 0.0, 1.0));
 }
 
 vec3 facetIridescence(int id, int k, vec3 p, vec3 rd, vec3 n, float dEdge, vec3 baseRefl) {
@@ -1703,10 +1761,13 @@ void main() {
   int skipMask = 0;
   bool lastRefracted = false;
   vec3 lastIn = vec3(0.0), lastN = vec3(0.0);
+  vec3 lastPathDisp = vec3(0.0);
   float lastRough = 0.0;
   float lastFireAlpha = 0.0;
   int depth = int(u_depth + 0.5), bounces = int(u_bounces + 0.5);
   float hopCost = 0.0;
+  float glimmer = clamp(u_glimmer, 0.0, 2.0);
+  float g1 = clamp(glimmer, 0.0, 1.0);
 
   int maxHops = clamp(depth + 1, 1, 5);
   bool primaryEvaluated = false;
@@ -1773,7 +1834,16 @@ void main() {
 
     vec3 adjN = rawFaceN;
     int ridgeKLo = -1, ridgeKHi = -1;
-    float dEdge = ((hop == 0) && (u_patina > 0.01 || u_occlusion > 0.01 || u_hopper > 0.0 || u_iridescence > 0.0 || u_bloom > 0.0)) ? edgeDist(id, k, p, adjN, ridgeKLo, ridgeKHi) : 1.0;
+    bool needDEdge = ((hop == 0) && (u_patina > 0.01 || u_occlusion > 0.01 || u_hopper > 0.0 || u_iridescence > 0.0 || u_bloom > 0.0)) || (g1 > 0.001 && u_edgeWear > 0.0);
+    float dEdge = needDEdge ? edgeDist(id, k, p, adjN, ridgeKLo, ridgeKHi) : 1.0;
+
+    float jbChip = 0.0;
+    if (g1 > 0.001 && u_edgeWear > 0.0 && k < CP) {
+      float jbEdge = 1.0 - smoothstep(0.0, u_edgeWidth * body(id, 2).w, dEdge);
+      float jbNz = texture(u_incl, p * 6.0 + 0.71).b * 0.75 + texture(u_incl, p * 21.0).b * 0.35;
+      jbChip = jbEdge * smoothstep(1.0 - 0.45 * u_edgeWear, 1.05 - 0.45 * u_edgeWear, jbNz) * g1;
+      rough = max(rough, jbChip * 0.6);
+    }
 
     // Pure 3D CSG refractive crystal facet shading (zero artificial white edge paint or cylindrical edge normal rounding)
     if (isTinyEdgeChip || isCornerVertexChip || isCornerNip) {
@@ -1813,23 +1883,25 @@ void main() {
     vec3 hopThr = vec3(1.0);
     bool isChippedFacet = isTinyEdgeChip || isCornerVertexChip || isCornerNip;
     float effGlare = (isOcclusionVoid ? (glare * 0.45) : (isChippedFacet ? (glare * 0.65) : glare)) * (1.0 - 0.30 * dither);
-    float cosEntry = max(0.32, -dot(rd, nRefl));
+    float cosEntry = mix(max(0.32, -dot(rd, nRefl)), clamp(-dot(rd, nRefl), 0.0, 1.0), g1);
     float F = fresnel(cosEntry, 1.0 / effIor);
     vec3 rawEntryRefl = softFacetRefl(env(reflect(rd, nRefl), reflRough));
     if (isChippedFacet) {
-      rawEntryRefl *= mix(vec3(1.0), exp(-f_sigma * 0.32), 0.68);
+      rawEntryRefl *= mix(vec3(1.0), exp(-f_sigma * 0.32), 0.68 * (1.0 - 0.55 * g1));
     }
     vec3 entryRefl = facetIridescence(id, k, p, rd, nRefl, dEdge, rawEntryRefl);
     vec3 entryFlash = (hop == 0) ? crystalBloomGlint(id, k, p, rd, nRefl, dEdge, reflRough) * (1.0 - 0.25 * dither) : vec3(0.0);
     float iridReflBoost = clamp(F + (u_iridescence * u_rainbow) * 0.06 + patinaGlint * 0.11 * (1.0 - 0.6 * dither), 0.0, mix(0.58, 0.50, dither)) * (0.18 + 0.82 * effGlare);
+    float entryReflW = mix(iridReflBoost, F, g1);
     vec3 patinaLight = (0.48 * f_ambient + 0.52 * entryRefl + vec3(0.10)) * vec3(0.96, 0.98, 1.0);
-    hopCol += (iridReflBoost * entryRefl + patinaGlint * 0.14 * (1.0 - 0.6 * dither) * patinaLight + entryFlash);
+    hopCol += (entryReflW * entryRefl + jbChip * 0.12 * f_ambient + patinaGlint * 0.14 * (1.0 - 0.6 * dither) * patinaLight + entryFlash);
     hopCol += iridescentFilm(id, k, p, rd, nRefl, dEdge);
-    hopThr *= (1.0 - F * (0.3 + 0.7 * effGlare));
+    hopThr *= mix(1.0 - F * (0.3 + 0.7 * effGlare), (1.0 - F) * (1.0 - 0.6 * jbChip), g1);
 
     vec3 rdC = rd;
     vec3 refrIn = refract(rdC, n, 1.0 / effIor);
     rdC = dot(refrIn, refrIn) > 1e-6 ? normalize(refrIn) : rdC;
+    vec3 pathDisp = lastPathDisp + (rdC - rd) / max(effIor - 1.0, 0.2);
     vec3 roC = p;
     float travC = travelled;
     int kf = 0;
@@ -1839,7 +1911,7 @@ void main() {
 
     float len0 = exitCrystal(id, roC, rdC, kf);
     vec3 trans0;
-    int steps0 = (hop == 0) ? clamp(int(u_inclusionSteps + 0.5), 2, 12) : clamp(int(u_inclusionSteps + 0.5), 2, 4);
+    int steps0 = (hop == 0) ? clamp(int(u_inclusionSteps + 0.5), 2, 16) : clamp(int(u_inclusionSteps + 0.5), 2, 6);
     vec3 inScat0 = insideVolume(id, roC, rdC, len0, jitter, steps0, trans0);
     if (hop == 0) {
       insidePrimaryExtras(id, roC, rdC, len0, travC, inScat0, trans0);
@@ -1850,37 +1922,85 @@ void main() {
     p = roC + rdC * len0;
     float exitFrostRoll = hash(vec3(uid, float(kf), f_seed + 0.5));
     fr = effFrost * smoothstep(exitFrostRoll - 0.15, exitFrostRoll + 0.15, effFrostShare);
+    float dExit0 = 1.0;
+    if (g1 > 0.001 && u_edgeWear > 0.0 && kf < CP) {
+      vec3 tmpAdj;
+      dExit0 = edgeDist(id, kf, p, tmpAdj);
+      float jbExEdge = 1.0 - smoothstep(0.0, u_edgeWidth * body(id, 2).w, dExit0);
+      float jbExNz = texture(u_incl, p * 6.0 + 0.71).b * 0.75 + texture(u_incl, p * 21.0).b * 0.35;
+      float jbExChip = jbExEdge * smoothstep(1.0 - 0.45 * u_edgeWear, 1.05 - 0.45 * u_edgeWear, jbExNz) * g1;
+      fr = max(fr, jbExChip * 0.55);
+    }
     nf = faceNormal(id, kf, body(id, PA + kf).xyz, p, fr, travC * f_pixAngle, 1.0);
+    if (g1 > 0.01 && kf == 16 && dot(body(id, PA + 16).xyz, body(id, 1).xyz) < -0.92) {
+      hopThr *= (1.0 - 0.88 * g1);
+    }
     o = refract(rdC, -nf, effIor);
 
-    int maxB = clamp(hop == 0 ? bounces : 2, 1, 6);
+    int maxB = (g1 > 0.01) ? clamp(bounces, 1, 8) : clamp(hop == 0 ? bounces : 2, 1, 6);
     for (int b = 1; b < maxB; b++) {
       if (dot(o, o) >= 1e-6) break;
       float Fb = fresnel(dot(rdC, nf), effIor);
       vec3 bounceRefl = facetIridescence(id, kf, p, rdC, -nf, 1.0, softFacetRefl(env(reflect(rdC, -nf), fr)));
-      hopCol += hopThr * (Fb * bounceRefl * 0.28 * (1.0 - 0.85 * dither) * (0.15 + 0.85 * glare));
+      hopCol += hopThr * (Fb * bounceRefl * 0.28 * (1.0 - 0.85 * dither) * (1.0 - 0.85 * g1) * (0.15 + 0.85 * glare));
+      pathDisp = reflect(pathDisp, -nf);
       rdC = reflect(rdC, -nf);
       roC = p;
       float len = exitCrystal(id, roC, rdC, kf);
       vec3 trans;
-      vec3 inScat = insideVolume(id, roC, rdC, len, jitter, clamp(int(u_inclusionSteps + 0.5), 2, 4), trans);
+      vec3 inScat = insideVolume(id, roC, rdC, len, jitter, clamp(int(u_inclusionSteps + 0.5), 2, 6), trans);
       hopCol += hopThr * inScat;
       hopThr *= trans;
       travC += len;
       p = roC + rdC * len;
       exitFrostRoll = hash(vec3(uid, float(kf), f_seed + 0.5));
       fr = effFrost * smoothstep(exitFrostRoll - 0.15, exitFrostRoll + 0.15, effFrostShare);
+      float dExitB = 1.0;
+      if (g1 > 0.001 && u_edgeWear > 0.0 && kf < CP) {
+        vec3 tmpAdjB;
+        dExitB = edgeDist(id, kf, p, tmpAdjB);
+        float jbExEdgeB = 1.0 - smoothstep(0.0, u_edgeWidth * body(id, 2).w, dExitB);
+        float jbExNzB = texture(u_incl, p * 6.0 + 0.71).b * 0.75 + texture(u_incl, p * 21.0).b * 0.35;
+        float jbExChipB = jbExEdgeB * smoothstep(1.0 - 0.45 * u_edgeWear, 1.05 - 0.45 * u_edgeWear, jbExNzB) * g1;
+        fr = max(fr, jbExChipB * 0.55);
+      }
       nf = faceNormal(id, kf, body(id, PA + kf).xyz, p, fr, travC * f_pixAngle, 1.0);
+      if (g1 > 0.01 && kf == 16 && dot(body(id, PA + 16).xyz, body(id, 1).xyz) < -0.92) {
+        hopThr *= (1.0 - 0.88 * g1);
+      }
       o = refract(rdC, -nf, effIor);
     }
-    if (dot(o, o) < 1e-6) o = rdC;
+    bool leftCrystal = (dot(o, o) >= 1e-6);
+    if (!leftCrystal) {
+      if (g1 >= 0.5) {
+        col += thr * hopCol;
+        lastRefracted = false;
+        break;
+      }
+      o = rdC;
+    }
     vec3 exitAdjN;
-    float dExit = (hop == 0 && (u_hopper > 0.0 || (u_iridescence > 0.0 && u_rainbow > 0.0) || u_bloom > 0.0)) ? edgeDist(id, kf, p, exitAdjN) : 1.0;
+    float dExit = (hop == 0 && (u_hopper > 0.0 || (u_iridescence > 0.0 && u_rainbow > 0.0) || u_bloom > 0.0)) ? edgeDist(id, kf, p, exitAdjN) : dExit0;
     float Fo = fresnel(dot(rdC, nf), effIor);
-    vec3 exitRefl = facetIridescence(id, kf, p, rdC, -nf, dExit, softFacetRefl(env(reflect(rdC, -nf), fr)));
+    float exitHgt = clamp(dot(p - body(id, 3).xyz, body(id, 1).xyz) / max(body(id, 1).w, 0.1), 0.0, 1.0);
+    float isRootCut = ((kf == 16 && dot(body(id, PA + 16).xyz, body(id, 1).xyz) < -0.85) ? 1.0 : (1.0 - smoothstep(0.06, 0.20, exitHgt)));
+    vec3 reflExitDir = reflect(rdC, -nf);
+    vec3 rawExitEnv = env(reflExitDir, fr) + glimmerStripLights(f_toWorld * reflExitDir, fr) * (1.0 - isRootCut);
+    if (g1 > 0.01 && u_fire > 0.0) {
+      vec3 rSpread = reflect(pathDisp, -nf) * (u_fire * 1.45 * glimmer);
+      vec3 dR = normalize(reflExitDir - rSpread);
+      vec3 dB = normalize(reflExitDir + rSpread);
+      rawExitEnv = vec3(
+        (env(dR, fr) + glimmerStripLights(f_toWorld * dR, fr) * (1.0 - isRootCut)).r,
+        rawExitEnv.g,
+        (env(dB, fr) + glimmerStripLights(f_toWorld * dB, fr) * (1.0 - isRootCut)).b
+      );
+    }
+    vec3 exitRefl = facetIridescence(id, kf, p, rdC, -nf, dExit, softFacetRefl(rawExitEnv));
     vec3 exitFlash = (hop == 0) ? crystalBloomGlint(id, kf, p, rdC, -nf, dExit, fr) * 0.4 * (1.0 - 0.25 * dither) : vec3(0.0);
-    hopCol += hopThr * (Fo * exitRefl * 0.42 * (1.0 - 0.28 * dither) * (0.15 + 0.85 * glare) + exitFlash);
-    hopThr *= 1.0 - Fo * (0.3 + 0.7 * glare * (1.0 - 0.35 * dither));
+    float exitReflW = mix(0.42 * (1.0 - 0.28 * dither) * (0.15 + 0.85 * glare), 0.5 * (1.0 - 0.85 * isRootCut), g1);
+    hopCol += hopThr * (Fo * exitRefl * exitReflW + exitFlash);
+    hopThr *= mix(1.0 - Fo * (0.3 + 0.7 * glare * (1.0 - 0.35 * dither)), 1.0 - Fo, g1);
 
     if (alpha < 0.999) {
       // Partial transparency / occlusion void feather: blend refracted crystal contribution and continue straight behind!
@@ -1893,11 +2013,12 @@ void main() {
     }
 
     col += thr * hopCol;
-    thr *= hopThr;
+    thr *= hopThr * (1.0 - 0.65 * isRootCut * g1);
     lastIn = rdC;
     lastN = nf;
+    lastPathDisp = pathDisp;
     lastRough = fr;
-    lastFireAlpha = 1.0;
+    lastFireAlpha = 1.0 - 0.88 * isRootCut * g1;
     lastRefracted = true;
     rd = normalize(o);
     ro = p;
@@ -1906,8 +2027,8 @@ void main() {
 
   if (dot(thr, thr) > 0.0) {
     float dither = clamp(u_ditherBlend, 0.0, 1.0);
-    float effIrid = u_iridescence * u_rainbow;
-    float effFire = mix(u_fire, u_fire * 0.62, dither) + effIrid * mix(0.075, 0.028, dither);
+    float effIrid = u_iridescence * max(u_rainbow, 0.45 * g1);
+    float effFire = mix(u_fire, u_fire * 0.62, dither) * (1.0 + 0.45 * glimmer) + effIrid * mix(0.075, 0.028, dither);
     if (lastRefracted && effFire > 0.005 && lastFireAlpha > 1e-4) {
       int ns = clamp(int(u_fireSamples + 0.5), 2, 9);
       vec3 acc = vec3(0.0), wsum = vec3(0.0);
@@ -1917,16 +2038,27 @@ void main() {
         float x = (float(i) + 0.5) / float(ns);
         vec3 dw = (x - vec3(0.12, 0.5, 0.88)) / 0.38;
         vec3 w = max(1.0 - dw * dw, 0.0);
-        vec3 o = refract(lastIn, -lastN, dispIor + dispFire * (x - 0.5) * 2.0);
-        vec3 sampleDir = dot(o, o) > 1e-6 ? normalize(mix(rd, o, lastFireAlpha)) : rd;
+        vec3 inWave = normalize(lastIn + lastPathDisp * (dispFire * (x - 0.5) * 1.55 * g1));
+        vec3 o = refract(inWave, -lastN, dispIor + dispFire * (x - 0.5) * 2.0);
         wsum += w;
-        vec3 eCol = refractedEnv(sampleDir, lastRough, lastFireAlpha);
-        if (effIrid > 0.0) {
-          float defl = length(sampleDir - initialRd);
-          vec3 prism = spectralRainbow(defl * 2.4 + x * 0.85);
-          eCol += prism * f_ambient * effIrid * mix(0.45, 0.24, dither) * lastFireAlpha * smoothstep(0.04, 0.45, defl);
+        if (dot(o, o) > 1e-6) {
+          vec3 sampleDir = normalize(mix(rd, o, lastFireAlpha));
+          vec3 eCol = refractedEnv(sampleDir, lastRough, lastFireAlpha);
+          if (effIrid > 0.0) {
+            float defl = length(sampleDir - initialRd);
+            vec3 prism = spectralRainbow(defl * 2.4 + x * 0.85);
+            eCol += prism * f_ambient * effIrid * mix(0.45, 0.24, dither) * lastFireAlpha * smoothstep(0.04, 0.45, defl);
+          }
+          acc += w * eCol;
+        } else if (g1 < 0.5) {
+          vec3 eCol = refractedEnv(rd, lastRough, lastFireAlpha);
+          if (effIrid > 0.0) {
+            float defl = length(rd - initialRd);
+            vec3 prism = spectralRainbow(defl * 2.4 + x * 0.85);
+            eCol += prism * f_ambient * effIrid * mix(0.45, 0.24, dither) * lastFireAlpha * smoothstep(0.04, 0.45, defl);
+          }
+          acc += w * eCol;
         }
-        acc += w * eCol;
       }
       col += thr * acc / max(wsum, vec3(1e-4));
     } else {
@@ -1946,11 +2078,13 @@ void main() {
   c *= 0.25 * u_exposure;
   float l = max(c.r, max(c.g, c.b));
   float dither = clamp(u_ditherBlend, 0.0, 1.0);
-  float thresh = max(mix(0.72, 0.92, dither), u_bloomThreshold);
-  vec3 hdrBloom = c * max(l - thresh, 0.0) / max(l, 1e-4);
+  float glimmer = clamp(u_glimmer, 0.0, 2.0);
+  float g1 = clamp(glimmer, 0.0, 1.0);
+  float thresh = mix(max(mix(0.72, 0.92, dither), u_bloomThreshold), u_bloomThreshold, g1);
+  vec3 hdrBloom = c * max(l - thresh, 0.0) / max(l, 1e-4) * (1.0 + 0.35 * glimmer);
   float bgLum = max(u_studioEdge.r, max(u_studioEdge.g, u_studioEdge.b));
   float crystalLum = max(0.0, l - bgLum * 1.15);
-  vec3 softKneeGlow = smoothstep(0.22, 0.85, crystalLum) * c * (0.45 * u_rainbowGlow * (1.0 - 0.65 * dither) + 0.35 * max(0.0, u_bloom - 0.2));
+  vec3 softKneeGlow = smoothstep(0.22, 0.85, crystalLum) * c * (0.45 * u_rainbowGlow * (1.0 - 0.65 * dither) + 0.35 * max(0.0, u_bloom - 0.2)) * (1.0 - 0.82 * g1);
   outColor = encodeHdr(hdrBloom + softKneeGlow);
 }`,
 
@@ -1977,7 +2111,7 @@ float fxaaLuma(vec3 c) {
 }
 vec3 sampleSceneFxaa(vec2 uv) {
   vec3 cM = decodeHdr(texture(u_hdr, uv)) * u_exposure;
-  float fxaaStrength = clamp(u_fxaa, 0.0, 1.0) * (1.0 - 0.65 * clamp(u_ditherBlend, 0.0, 1.0));
+  float fxaaStrength = clamp(u_fxaa, 0.0, 1.0) * (1.0 - 0.65 * clamp(u_ditherBlend, 0.0, 1.0)) * (1.0 - 0.55 * clamp(u_glimmer, 0.0, 1.0));
   if (fxaaStrength <= 0.005) return cM;
   vec2 px = 1.0 / u_res;
   vec3 cN  = decodeHdr(texture(u_hdr, uv + vec2(0.0, -px.y))) * u_exposure;
@@ -2045,7 +2179,10 @@ void main() {
   vec3 baseCol = sampleSceneFxaa(uv);
   float baseLuma = max(baseCol.r, max(baseCol.g, baseCol.b));
   float bloomLuma = max(bloomCol.r, max(bloomCol.g, bloomCol.b));
-  vec3 haloCol = (bloomCol * effBloom) / (1.0 + 0.35 * bloomLuma + 1.8 * baseLuma * baseLuma);
+  float g1 = clamp(u_glimmer, 0.0, 1.0);
+  vec3 curHalo = (bloomCol * effBloom) / (1.0 + 0.35 * bloomLuma + 1.8 * baseLuma * baseLuma);
+  vec3 jbHalo = bloomCol * max(u_bloom, 0.35 * g1);
+  vec3 haloCol = mix(curHalo, jbHalo, g1);
   vec3 c = baseCol + haloCol;
   c = pow(aces(c), vec3(1.0 / 2.2));
   vec2 q = (fc - 0.5 * u_res) / u_res;

@@ -223,8 +223,9 @@ export function buildPanel({ slug, store, onEdited, presets, onPreset, onRandomi
   let lastMenuKey = '';
   function rebuildPresetMenu(force = false) {
     const hudPresetName = document.getElementById('preset-name') || document.getElementById('hud-preset-name');
+    const firstPresetName = presets ? Object.keys(presets)[0] : 'Classic Quartz Prism';
     if (hudPresetName) {
-      hudPresetName.textContent = store.preset || 'Amethyst Cathedral';
+      hudPresetName.textContent = store.preset || firstPresetName || 'Classic Quartz Prism';
     }
     delPresetBtn.hidden = !(store.preset && store.customPresets && store.customPresets[store.preset]);
     if (!force && document.activeElement === presetMenu) return;

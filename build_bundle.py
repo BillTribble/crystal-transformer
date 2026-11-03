@@ -176,6 +176,12 @@ def main():
   index_path = ROOT / "index.html"
   html = index_path.read_text(encoding="utf-8")
   html = re.sub(r"<title>.*?</title>", "<title>Crystal Transformer</title>", html, count=1)
+  html = re.sub(
+      r'(<span id="preset-name">).*?(</span>)',
+      r"\1Classic Quartz Prism\2",
+      html,
+      count=1,
+  )
   og_block = (
       '  <meta property="og:type" content="website" />\n'
       '  <meta property="og:title" content="Crystal Transformer" />\n'
