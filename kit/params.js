@@ -40,7 +40,8 @@ const CUSTOM_PRESETS_KEY = 'crystals:custom-presets';
 const STICKY_USER_KEYS = new Set([
   'timeScale', 'defaultZoom', 'evolve', 'evolveSpeed', 'morphPresets', 'morphTime',
   'autoGrow', 'growSpeed', 'growth', 'spinStart', 'spin', 'tilt', 'fov',
-  'bloom', 'faceGlare', 'chipSize', 'edgeGranularity',
+  'rainbow', 'rainbowGlow', 'bloom', 'faceGlare', 'chipSize', 'edgeGranularity',
+  'patinaMacro', 'edgeMacro', 'surfaceMacro', 'edgeIrregularity', 'patina', 'hairlineFractures',
   'mirrorMode', 'mirrorScale', 'mirrorStrength', 'mirrorDepthFade', 'mirrorLiquid', 'mirrorChecker', 'mirrorComplement',
   'occlusionStyle', 'occlusionType', 'occlusion',
 ]);
@@ -85,6 +86,10 @@ export function createModel(schema, storageKey, presets = {}) {
   }
 
   const sig = signature(params);
+  const prevRainbowSig = signature(params.filter((p) => p.key !== 'rainbowGlow').map((p) => (p.key === 'rainbow' ? { key: p.key, default: 1 } : p)));
+  const prevRainbow01Sig = signature(params.filter((p) => p.key !== 'rainbowGlow'));
+  const prevRainbowGlow05Sig = signature(params.map((p) => (p.key === 'rainbowGlow' ? { key: p.key, default: 0.5 } : p)));
+  const prevRainbowGlow10Sig = signature(params.map((p) => (p.key === 'rainbowGlow' ? { key: p.key, default: 1 } : p)));
   let saveTimer = 0;
   let preset = '';
   let held = null;
@@ -390,7 +395,7 @@ export function createModel(schema, storageKey, presets = {}) {
   if (storageKey) {
     try {
       const saved = JSON.parse(localStorage.getItem(storageKey) || 'null');
-      if (saved && saved.sig === sig) {
+      if (saved && (saved.sig === sig || saved.sig === prevRainbowSig || saved.sig === prevRainbow01Sig || saved.sig === prevRainbowGlow05Sig || saved.sig === prevRainbowGlow10Sig)) {
         for (const k in saved.values) if (byKey[k]) assign(byKey[k], saved.values[k]);
         for (const k in saved.bases || {}) if (byKey[k]) byKey[k].base = coerce(byKey[k], saved.bases[k]);
         for (const k in saved.ranges || {}) {
@@ -398,7 +403,52 @@ export function createModel(schema, storageKey, presets = {}) {
           if (byKey[k] && Array.isArray(r) && Number.isFinite(r[0]) && Number.isFinite(r[1]) && r[0] < r[1]) [byKey[k].min, byKey[k].max] = r;
         }
         if (typeof saved.preset === 'string' && (customPresets[saved.preset] || presets?.[saved.preset])) preset = saved.preset;
+        if (saved.sig !== sig) {
+          saved.sig = sig;
+          try { localStorage.setItem(storageKey, JSON.stringify(saved)); } catch { /* ignore */ }
+        }
       }
+      if (saved && saved.values) {
+        if ((saved.values.rainbow === 1 || Number(saved.values.rainbow) === 1) && byKey.rainbow) {
+          assign(byKey.rainbow, 0.1);
+          byKey.rainbow.base = 0.1;
+          delete saved.values.rainbow;
+          if (saved.bases) delete saved.bases.rainbow;
+          saved.sig = sig;
+          try { localStorage.setItem(storageKey, JSON.stringify(saved)); } catch { /* ignore */ }
+        }
+        if ((saved.values.rainbowGlow === 0.5 || Number(saved.values.rainbowGlow) === 0.5 || saved.values.rainbowGlow === 1 || Number(saved.values.rainbowGlow) === 1) && byKey.rainbowGlow) {
+          assign(byKey.rainbowGlow, 1.3);
+          byKey.rainbowGlow.base = 1.3;
+          delete saved.values.rainbowGlow;
+          if (saved.bases) delete saved.bases.rainbowGlow;
+          saved.sig = sig;
+          try { localStorage.setItem(storageKey, JSON.stringify(saved)); } catch { /* ignore */ }
+        }
+        if (saved.values.chipSize === 0.55 && byKey.chipSize) {
+          assign(byKey.chipSize, 1.5);
+          byKey.chipSize.base = 1.5;
+        }
+        if (saved.values.edgeGranularity === 1.65 && byKey.edgeGranularity) {
+          assign(byKey.edgeGranularity, 1.4);
+          byKey.edgeGranularity.base = 1.4;
+        }
+        if ((saved.values.iridescence === 0.38 || saved.values.iridescence === 0.22 || saved.values.iridescence === 0.29 || saved.values.iridescence === 0.46 || saved.values.iridescence === 0.14 || saved.values.iridescence === 0.42) && byKey.iridescence) {
+          const pDef = presets?.[preset]?.iridescence ?? 0.35;
+          assign(byKey.iridescence, pDef);
+          byKey.iridescence.base = pDef;
+        }
+        if (preset && presets?.[preset]) {
+          for (const rk of ['fire', 'fractures', 'fractureGlow', 'phantom', 'phantomRate', 'phantomLayers', 'frostShare', 'frost']) {
+            if (presets[preset][rk] !== undefined && byKey[rk]) {
+              assign(byKey[rk], presets[preset][rk]);
+              byKey[rk].base = presets[preset][rk];
+            }
+          }
+        }
+      }
+      if (byKey.chipSize && byKey.chipSize.max < 3.0) byKey.chipSize.max = 3.0;
+      if (byKey.iridescence && byKey.iridescence.max < 3.0) byKey.iridescence.max = 3.0;
     } catch { /* storage unavailable — run on defaults */ }
   }
 

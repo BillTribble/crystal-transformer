@@ -805,8 +805,25 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
 
     const priority = SAMPLE_ZONES.filter((z) => z.midi >= 48 && z.midi <= 72);
     const outer = SAMPLE_ZONES.filter((z) => z.midi < 48 || z.midi > 72);
-    await Promise.all(priority.map(fetchZone));
-    await Promise.all(outer.map(fetchZone));
+    const ordered = [...priority, ...outer];
+    const BATCH_SIZE = 4;
+    for (let i = 0; i < ordered.length; i += BATCH_SIZE) {
+      await Promise.all(ordered.slice(i, i + BATCH_SIZE).map(fetchZone));
+    }
+  }
+
+  function scheduleSamplePreloadAfterFirstFrame() {
+    const startPreload = () => {
+      buildOfflineStampedFallback();
+      loadServerSamples();
+    };
+    if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+      window.requestAnimationFrame(() => {
+        setTimeout(startPreload, 150);
+      });
+    } else {
+      setTimeout(startPreload, 150);
+    }
   }
 
   function ensureContext() {
@@ -905,8 +922,7 @@ export function createEnsoSound({ onTrackChange, onStateChange } = {}) {
     initPersistentDroneBank(ctx, track);
 
     buildSyncBootstrapSamples(ctx);
-    buildOfflineStampedFallback();
-    loadServerSamples();
+    scheduleSamplePreloadAfterFirstFrame();
     return ctx;
   }
 

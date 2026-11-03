@@ -19,7 +19,8 @@ const NON_MORPH_KEYS = new Set([
   'evolve', 'evolveSpeed', 'morphPresets', 'morphTime', 'autoGrow', 'growth', 'growSpeed',
   'graduallyShift', 'complementaryBg', 'hueShift', 'studioEdge',
   'mirrorMode', 'mirrorScale', 'mirrorStrength', 'mirrorDepthFade', 'mirrorLiquid', 'mirrorChecker', 'mirrorComplement', 'occlusionStyle', 'occlusionType', 'occlusion',
-  'seed', 'filmFps', 'fireSamples', 'bounces', 'depth', 'bloom', 'faceGlare', 'chipSize', 'edgeGranularity',
+  'seed', 'filmFps', 'fireSamples', 'bounces', 'depth', 'rainbow', 'rainbowGlow', 'bloom', 'faceGlare', 'chipSize', 'edgeGranularity',
+  'patinaMacro', 'edgeMacro', 'surfaceMacro', 'edgeIrregularity', 'patina', 'hairlineFractures',
   'symmetry', 'fan', 'twinAngle', 'cavityCurve', 'taper', 'tipAngle',
   ...SOUND_PARAM_KEYS,
 ]);
@@ -97,7 +98,7 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
     } else if (sp.has('defaultZoom') && !capture) {
       try { localStorage.setItem(DEFAULT_ZOOM_KEY, String(P.defaultZoom.value)); } catch { /* ignore */ }
     }
-    if (!sp.has('distance')) {
+    if (!sp.has('distance') && !sp.has('preset')) {
       const d = distanceForZoom(P.defaultZoom.value);
       store.setValue(P.distance, d);
       P.distance.base = d;
