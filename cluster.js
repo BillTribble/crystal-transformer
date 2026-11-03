@@ -188,16 +188,41 @@ function writeCornerNipPlane(rowIdx, slotIdx, kPrism0, kPrism1, cHoriz, cVert, d
   nx /= nl; ny /= nl; nz /= nl;
 
   let support = -Infinity;
+  let minSupport = Infinity;
   for (let v = 0; v < vertCount; v++) {
     const s = nx * POLY_V[v * 3] + ny * POLY_V[v * 3 + 1] + nz * POLY_V[v * 3 + 2];
     if (s > support) support = s;
+    if (s < minSupport) minSupport = s;
   }
   if (!Number.isFinite(support)) {
     // Degenerate (sub-pixel) crystal: park the nip safely outside a generous bound.
     const mx = root[0] + ax[0] * 0.5 * L, my = root[1] + ax[1] * 0.5 * L, mz = root[2] + ax[2] * 0.5 * L;
     support = nx * mx + ny * my + nz * mz + L + 4 * r;
+    minSupport = support - 2 * r;
   }
-  slot(rowIdx, PLANES_AT + slotIdx, nx, ny, nz, support - Math.max(0, depth));
+  const maxSafeDepth = (Number.isFinite(minSupport) && support > minSupport)
+    ? Math.min(r * 0.14, (support - minSupport) * 0.12)
+    : r * 0.10;
+  const clampedDepth = Math.max(0, Math.min(depth, maxSafeDepth));
+  slot(rowIdx, PLANES_AT + slotIdx, nx, ny, nz, support - clampedDepth);
+}
+
+function pcg32(v) {
+  let state = (Math.imul(v >>> 0, 747796405) + 2891336453) >>> 0;
+  let word = Math.imul(((state >>> ((state >>> 28) + 4)) ^ state) >>> 0, 277803737) >>> 0;
+  return ((word >>> 22) ^ word) >>> 0;
+}
+
+/**
+ * Deterministic corner-nip whale roll in [0, 1):
+ * 6% (0.93 <= roll < 0.99) get a 10x 'Whale' corner-nip cut,
+ * 1% (roll >= 0.99) get a 20x 'Mega-Whale' corner-nip cut.
+ */
+function cornerWhaleRoll(uid, slotIdx) {
+  const ux = (Math.imul(uid | 0, 37) + Math.imul(slotIdx | 0, 19)) >>> 0;
+  const uy = (Math.imul(slotIdx | 0, 53) + Math.imul(uid | 0, 11)) >>> 0;
+  const uz = 12;
+  return pcg32((ux + pcg32((uy + pcg32(uz)) >>> 0)) >>> 0) / 4294967295.0;
 }
 
 function buildSideBasis(twistAngle) {
@@ -988,9 +1013,10 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
     const tableFrac = Math.max(0.68, 1.12 - 0.58 * dynChamfer);
     crystalPlane(rowIdx, 17, 0, 1, 0, L * tableFrac);
 
-    // Slots 18..20: Literal 3D geometric corner-nip half-space planes (scaled by P.chipSize)
-    const edgeChipsVal = P.edgeChips ? Math.max(0, Math.min(1, Number(P.edgeChips.value))) : 0.28;
-    const chipSizeVal = P.chipSize ? Math.max(0.1, Math.min(2.5, Number(P.chipSize.value))) : 0.55;
+    // Slots 18..20: Literal 3D geometric corner-nip half-space planes (scaled by P.chipSize and macro faders)
+    const macroEdgeScale = (P.patinaMacro ? Number(P.patinaMacro.value) : 1.0) * (P.edgeMacro ? Number(P.edgeMacro.value) : 1.0);
+    const edgeChipsVal = Math.max(0, Math.min(2, (P.edgeChips ? Number(P.edgeChips.value) : 0.28) * macroEdgeScale));
+    const chipSizeVal = P.chipSize ? Math.max(0.1, Math.min(3.0, Number(P.chipSize.value))) : 1.5;
     const rc = rMax / Math.cos(Math.PI / Math.max(3, nSym));
     crystalPlane(rowIdx, 18, 0, 1, 0, L * 12 + r * 12);
     crystalPlane(rowIdx, 19, 0, 1, 0, L * 12 + r * 12);
@@ -1033,21 +1059,28 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
     const kt0 = 1;
     const kt1 = 2;
 
-    const nipSizeMult1 = 0.40 + 1.25 * Math.pow(((node.uid * 41 + 11) % 29) / 28, 1.35);
-    const nipSizeMult2 = 0.40 + 1.25 * Math.pow(((node.uid * 59 + 17) % 31) / 30, 1.35);
-    const nipSizeMult3 = 0.40 + 1.25 * Math.pow(((node.uid * 67 + 23) % 37) / 36, 1.35);
+    const whaleRoll1 = cornerWhaleRoll(node.uid, 18);
+    const whaleRoll2 = cornerWhaleRoll(node.uid, 19);
+    const whaleRoll3 = cornerWhaleRoll(node.uid, 20);
+    const whaleMult1 = whaleRoll1 >= 0.99 ? 20.0 : (whaleRoll1 >= 0.93 ? 10.0 : 1.0);
+    const whaleMult2 = whaleRoll2 >= 0.99 ? 20.0 : (whaleRoll2 >= 0.93 ? 10.0 : 1.0);
+    const whaleMult3 = whaleRoll3 >= 0.99 ? 20.0 : (whaleRoll3 >= 0.93 ? 10.0 : 1.0);
+
+    const nipSizeMult1 = (0.40 + 1.25 * Math.pow(((node.uid * 41 + 11) % 29) / 28, 1.35)) * whaleMult1;
+    const nipSizeMult2 = (0.40 + 1.25 * Math.pow(((node.uid * 59 + 17) % 31) / 30, 1.35)) * whaleMult2;
+    const nipSizeMult3 = (0.40 + 1.25 * Math.pow(((node.uid * 67 + 23) % 37) / 36, 1.35)) * whaleMult3;
 
     // Exact vertices of this crystal (planes 0..17) so every corner nip is a cap measured from the
     // crystal's true support in its direction: continuous, always a corner, never culls the crystal.
     const vertCount = enumerateCrystalVertices(rowIdx, nSym);
 
-    const nipDepth1 = r * (0.0045 + 0.0105 * edgeChipsVal) * chipSizeVal * nipSizeMult1 * node.smoothChip1;
+    const nipDepth1 = r * (0.0045 + 0.0105 * edgeChipsVal) * chipSizeVal * nipSizeMult1 * (whaleMult1 > 1.0 ? Math.max(0.65, node.smoothChip1) : node.smoothChip1);
     writeCornerNipPlane(rowIdx, 18, k0, k1, shHoriz1, shVert1, nipDepth1, 0.85, 1.15, vertCount, L, r);
 
-    const nipDepth2 = r * (0.0040 + 0.0095 * edgeChipsVal) * chipSizeVal * nipSizeMult2 * node.smoothChip2;
+    const nipDepth2 = r * (0.0040 + 0.0095 * edgeChipsVal) * chipSizeVal * nipSizeMult2 * (whaleMult2 > 1.0 ? Math.max(0.65, node.smoothChip2) : node.smoothChip2);
     writeCornerNipPlane(rowIdx, 19, k2, k3, shHoriz2, shVert2, nipDepth2, 1.12, 0.88, vertCount, L, r);
 
-    const nipDepth3 = r * (0.0036 + 0.0088 * edgeChipsVal) * chipSizeVal * nipSizeMult3 * node.smoothChip3;
+    const nipDepth3 = r * (0.0036 + 0.0088 * edgeChipsVal) * chipSizeVal * nipSizeMult3 * (whaleMult3 > 1.0 ? Math.max(0.65, node.smoothChip3) : node.smoothChip3);
     writeCornerNipPlane(rowIdx, 20, kt0, kt1, tipHoriz, tipVert, nipDepth3, 0.90, 1.10, vertCount, L, r);
 
     const half = 0.5 * L;

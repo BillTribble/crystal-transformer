@@ -41,6 +41,7 @@ const STICKY_USER_KEYS = new Set([
   'timeScale', 'defaultZoom', 'evolve', 'evolveSpeed', 'morphPresets', 'morphTime',
   'autoGrow', 'growSpeed', 'growth', 'spinStart', 'spin', 'tilt', 'fov',
   'bloom', 'faceGlare', 'chipSize', 'edgeGranularity',
+  'patinaMacro', 'edgeMacro', 'surfaceMacro', 'edgeIrregularity', 'patina', 'hairlineFractures',
   'mirrorMode', 'mirrorScale', 'mirrorStrength', 'mirrorDepthFade', 'mirrorLiquid', 'mirrorChecker', 'mirrorComplement',
   'occlusionStyle', 'occlusionType', 'occlusion',
 ]);
@@ -399,6 +400,17 @@ export function createModel(schema, storageKey, presets = {}) {
         }
         if (typeof saved.preset === 'string' && (customPresets[saved.preset] || presets?.[saved.preset])) preset = saved.preset;
       }
+      if (saved && saved.values) {
+        if (saved.values.chipSize === 0.55 && byKey.chipSize) {
+          assign(byKey.chipSize, 1.5);
+          byKey.chipSize.base = 1.5;
+        }
+        if (saved.values.edgeGranularity === 1.65 && byKey.edgeGranularity) {
+          assign(byKey.edgeGranularity, 1.4);
+          byKey.edgeGranularity.base = 1.4;
+        }
+      }
+      if (byKey.chipSize && byKey.chipSize.max < 3.0) byKey.chipSize.max = 3.0;
     } catch { /* storage unavailable — run on defaults */ }
   }
 
