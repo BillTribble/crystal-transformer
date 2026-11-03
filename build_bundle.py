@@ -179,7 +179,7 @@ def main():
   og_block = (
       '  <meta property="og:type" content="website" />\n'
       '  <meta property="og:title" content="Crystal Transformer" />\n'
-      '  <meta property="og:description" content="Real-time WebGL2 crystal cluster ray-tracer with procedural crystal growth, continuous symmetry morphing, and Enso ambient soundscapes." />\n'
+      '  <meta property="og:description" content="Ray traced crystal experiment with procedural growth and generative ambient soundtrack." />\n'
       '  <meta property="og:url" content="https://billtribble.github.io/crystal-transformer/" />\n'
       '  <meta property="og:image" content="https://billtribble.github.io/crystal-transformer/preview.png" />\n'
       '  <meta property="og:image:type" content="image/png" />\n'
@@ -187,7 +187,7 @@ def main():
       '  <meta property="og:image:height" content="1080" />\n'
       '  <meta name="twitter:card" content="summary_large_image" />\n'
       '  <meta name="twitter:title" content="Crystal Transformer" />\n'
-      '  <meta name="twitter:description" content="Real-time WebGL2 crystal cluster ray-tracer with procedural crystal growth, continuous symmetry morphing, and Enso ambient soundscapes." />\n'
+      '  <meta name="twitter:description" content="Ray traced crystal experiment with procedural growth and generative ambient soundtrack." />\n'
       '  <meta name="twitter:image" content="https://billtribble.github.io/crystal-transformer/preview.png" />'
   )
   if 'property="og:image"' not in html:
