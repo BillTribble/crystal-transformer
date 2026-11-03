@@ -7203,6 +7203,9 @@ const TAU = Math.PI * 2;
 
 const lin = (c) => Math.pow(c, 2.2);
 
+// Smoothed backdrop glow colours (see perFrame).
+const glowState = { init: false, rt: 0, glow: new Float64Array(3), comp: new Float64Array(3) };
+
 // Scratch rotation matrices, row-major m[r * 3 + c].
 const A = new Float64Array(9), B = new Float64Array(9), M = new Float64Array(9);
 function set9(m, a, b, c, d, e, f, g, h, i) { m[0] = a; m[1] = b; m[2] = c; m[3] = d; m[4] = e; m[5] = f; m[6] = g; m[7] = h; m[8] = i; }
@@ -7327,9 +7330,21 @@ const __default_shader = {
     const shiftDeg = (P.graduallyShift && P.graduallyShift.value === false) ? P.hueShift.value : 180;
     h = (((h + shiftDeg / 360) % 1) + 1) % 1;
     const hComp = (h + 0.5) % 1;
+    // Ease the backdrop glow colours over ~1 s of real time. The stone hue is numerically unstable
+    // for near-white/grey stones (e.g. High-Dispersion Diamond, where 1-step RGB changes swap the
+    // max channel), which used to flash the whole background between red-brown and olive.
+    let dtR = rt - glowState.rt;
+    if (!(dtR >= 0)) dtR = 0.016;
+    glowState.rt = rt;
+    const aG = glowState.init ? 1 - Math.exp(-Math.min(dtR, 0.5) / 1.1) : 1;
+    glowState.init = true;
     for (let c = 0; c < 3; c++) {
-      f.f_glow[c] = lin(hslChannel(c === 0 ? 0 : c === 1 ? 8 : 4, h, P.backdropSat.value, 0.5)) * P.backdropLight.value;
-      f.f_compGlow[c] = lin(hslChannel(c === 0 ? 0 : c === 1 ? 8 : 4, hComp, Math.max(0.58, P.backdropSat.value), 0.52)) * Math.max(0.11, P.backdropLight.value * 1.35);
+      const tg = lin(hslChannel(c === 0 ? 0 : c === 1 ? 8 : 4, h, P.backdropSat.value, 0.5)) * P.backdropLight.value;
+      const tc = lin(hslChannel(c === 0 ? 0 : c === 1 ? 8 : 4, hComp, Math.max(0.58, P.backdropSat.value), 0.52)) * Math.max(0.11, P.backdropLight.value * 1.35);
+      glowState.glow[c] += (tg - glowState.glow[c]) * aG;
+      glowState.comp[c] += (tc - glowState.comp[c]) * aG;
+      f.f_glow[c] = glowState.glow[c];
+      f.f_compGlow[c] = glowState.comp[c];
       f.f_sigma[c] = -Math.log(Math.max(lin(s[c]), 0.002)) * P.colourDepth.value;
       f.f_sigmaCore[c] = -Math.log(Math.max(lin(sc[c]), 0.002)) * P.colourDepth.value;
     }
