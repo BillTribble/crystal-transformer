@@ -618,7 +618,7 @@ export function stepEvolution(P, dt, viewportW = 0, viewportH = 0) {
 
   let rem = safeDt;
   const evolveSpd = P?.evolveSpeed !== undefined ? Math.max(0, Number(P.evolveSpeed.value)) : 1;
-  const growSpd = P?.growSpeed !== undefined ? Math.max(0, Number(P.growSpeed.value)) : 0.04;
+  const growSpd = P?.growSpeed !== undefined ? Math.max(0, Number(P.growSpeed.value)) : 0.07;
 
   while (rem > 1e-6) {
     const stepDt = Math.min(rem, 0.2);

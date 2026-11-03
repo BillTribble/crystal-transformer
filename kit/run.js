@@ -151,7 +151,7 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
     stageIndex: 0,
     diceRolls: 0,
     fromPreset: standardPresetNames[0] || 'Amethyst Cathedral',
-    toPreset: standardPresetNames[1] || 'Glacial Ice',
+    toPreset: standardPresetNames[1] || 'High-Dispersion Diamond',
     elapsed: 0,
     holdRemaining: 0,
     progress: 0,
@@ -563,7 +563,7 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
   function cyclePreset(dir) {
     const names = [...Object.keys(presets || {}), ...Object.keys(store.customPresets || {})];
     if (!names.length) return;
-    const curIdx = names.indexOf(store.preset);
+    const curIdx = names.indexOf(store.preset || names[0]);
     const nextIdx = curIdx < 0 ? 0 : (curIdx + dir + names.length) % names.length;
     applyPreset(names[nextIdx]);
   }

@@ -458,6 +458,13 @@ export function createModel(schema, storageKey, presets = {}) {
           if (saved.bases) delete saved.bases.targetFps;
           migrated = true;
         }
+        if ([0.04, 0.12, 0.14, 0.22, 0.25].includes(Number(saved.values.growSpeed)) && byKey.growSpeed) {
+          assign(byKey.growSpeed, 0.07);
+          byKey.growSpeed.base = 0.07;
+          delete saved.values.growSpeed;
+          if (saved.bases) delete saved.bases.growSpeed;
+          migrated = true;
+        }
         if ((saved.values.iridescence === 0.38 || saved.values.iridescence === 0.22 || saved.values.iridescence === 0.29 || saved.values.iridescence === 0.46 || saved.values.iridescence === 0.14 || saved.values.iridescence === 0.42) && byKey.iridescence) {
           const pDef = presets?.[preset]?.iridescence ?? 0.35;
           assign(byKey.iridescence, pDef);

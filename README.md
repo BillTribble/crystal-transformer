@@ -20,7 +20,7 @@ An interactive real-time WebGL2 crystal ray-tracing studio (**Crystal Transforme
   - **Rich Morphology & Optics**: Prism fold symmetry (`3..6`), shaft taper, crown bevels, stepped bismuth/hopper terraces, multi-generation concentric growth phantoms, bi-colour core-to-rim absorption zoning, golden rutile needles, iridescent thin-film cleavage fractures, and wavelength-split chromatic dispersion (`fire`).
 - **Settings Randomization (`R`)**: One-click mineralogical randomizer generating physically plausible crystal habits, jewel-tone OKHSL absorption colours, inclusions, and studio softbox lighting.
 - **Curated Presets & Custom Settings Saving**:
-  - **10 Curated Gem Presets**: Fixed-width preset bar (`‹` / `›`) with *Amethyst Cathedral*, *Classic Quartz Prism*, *Phantom Emerald Twin*, *Stepped Bismuth Hopper*, *High-Dispersion Diamond*, *Ruby Druzy Spire*, *Watermelon Tourmaline*, *Glacial Ice Dendrite*, *Rutilated Smoky Scepter*, and *Tabular Aquamarine*.
+  - **10 Curated Gem Presets**: Fixed-width preset bar (`‹` / `›`) with *Amethyst Cathedral*, *High-Dispersion Diamond*, *Rutilated Smoky Scepter*, *Glacial Ice*, *Phantom Emerald Twin*, *Stepped Bismuth Hopper*, *Ruby Druzy Spire*, *Watermelon Tourmaline*, *Tabular Aquamarine*, and *Classic Quartz Prism*.
   - **Custom Preset Saving**: Save, load, and delete custom named presets in `localStorage`, copy shareable URLs with encoded settings (`?preset=...&s=...`), and export/import JSON state files.
 
 ## Run Locally
