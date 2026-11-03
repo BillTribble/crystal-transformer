@@ -918,228 +918,231 @@ vec3 shadeBehindRay(vec3 roIn, vec3 rdIn, int skipIn, float travIn, float jitter
     vec3 bNf = faceNormal(bId, bKf, body(bId, PA + bKf).xyz, bP, bFr, travB * f_pixAngle, 1.0);
     float bFo = fresnel(dot(rdB, bNf), u_ior);
     vec3 bExitRefl = facetIridescence(bId, bKf, bP, rdB, -bNf, 1.0, softFacetRefl(env(reflect(rdB, -bNf), bFr)));
-    colB += thrB * (bFo * bExitRefl * 0.42 * (0.15 + 0.85 * glare));
+    vec3 bExitFlash = crystalBloomGlint(bId, bKf, bP, rdB, -bNf, 1.0, bFr) * 0.38;
+    colB += thrB * (bFo * bExitRefl * 0.42 * (0.15 + 0.85 * glare) + bExitFlash);
     thrB *= 1.0 - bFo * (0.3 + 0.7 * glare);
     vec3 bOut = refract(rdB, -bNf, u_ior);
-    rdB = dot(bOut, bOut) > 1e-6 ? normalize(bOut) : rdB;
+    rdB = dot(bOut, bOut) > 1e-6 ? normalize(bOut) : reflect(rdB, -bNf);
     roB = bP;
     bLastRough = bFr;
     bLastFireAlpha = 1.0;
   }
-  colB += thrB * refractedEnv(rdB, bLastRough, bLastFireAlpha);
+  vec3 endEnv = refractedEnv(rdB, bLastRough, bLastFireAlpha);
+  if (bLastFireAlpha > 0.5) {
+    float deflAng = acos(clamp(dot(rdB, rdIn), -1.0, 1.0));
+    float glowG = exp(-pow(deflAng / radians(u_glowSize * 1.15), 2.0));
+    vec3 axisBg = mix(lin(u_studioEdge) * 0.14, f_glow * 1.65 + f_ambient * 0.22, glowG);
+    endEnv = max(endEnv, axisBg);
+  }
+  colB += thrB * endEnv;
   return colB;
 }
 
-// Analytical GPU Mirrored Background (14 mirror modes incl. Triangle Kaleidoscope Geodesic Dome + mirrorScale + Complementary background tint)
+// Analytical GPU Mirrored Background:
+// 0: Plain (None)
+// 1: Above & Below (Classic)            6: Above & Below (Classic — Liquid)
+// 2: Above & Below (Natural)            7: Above & Below (Natural — Liquid)
+// 3: Cube (4-Wall)                      8: Cube (Liquid)
+// 4: Hall of Mirrors (Stretched)        9: Hall of Mirrors (Stretched — Liquid)
+// 5: Hexagon (Stretched)               10: Hexagon (Stretched — Liquid)
+vec3 shadeMirrorRay(vec3 roIn, vec3 rdIn, float jitter, out float hitMask) {
+  hitMask = 0.0;
+  int firstId, firstK; float firstT;
+  if (!traceScene(roIn, rdIn, 0, firstId, firstT, firstK)) {
+    return refractedEnv(rdIn, 0.0, 0.0);
+  }
+  float rawA = clamp(body(firstId, 2).x, 0.0, 1.0);
+  hitMask = rawA * rawA * (3.0 - 2.0 * rawA);
+  return shadeBehindRay(roIn, rdIn, 0, 0.0, jitter);
+}
+
 vec3 evalMirrorBackground(vec2 q, vec3 rd, float rough, float refAlpha, float jitter) {
   vec3 baseBg = refractedEnv(rd, rough, refAlpha);
   if (f_mirrorMode < 0.5 || u_mirrorStrength <= 0.001) return baseBg;
 
   int mMode = int(f_mirrorMode + 0.5);
+  bool isLiquidMode = (mMode >= 6);
+  int baseMode = isLiquidMode ? (mMode - 5) : mMode;
   float mScale = max(0.25, u_mirrorScale);
   vec3 camR = f_cam[0], camU = f_cam[1], camF = f_cam[2];
   vec3 cDir = vec3(dot(rd, camR), dot(rd, camU), dot(rd, camF));
-  vec2 vq = ((refAlpha > 0.01) ? (cDir.xy / max(0.18, cDir.z) * f_focal) : q) / mScale;
+  vec2 rawQ = (refAlpha > 0.01) ? (cDir.xy / max(0.18, cDir.z) * f_focal) : q;
+  vec2 vq = rawQ / mScale;
+  float camDist = length(f_camPos);
+  float worldSpan = camDist / max(f_focal, 0.5);
 
-  vec2 qRefl = vq;
+  vec2 qRefl = rawQ;
   vec3 roRefl = f_camPos;
   float mirrorMask = 1.0;
   float archGlow = 0.0;
+  float planeDist = abs(vq.y);
+  float zP = 1.0;
+  vec2 uvSurf = vec2(0.0);
+  float fresnelM = 0.85;
 
-  if (mMode == 1) {
-    // 1. Infinite Planes (Above & Below): receding ceiling & floor mirror planes reflecting top & bottom of cluster
+  if (baseMode == 1) {
+    // 1 & 6. Above & Below (Classic): original receding ceiling & floor mirror planes
     float ay = abs(vq.y);
     float sy = vq.y >= 0.0 ? 1.0 : -1.0;
-    float zP = 0.24 / max(ay, 0.014);
-    vec2 uvP = vec2(vq.x * zP, zP);
-    float grid = (smoothstep(0.92, 0.995, cos(uvP.x * 5.5)) + smoothstep(0.92, 0.995, cos(uvP.y * 4.0))) * exp(-zP * 0.22);
+    planeDist = ay;
+    zP = 0.24 / max(ay, 0.014);
+    uvSurf = vec2(vq.x * zP, zP);
+    float grid = (smoothstep(0.92, 0.995, cos(uvSurf.x * 5.5)) + smoothstep(0.92, 0.995, cos(uvSurf.y * 4.0))) * exp(-zP * 0.22);
     float horizonBand = exp(-ay * 26.0);
     archGlow = grid * 0.32 + horizonBand * 0.55;
     mirrorMask = smoothstep(0.012, 0.075, ay);
     qRefl = vec2(vq.x * (0.84 + 0.32 * ay), -sy * (ay - 0.25) * 1.38);
     roRefl = f_camPos + camU * (sy * 0.52);
-  } else if (mMode == 2) {
-    // 2. Concave Bowl: smooth parabolic mirror dish cradling & magnifying the cluster around the rim
-    float r2 = dot(vq, vq);
-    float r = sqrt(r2);
-    qRefl = -vq * (0.92 - 1.25 * r2);
-    roRefl = f_camPos - (camR * vq.x + camU * vq.y) * 0.65;
-    float rimRing = exp(-pow((r - 0.36) * 11.0, 2.0)) + 0.4 * exp(-pow((r - 0.22) * 14.0, 2.0));
-    archGlow = rimRing * 0.42;
-    mirrorMask = smoothstep(0.04, 0.18, r);
-  } else if (mMode == 3) {
-    // 3. Ripples (Liquid Pool): infinite planes above & below with animated concentric + cross-wave liquid ripples
+  } else if (baseMode == 2) {
+    // 2 & 7. Above & Below (Natural): optical floor & ceiling planes above/below the crystal with natural horizontal-plane foreshortening
     float ay = abs(vq.y);
-    float sy = vq.y >= 0.0 ? 1.0 : -1.0;
-    float zP = 0.24 / max(ay, 0.015);
-    vec2 pPool = vec2(vq.x * zP, zP);
-    float dPool = length(vec2(pPool.x, pPool.y - 1.15));
-    float ph1 = dPool * 18.0 - u_realTime * 2.6;
-    float ph2 = pPool.x * 13.0 + pPool.y * 9.5 - u_realTime * 1.8;
-    float wave = sin(ph1) * exp(-dPool * 0.32) + 0.4 * sin(ph2) * exp(-zP * 0.25);
-    vec2 disp = vec2(cos(ph1) * (pPool.x / max(dPool, 0.08)) + 0.35 * cos(ph2), sin(ph1) + 0.35 * sin(ph2)) * 0.032 * exp(-zP * 0.16);
-    qRefl = vec2(vq.x * (0.85 + 0.28 * ay), -sy * (ay - 0.24) * 1.38) + disp;
-    roRefl = f_camPos + camU * (sy * 0.50);
-    archGlow = max(0.0, wave) * 0.38 * exp(-zP * 0.18) + exp(-ay * 28.0) * 0.42;
-    mirrorMask = smoothstep(0.01, 0.07, ay);
-  } else if (mMode == 4) {
-    // 4. Triangle Kaleidoscope (Geodesic Dome): spherical dome subdivided into 60° barycentric triangular kaleidoscope facets
-    float domeWarp = 1.0 + 0.34 * dot(vq, vq);
-    vec2 domeVq = vq * domeWarp;
-    vec2 gSt = domeVq * 5.6;
-    const float SQ3 = 1.7320508;
-    vec2 skew = vec2(gSt.x - gSt.y / SQ3, gSt.y * (2.0 / SQ3));
-    vec2 iTri = floor(skew);
-    vec2 fTri = fract(skew);
-    float upperTri = step(1.0, fTri.x + fTri.y);
-    vec2 triCentroid = (iTri + (upperTri > 0.5 ? vec2(0.6667, 0.6667) : vec2(0.3333, 0.3333)));
-    vec2 cartCenter = vec2(triCentroid.x + triCentroid.y * 0.5, triCentroid.y * (SQ3 * 0.5)) / 5.6;
-    vec2 localTri = domeVq - cartCenter;
-    float b1 = fTri.x, b2 = fTri.y, b3 = 1.0 - fTri.x - fTri.y;
-    float edgeDistTri = upperTri > 0.5 ? min(1.0 - b1, min(1.0 - b2, -b3)) : min(b1, min(b2, b3));
-    float triSeam = 1.0 - smoothstep(0.0, 0.085, edgeDistTri);
-    float flipSign = upperTri > 0.5 ? -1.0 : 1.0;
-    vec2 kTri = localTri * flipSign;
-    float tAng = atan(kTri.y, kTri.x);
-    float tSec = TAU / 3.0;
-    float tMod = abs(mod(tAng + tSec * 0.5, tSec) - tSec * 0.5);
-    vec2 kFold = vec2(cos(tMod), sin(tMod) * (localTri.x >= 0.0 ? 1.0 : -1.0)) * length(localTri);
-    qRefl = mix(localTri * (3.1 * flipSign), kFold * 2.8, 0.55) - cartCenter * 0.28;
-    roRefl = f_camPos + (camR * cartCenter.x + camU * cartCenter.y) * 0.82;
-    archGlow = triSeam * 0.48 + exp(-edgeDistTri * 24.0) * 0.16;
-    mirrorMask = smoothstep(0.04, 0.14, length(vq));
-  } else if (mMode == 5) {
-    // 5. Kaleidoscope Hex Tunnel: 6-fold dihedral symmetry mirror folding reflections into 6 radial sectors
-    float ang = atan(vq.y, vq.x);
-    float rad = length(vq);
-    float sec = PI / 3.0;
-    float aMod = mod(ang + sec * 0.5, sec) - sec * 0.5;
-    float seam = exp(-abs(abs(aMod) - sec * 0.5) * 48.0) + exp(-abs(aMod) * 48.0);
-    float aFold = abs(aMod) * 1.35;
-    float rRef = abs(rad - 0.26) * 1.38;
-    qRefl = vec2(cos(aFold), sin(aFold) * (vq.y >= 0.0 ? 1.0 : -1.0)) * rRef;
-    roRefl = f_camPos + (camR * cos(ang) + camU * sin(ang)) * 0.42;
-    archGlow = seam * 0.34 * smoothstep(0.05, 0.22, rad);
-    mirrorMask = smoothstep(0.05, 0.16, rad);
-  } else if (mMode == 6) {
-    // 6. Faceted Geode Dome: hexagonal mirror tiles behind the cluster, each reflecting a canted facet image
-    vec2 hexScale = vq * 5.2;
-    vec2 hCell = floor(hexScale + 0.5);
-    vec2 hLocal = fract(hexScale + 0.5) - 0.5;
-    float hDist = max(abs(hLocal.x), abs(hLocal.y));
-    float seam = smoothstep(0.44, 0.495, hDist);
-    vec2 cellCenter = hCell / 5.2;
-    qRefl = hLocal * 0.52 - cellCenter * 0.35;
-    roRefl = f_camPos + (camR * cellCenter.x + camU * cellCenter.y) * 0.75;
-    archGlow = seam * 0.36;
-    mirrorMask = smoothstep(0.04, 0.14, length(vq));
-  } else if (mMode == 7) {
-    // 7. Fluted Columns: vertical cylindrical mirror flutes stretching & repeating crystal reflections
-    float flPhase = vq.x * 16.0;
-    float flU = fract(flPhase + 0.5) - 0.5;
-    float flCol = floor(flPhase + 0.5) / 16.0;
-    qRefl = vec2(flU * 0.55 - flCol * 0.42, vq.y * 0.92);
-    roRefl = f_camPos + camR * (flCol * 0.65);
-    archGlow = smoothstep(0.42, 0.495, abs(flU)) * 0.35 + pow(max(0.0, 1.0 - abs(flU) * 2.0), 4.0) * 0.18;
-    mirrorMask = smoothstep(0.05, 0.16, abs(vq.x));
-  } else if (mMode == 8) {
-    // 8. Concentric Fresnel Rings: stepped circular parabolic Fresnel zones focusing radial reflections
-    float rad = length(vq);
-    vec2 dir = vq / max(rad, 1e-4);
-    float ringCoord = rad * 8.5;
-    float ringFrac = fract(ringCoord);
-    float ringIdx = floor(ringCoord);
-    float rMapped = (ringFrac - 0.5) * 0.38;
-    qRefl = dir * rMapped;
-    roRefl = f_camPos + (camR * dir.x + camU * dir.y) * (0.28 + 0.06 * ringIdx);
-    archGlow = (smoothstep(0.90, 0.99, ringFrac) + smoothstep(0.10, 0.01, ringFrac)) * 0.34;
-    mirrorMask = smoothstep(0.06, 0.16, rad);
-  } else if (mMode == 9) {
-    // 9. Shattered Mirror Mosaic: irregular Voronoi glass mirror shards with dark fracture seams & independent tilts
-    vec2 st = vq * 5.8;
-    vec2 iSt = floor(st);
-    vec2 fSt = fract(st);
-    float minD1 = 8.0, minD2 = 8.0;
-    vec2 bestCell = vec2(0.0), bestVec = vec2(0.0);
-    for (int y = -1; y <= 1; y++) {
-      for (int x = -1; x <= 1; x++) {
-        vec2 nb = vec2(float(x), float(y));
-        vec2 idC = iSt + nb;
-        vec2 pt = vec2(hash(vec3(idC, 11.0)), hash(vec3(idC, 23.0))) * 0.75 + 0.125;
-        vec2 diff = nb + pt - fSt;
-        float d = length(diff);
-        if (d < minD1) { minD2 = minD1; minD1 = d; bestCell = idC; bestVec = diff; }
-        else if (d < minD2) { minD2 = d; }
-      }
+    float sy = rawQ.y >= 0.0 ? 1.0 : -1.0;
+    planeDist = ay;
+    zP = 0.24 / max(ay, 0.012);
+    uvSurf = vec2(vq.x * zP, zP);
+    float cosTheta = clamp(ay * 2.1, 0.02, 1.0);
+    fresnelM = mix(0.62, 1.0, pow(1.0 - cosTheta, 3.0));
+    archGlow = exp(-ay * 32.0) * 0.10;
+    mirrorMask = smoothstep(0.018, 0.085, ay);
+    float uVert = (abs(rawQ.y) - 0.20 * mScale) * 1.82;
+    qRefl = vec2(rawQ.x * 1.08, -sy * uVert);
+    roRefl = f_camPos + camU * (sy * 0.28 * mScale * worldSpan) - camF * (0.35 * mScale * worldSpan);
+  } else if (baseMode == 3) {
+    // 3 & 8. Cube (4-Wall): 4-walled square mirror tunnel (top, bottom, left, right walls) with true 3D planar reflections
+    float ax = abs(vq.x), ay = abs(vq.y);
+    float dCube = max(ax, ay);
+    planeDist = dCube;
+    zP = 0.24 / max(dCube, 0.012);
+    float cosTheta = clamp(dCube * 2.1, 0.02, 1.0);
+    fresnelM = mix(0.62, 1.0, pow(1.0 - cosTheta, 3.0));
+    if (ay >= ax) {
+      float sy = rawQ.y >= 0.0 ? 1.0 : -1.0;
+      uvSurf = vec2((vq.x / max(ay, 0.012)) * 1.5, zP);
+      float uVert = (abs(rawQ.y) - 0.20 * mScale) * 1.82;
+      qRefl = vec2(rawQ.x * 1.08, -sy * uVert);
+      roRefl = f_camPos + camU * (sy * 0.28 * mScale * worldSpan) - camF * (0.35 * mScale * worldSpan);
+    } else {
+      float sx = rawQ.x >= 0.0 ? 1.0 : -1.0;
+      uvSurf = vec2((vq.y / max(ax, 0.012)) * 1.5, zP);
+      float uHorz = (abs(rawQ.x) - 0.12 * mScale) * 1.38;
+      qRefl = vec2(-sx * uHorz, rawQ.y * 1.12);
+      roRefl = f_camPos + camR * (sx * 0.26 * mScale * worldSpan) - camF * (0.35 * mScale * worldSpan);
     }
-    float crack = 1.0 - smoothstep(0.0, 0.065, minD2 - minD1);
-    vec2 shardTilt = (vec2(hash(vec3(bestCell, 37.0)), hash(vec3(bestCell, 53.0))) - 0.5) * 0.22;
-    qRefl = bestVec * 0.52 + shardTilt;
-    roRefl = f_camPos + (camR * shardTilt.x + camU * shardTilt.y) * 1.4;
-    archGlow = crack * 0.55;
-    mirrorMask = smoothstep(0.05, 0.16, length(vq)) * (1.0 - crack * 0.65);
-  } else if (mMode == 10) {
-    // 10. Hyperbolic Saddle: smooth astigmatic saddle mirror stretching reflections along orthogonal axes
-    float r2 = dot(vq, vq);
-    qRefl = vec2(vq.x * (0.82 - 0.9 * (vq.x * vq.x - vq.y * vq.y)), -vq.y * (0.82 + 0.9 * (vq.x * vq.x - vq.y * vq.y)));
-    roRefl = f_camPos + (camR * vq.x - camU * vq.y) * 0.52;
-    archGlow = exp(-abs(vq.x * vq.x - vq.y * vq.y - 0.06) * 28.0) * 0.35;
-    mirrorMask = smoothstep(0.05, 0.18, sqrt(r2));
-  } else if (mMode == 11) {
-    // 11. Twin Corner V-Mirror: 90° vertical dihedral corner mirror creating left & right twin reflections
-    float ax = abs(vq.x);
-    float sx = vq.x >= 0.0 ? 1.0 : -1.0;
-    qRefl = vec2(-sx * (ax - 0.25) * 1.35, vq.y * 0.92);
-    roRefl = f_camPos + camR * (sx * 0.58);
-    archGlow = exp(-ax * 38.0) * 0.62;
-    mirrorMask = smoothstep(0.02, 0.11, ax);
-  } else if (mMode == 12) {
-    // 12. Spiral Vortex Dish: logarithmic spiral mirror dish swirling reflected crystals around the center
-    float rad = length(vq);
-    float ang = atan(vq.y, vq.x);
-    float twist = ang + rad * 4.8 - u_realTime * 0.25;
-    float spiralWave = sin(ang * 3.0 + log(max(rad, 0.02)) * 9.0 - u_realTime * 0.8);
-    qRefl = vec2(cos(twist), sin(twist)) * abs(rad - 0.25) * 1.25;
-    roRefl = f_camPos + (camR * cos(twist) + camU * sin(twist)) * 0.45;
-    archGlow = smoothstep(0.75, 0.98, spiralWave) * 0.36 * smoothstep(0.05, 0.22, rad);
-    mirrorMask = smoothstep(0.05, 0.17, rad);
-  } else if (mMode == 13) {
-    // 13. Brushed Anisotropic Metal: infinite planes above & below with fine radial brushed-metal micro-grooves
+    float cornerDist = abs(ax - ay) / max(dCube, 0.02);
+    float cornerSeam = exp(-cornerDist * 30.0) * smoothstep(0.03, 0.12, dCube);
+    archGlow = cornerSeam * 0.22 + exp(-dCube * 30.0) * 0.10;
+    mirrorMask = smoothstep(0.025, 0.095, dCube);
+  } else if (baseMode == 4) {
+    // 4 & 9. Hall of Mirrors (Stretched): parallel floor & ceiling mirrors with anamorphically stretched reflections receding into depth
     float ay = abs(vq.y);
-    float sy = vq.y >= 0.0 ? 1.0 : -1.0;
-    float zP = 0.24 / max(ay, 0.015);
-    float groove = sin(vq.x * zP * 85.0) * 0.5 + 0.5 * sin(vq.x * zP * 210.0 + zP * 14.0);
-    qRefl = vec2(vq.x * 0.84 + groove * 0.018, -sy * (ay - 0.24) * 1.38 + groove * 0.008);
-    roRefl = f_camPos + camU * (sy * 0.50);
-    float anisoStreak = exp(-vq.x * vq.x * 16.0) * (0.28 + 0.22 * groove) * exp(-ay * 3.2);
-    archGlow = anisoStreak + exp(-ay * 28.0) * 0.45;
-    mirrorMask = smoothstep(0.012, 0.075, ay);
+    float sy = rawQ.y >= 0.0 ? 1.0 : -1.0;
+    planeDist = ay;
+    zP = 0.24 / max(ay, 0.012);
+    uvSurf = vec2(vq.x * zP, zP);
+    float cosTheta = clamp(ay * 1.9, 0.02, 1.0);
+    fresnelM = mix(0.65, 1.0, pow(1.0 - cosTheta, 3.0));
+    float centerY = 0.26 * mScale;
+    float stretchedY = centerY + (abs(rawQ.y) - centerY) * 0.28 + 0.024 * mScale * sin(zP * 4.4);
+    qRefl = vec2(rawQ.x * (1.02 + 0.05 * cos(zP * 2.4)), -sy * stretchedY);
+    roRefl = f_camPos + camU * (sy * 0.34 * mScale * worldSpan) - camF * (0.35 * mScale * worldSpan);
+    float echoPulse = smoothstep(0.75, 0.99, cos(zP * 4.4)) * exp(-zP * 0.28);
+    archGlow = echoPulse * 0.16 + exp(-ay * 30.0) * 0.12;
+    mirrorMask = smoothstep(0.016, 0.08, ay);
   } else {
-    // 14. Infinity Chamber: 2D tiled mirror lattice creating an array of smaller crystal reflections receding into depth
-    vec2 gridSt = vq * 3.4;
-    vec2 cellId = floor(gridSt + 0.5);
-    vec2 cellUv = fract(gridSt + 0.5) - 0.5;
-    float seam = smoothstep(0.44, 0.495, max(abs(cellUv.x), abs(cellUv.y)));
-    float distFactor = 1.0 / (1.0 + 0.22 * dot(cellId, cellId));
-    qRefl = cellUv * 0.56;
-    roRefl = f_camPos + (camR * cellId.x + camU * cellId.y) * 0.36;
-    archGlow = seam * 0.38 * distFactor;
-    mirrorMask = smoothstep(0.06, 0.18, length(vq)) * distFactor;
+    // 5 & 10. Hexagon (Stretched): 6-walled hexagonal mirror tunnel with radially stretched crystal reflections
+    float ang = atan(vq.y, vq.x);
+    float sec = PI / 3.0;
+    float secIdx = floor((ang + sec * 0.5) / sec);
+    float aCenter = secIdx * sec;
+    float aLocal = ang - aCenter;
+    vec2 wDir = vec2(cos(aCenter), sin(aCenter));
+    vec2 wTan = vec2(-sin(aCenter), cos(aCenter));
+    vec3 camW = camR * wDir.x + camU * wDir.y;
+    float dHex = max(dot(vq, wDir), 0.012);
+    float tHex = dot(vq, wTan);
+    planeDist = dHex;
+    zP = 0.24 / dHex;
+    float uWall = (tHex / dHex) / 0.57735027;
+    uvSurf = vec2(uWall * 1.5, zP);
+    float cosTheta = clamp(dHex * 1.9, 0.02, 1.0);
+    fresnelM = mix(0.65, 1.0, pow(1.0 - cosTheta, 3.0));
+    float rawDHex = max(dot(rawQ, wDir), 0.012);
+    float rawTHex = dot(rawQ, wTan);
+    float centerD = 0.26 * mScale;
+    float stretchedD = centerD + (rawDHex - centerD) * 0.28 + 0.022 * mScale * sin(zP * 4.2);
+    qRefl = -wDir * stretchedD + wTan * (rawTHex * 1.02);
+    roRefl = f_camPos + camW * (0.34 * mScale * worldSpan) - camF * (0.35 * mScale * worldSpan);
+    float hexSeam = exp(-abs(abs(aLocal) - sec * 0.5) * 42.0) * smoothstep(0.03, 0.12, dHex);
+    archGlow = hexSeam * 0.22 + exp(-dHex * 30.0) * 0.10;
+    mirrorMask = smoothstep(0.025, 0.095, dHex);
+  }
+
+  // Subtle liquid surface wave normal perturbation (active on Liquid modes 6..10, or when Liquid slider is raised above default on 1..5)
+  float liqAmt = isLiquidMode ? clamp(u_mirrorLiquid, 0.0, 1.0) : max(0.0, u_mirrorLiquid - 0.22) * 0.85;
+  float waveHighlight = 0.0;
+  if (liqAmt > 0.001) {
+    float wDepthDamp = exp(-max(0.0, zP - 0.45) * 0.22);
+    float wt = u_realTime;
+    float p1 = uvSurf.x * 3.4 + uvSurf.y * 2.2 - wt * 1.25;
+    float p2 = uvSurf.x * 2.5 - uvSurf.y * 3.1 - wt * 0.92 + 1.57;
+    vec2 radialVec = vec2(uvSurf.x, uvSurf.y - 1.15);
+    float rPool = max(length(radialVec), 0.15);
+    float p3 = rPool * 5.2 - wt * 1.45;
+    vec2 gradW = vec2(
+      cos(p1) * 3.4 + cos(p2) * 1.62 + cos(p3) * (radialVec.x / rPool) * 2.8,
+      cos(p1) * 2.2 - cos(p2) * 2.02 + cos(p3) * (radialVec.y / rPool) * 2.8
+    ) * 0.18;
+    float amp = liqAmt * 0.036 * (baseMode == 1 ? 1.0 : mScale) * wDepthDamp;
+    qRefl += gradW * amp;
+    uvSurf += gradW * (liqAmt * 0.14 * wDepthDamp);
+    waveHighlight = max(0.0, sin(p1) * 0.55 + sin(p3) * 0.45) * liqAmt * 0.20 * wDepthDamp;
+  }
+
+  // Mirror depth opacity fade (u_mirrorDepthFade: 0 = extends deep into horizon, 1 = fades out rapidly with depth)
+  float fadeParam = clamp(u_mirrorDepthFade, 0.0, 1.0);
+  float zDepth = max(0.0, zP - 0.38);
+  float depthAtten = exp(-zDepth * (0.04 + 1.45 * fadeParam * fadeParam))
+                   * mix(1.0, smoothstep(0.015, 0.08 + 0.24 * fadeParam, planeDist), fadeParam);
+
+  // Anti-aliased 3D perspective checkerboard option (u_mirrorChecker, applies to all variations 1..10)
+  float checkerStrength = clamp(u_mirrorChecker, 0.0, 1.0);
+  float checkerLight = 0.0;
+  float checkerDark = 0.0;
+  if (checkerStrength > 0.001) {
+    vec2 tc = uvSurf * 2.0;
+    float fw = 0.055 + 0.055 * max(0.0, zP - 0.4);
+    vec2 sc = sin(tc * PI) / max(fw * PI, 0.16);
+    float chk = 0.5 + 0.5 * clamp(sc.x, -1.0, 1.0) * clamp(sc.y, -1.0, 1.0);
+    checkerLight = chk * checkerStrength * depthAtten;
+    checkerDark = (1.0 - chk) * checkerStrength * depthAtten;
   }
 
   vec3 rdRefl = normalize(f_cam * vec3(qRefl, f_focal));
-  vec3 reflScene = shadeBehindRay(roRefl, rdRefl, 0, 0.0, jitter);
+  float hitMask = 0.0;
+  vec3 reflScene = (baseMode == 1)
+    ? shadeBehindRay(roRefl, rdRefl, 0, 0.0, jitter)
+    : shadeMirrorRay(roRefl, rdRefl, jitter, hitMask);
 
   vec3 compGlow = f_compGlow * (2.6 + 4.2 * exp(-dot(vq, vq) * 3.0));
   vec3 edgeLin = lin(u_studioEdge);
   vec3 compEdge = max(vec3(0.014, 0.012, 0.020), vec3(max(edgeLin.r, max(edgeLin.g, edgeLin.b)) + min(edgeLin.r, min(edgeLin.g, edgeLin.b))) - edgeLin);
   vec3 mirrorBaseBg = mix(baseBg, compEdge * 0.55 + compGlow, u_mirrorComplement * 0.88);
   vec3 compTintVec = mix(vec3(1.0), normalize(f_compGlow + vec3(0.16)) * 1.42, u_mirrorComplement * 0.65);
-  vec3 tintedRefl = reflScene * compTintVec + compGlow * (0.28 * u_mirrorComplement);
+  float compHit = (baseMode == 1) ? 1.0 : hitMask;
+  vec3 tintedRefl = reflScene * compTintVec + compGlow * (0.28 * u_mirrorComplement * compHit);
   vec3 archCol = mix(f_glow * 2.2 + f_ambient * 0.24, compGlow * 1.55 + f_ambient * 0.24, u_mirrorComplement);
 
-  vec3 mirrorCombined = mirrorBaseBg * 0.42 + tintedRefl * 1.18 + archCol * archGlow;
-  return mix(baseBg, mirrorCombined, clamp(u_mirrorStrength * mirrorMask, 0.0, 1.0));
+  vec3 surfaceBase = mirrorBaseBg * (1.0 - 0.42 * checkerDark) + archCol * (0.38 * checkerLight + (archGlow + waveHighlight) * depthAtten);
+  if (baseMode == 1) {
+    vec3 mirrorCombined = surfaceBase * 0.42 + tintedRefl * (1.18 * depthAtten);
+    float effMask = clamp(u_mirrorStrength * mirrorMask * mix(depthAtten, 1.0, 0.35 * checkerStrength), 0.0, 1.0);
+    return mix(baseBg, mirrorCombined, effMask);
+  }
+  vec3 crystalReflCol = surfaceBase * 0.14 + tintedRefl * (1.18 * fresnelM);
+  float hitBlend = clamp(hitMask * depthAtten * clamp(u_mirrorStrength * 1.25, 0.0, 1.0), 0.0, 1.0);
+  float surfBlend = clamp(u_mirrorStrength * mirrorMask * mix(depthAtten, 1.0, 0.35 * checkerStrength), 0.0, 1.0);
+  vec3 bgWithSurface = mix(baseBg, surfaceBase, surfBlend);
+  return mix(bgWithSurface, crystalReflCol, hitBlend * mirrorMask);
 }
 
 vec3 sampleMirroredBg(vec3 ro, vec3 rd, vec3 baseBg) {
@@ -1364,7 +1367,7 @@ void main() {
         vec3 o = refract(lastIn, -lastN, dispIor + dispFire * (x - 0.5) * 2.0);
         vec3 sampleDir = dot(o, o) > 1e-6 ? normalize(mix(rd, o, lastFireAlpha)) : rd;
         wsum += w;
-        vec3 eCol = evalMirrorBackground(q, sampleDir, lastRough, lastFireAlpha, jitter);
+        vec3 eCol = refractedEnv(sampleDir, lastRough, lastFireAlpha);
         if (u_iridescence > 0.0) {
           float defl = length(sampleDir - initialRd);
           vec3 prism = spectralRainbow(defl * 2.4 + x * 0.85);

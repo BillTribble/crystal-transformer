@@ -18,7 +18,7 @@ const NON_MORPH_KEYS = new Set([
   'defaultZoom', 'distance', 'fov', 'tilt', 'spin', 'spinStart', 'sway', 'swaySpeed',
   'evolve', 'evolveSpeed', 'morphPresets', 'morphTime', 'autoGrow', 'growth', 'growSpeed',
   'graduallyShift', 'complementaryBg', 'hueShift', 'studioEdge',
-  'mirrorMode', 'mirrorScale', 'mirrorStrength', 'mirrorComplement', 'occlusionStyle', 'occlusion',
+  'mirrorMode', 'mirrorScale', 'mirrorStrength', 'mirrorDepthFade', 'mirrorLiquid', 'mirrorChecker', 'mirrorComplement', 'occlusionStyle', 'occlusion',
   'seed', 'filmFps', 'fireSamples', 'bounces', 'depth', 'bloom', 'faceGlare',
   ...SOUND_PARAM_KEYS,
 ]);

@@ -19,20 +19,16 @@ export const HABITS = [
 
 export const MIRROR_MODES = [
   'Plain (None)',
-  'Infinite Planes (Above & Below)',
-  'Concave Bowl',
-  'Ripples (Liquid Pool)',
-  'Triangle Kaleidoscope (Geodesic Dome)',
-  'Kaleidoscope Hex Tunnel',
-  'Faceted Geode Dome',
-  'Fluted Columns',
-  'Concentric Fresnel Rings',
-  'Shattered Mirror Mosaic',
-  'Hyperbolic Saddle',
-  'Twin Corner V-Mirror',
-  'Spiral Vortex Dish',
-  'Brushed Anisotropic Metal',
-  'Infinity Chamber',
+  'Above & Below (Classic)',
+  'Above & Below (Natural)',
+  'Cube (4-Wall)',
+  'Hall of Mirrors (Stretched)',
+  'Hexagon (Stretched)',
+  'Above & Below (Classic — Liquid)',
+  'Above & Below (Natural — Liquid)',
+  'Cube (Liquid)',
+  'Hall of Mirrors (Stretched — Liquid)',
+  'Hexagon (Stretched — Liquid)',
 ];
 
 export default [
@@ -165,9 +161,12 @@ export default [
   {
     group: 'Studio',
     params: [
-      { key: 'mirrorMode', label: 'Mirrored background', type: 'select', options: MIRROR_MODES, value: 'Plain (None)', default: 'Plain (None)', randomize: false, noPreset: true, uniform: false, desc: 'Analytical GPU mirrored background mode: Plain (default), Infinite Planes (Above & Below), Concave Bowl, Ripples, Triangle Kaleidoscope (Geodesic Dome), plus 10 creative mirror variations.' },
-      { key: 'mirrorScale', label: 'Mirror scale', value: 1.0, default: 1.0, min: 0.25, max: 4.0, step: 0.05, randomize: false, noPreset: true, desc: 'Scales the mirror geometry (plane spacing, bowl curvature, ripple frequency, geodesic dome triangle density, column width, mosaic shard size).', when: { key: 'mirrorMode', not: ['Plain (None)'] } },
+      { key: 'mirrorMode', label: 'Mirrored background', type: 'select', options: MIRROR_MODES, value: 'Plain (None)', default: 'Plain (None)', randomize: false, noPreset: true, uniform: false, desc: 'Analytical GPU mirrored background mode: Plain (default), Above & Below (Classic & Natural), Cube (4-Wall), Hall of Mirrors (Stretched), Hexagon (Stretched), plus their 5 subtle Liquid variations.' },
+      { key: 'mirrorScale', label: 'Mirror scale', value: 1.0, default: 1.0, min: 0.25, max: 4.0, step: 0.05, randomize: false, noPreset: true, desc: 'Scales the mirror plane distance, tunnel width, and checkerboard tile size.', when: { key: 'mirrorMode', not: ['Plain (None)'] } },
       { key: 'mirrorStrength', label: 'Mirror reflectivity', value: 0.65, default: 0.65, min: 0, max: 1, step: 0.01, randomize: false, noPreset: true, desc: 'Reflectivity of the mirrored background when a mirror mode is active.', when: { key: 'mirrorMode', not: ['Plain (None)'] } },
+      { key: 'mirrorDepthFade', label: 'Mirror depth fade', value: 0.45, default: 0.45, min: 0, max: 1, step: 0.01, randomize: false, noPreset: true, desc: 'Controls the opacity fade of the mirror planes, reflections, and checkerboard with depth into the horizon.', when: { key: 'mirrorMode', not: ['Plain (None)'] } },
+      { key: 'mirrorLiquid', label: 'Liquid wave amount', value: 0.22, default: 0.22, min: 0, max: 1, step: 0.01, randomize: false, noPreset: true, desc: 'Subtle liquid surface wave undulation across the mirrored background.', when: { key: 'mirrorMode', not: ['Plain (None)'] } },
+      { key: 'mirrorChecker', label: 'Checkerboard pattern', value: 0.0, default: 0.0, min: 0, max: 1, step: 0.01, randomize: false, noPreset: true, desc: 'Anti-aliased 3D perspective checkerboard pattern on the mirror surfaces across all variations.', when: { key: 'mirrorMode', not: ['Plain (None)'] } },
       { key: 'mirrorComplement', label: 'Complementary mirror tint', value: 0.0, default: 0.0, min: 0, max: 1, step: 0.01, randomize: false, noPreset: true, desc: 'Blends the 180° complementary color of the studio background into the mirrored background and its reflections.', when: { key: 'mirrorMode', not: ['Plain (None)'] } },
       { key: 'graduallyShift', label: 'Complementary bg', type: 'bool', value: true, default: true, uniform: false, desc: 'Always shift the background color to the opposite (180° complementary) hue of the main crystal color.' },
       { key: 'hueShift', label: 'Hue shift °', value: 180, default: 180, min: 0, max: 360, step: 1, uniform: false, desc: 'Backdrop hue relative to the stone\'s (0 or 360 = same hue, 180 = opposite).' },
