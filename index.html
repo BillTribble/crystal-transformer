@@ -5650,6 +5650,7 @@ function run(slug, { manifest, params, presets, randomize, sketch }) {
     morphState.elapsed = 0;
     morphState.holdRemaining = holdSeconds;
     morphState.progress = 0;
+    morphState.fromLive = false;
     morphState.fromMap = Object.create(null);
     morphState.toMap = Object.create(null);
     morphState.fromOkhsl = Object.create(null);
@@ -5694,6 +5695,24 @@ function run(slug, { manifest, params, presets, randomize, sketch }) {
     prepareMorphStage(presetName, nextIdx, holdSeconds);
   }
 
+  // Start every morph from the values actually on screen, so its first moving frame can never
+  // snap (page-load defaults or saved overrides, a finished preset glide, a randomize landing).
+  function captureLiveFrom() {
+    for (const p of store.params) {
+      if (NON_MORPH_KEYS.has(p.key) || p.key === 'bloom' || p.noPreset || p.randomize === false) continue;
+      if (morphState.toMap[p.key] === undefined) continue;
+      if (p.type === 'color') {
+        morphState.fromMap[p.key] = parseHexUnit(p.value);
+        morphState.fromOkhsl[p.key] = hexToOkhsl(String(p.value));
+      } else if (p.type === 'select' || p.type === 'bool') {
+        morphState.fromMap[p.key] = p.value;
+      } else {
+        morphState.fromMap[p.key] = Number(p.value);
+      }
+    }
+    morphState.fromLive = true;
+  }
+
   function tickMorphPresets(dt) {
     if (!P.morphPresets?.value || dt <= 0) return false;
     if (P.evolve?.value && cluster.phase === 'growing') return false;
@@ -5707,6 +5726,7 @@ function run(slug, { manifest, params, presets, randomize, sketch }) {
     let moved = false;
 
     while (rem > 1e-6) {
+      if (!morphState.fromLive) captureLiveFrom();
       const duration = Math.max(5, Math.min(600, Number(P.morphTime?.value) || 30));
       const needed = Math.max(0, duration - morphState.elapsed);
       const take = Math.min(rem, needed > 1e-6 ? needed : duration);
@@ -7434,6 +7454,16 @@ bool sphereHit(vec3 ro, vec3 rd, vec4 s, float tMax) {
   return -b + h > 0.0 && -b - h < tMax;
 }
 
+// Stable occlusion partner for a crystal: one of the three permanent core crystals (uids 1..3 always
+// occupy rows 0..2), chosen by the crystal's stable uid. The old (row + 1) % activeCount re-targeted
+// every void the instant any crystal started or stopped drawing (or rows shifted), so big chunks of
+// crystals popped in and out of existence.
+int occPartnerRow(int row, int m) {
+  int nCore = clamp(int(f_crystals + 0.5), 1, 3);
+  int u = int(max(1.0, body(row, 2).z) + 0.5);
+  return (u + m) % nCore;
+}
+
 // 1a. Massive Abstract Ovoid Occlusion Voids (u_occlusionType == 0): fixed-radius 3D displacing spheres/wedges
 float evalOvoidOcclusionVoid(int row, vec3 ro, vec3 rd, float tEntry, out vec3 outWallN, out float outRim) {
   outWallN = vec3(0.0, 1.0, 0.0);
@@ -7441,8 +7471,7 @@ float evalOvoidOcclusionVoid(int row, vec3 ro, vec3 rd, float tEntry, out vec3 o
   if (u_occlusion <= 0.001) return 0.0;
   vec3 ax = body(row, 1).xyz;
   vec3 rt = body(row, 3).xyz;
-  int nc = max(1, int(f_crystals + 0.5));
-  int nextRow = (row + 1) % nc;
+  int nextRow = occPartnerRow(row, 0);
   float bestCut = 0.0;
   for (int m = 0; m < 2; m++) {
     vec4 rawEc = body(nextRow, m);
@@ -7454,7 +7483,12 @@ float evalOvoidOcclusionVoid(int row, vec3 ro, vec3 rd, float tEntry, out vec3 o
     if (h <= 0.0) continue;
     float s = sqrt(h);
     float tc0 = -b - s, tc1 = -b + s;
-    vec3 radDir = normalize(ec.xyz - rt - ax * dot(ec.xyz - rt, ax));
+    // Radial direction from this crystal's axis line to the void centre. When the centre sits on
+    // (or crosses) the axis line this vector is ~0 and normalizing it flips the wedge planes from
+    // frame to frame (whole chunks popped), so blend smoothly toward the crystal's own side axis.
+    vec3 perpC = ec.xyz - rt - ax * dot(ec.xyz - rt, ax);
+    vec3 sideC = body(row, PA).xyz - ax * dot(body(row, PA).xyz, ax);
+    vec3 radDir = normalize(perpC + sideC * max(0.0, ec.w * 0.35 - length(perpC)) + vec3(1e-6));
     vec3 nUp = normalize(ax + radDir * 0.42);
     vec3 nDn = normalize(-ax + radDir * 0.48);
     float dUp = ec.w * 0.62 - dot(nUp, oc);
@@ -7505,11 +7539,10 @@ float evalInvisibleCrystalVoid(int row, vec3 ro, vec3 rd, float tEntry, out vec3
   side1 = sLen > 1e-4 ? (side1 / sLen) : normalize(cross(axRow, vec3(0.577, 0.577, 0.577)));
   vec3 side2 = cross(axRow, side1);
 
-  int nc = max(1, int(f_crystals + 0.5));
   float bestCut = 0.0;
 
   for (int m = 0; m < 2; m++) {
-    int tRow = (row + 1 + m) % nc;
+    int tRow = occPartnerRow(row, m);
     vec3 axTpl = body(tRow, 1).xyz;
     float LTpl = max(body(tRow, 1).w, 0.08);
     float rTpl = max(body(tRow, 2).w, 0.02);
@@ -7588,7 +7621,10 @@ bool applyTinyEdgeChip(int row, int ka, int kb, vec3 ro, vec3 rd, inout float tn
   vec4 plB = body(row, PA + kb);
   vec3 sumN = plA.xyz + plB.xyz;
   float lenN = length(sumN);
-  if (lenN < 0.45 || lenN > 1.98) return true;
+  // Fade chips with the dihedral angle instead of switching them on/off at hard thresholds (an
+  // emerging face during a symmetry morph made whole runs of chips pop in or out at once).
+  float dihedralW = smoothstep(0.45, 0.62, lenN) * (1.0 - smoothstep(1.90, 1.98, lenN));
+  if (dihedralW <= 1e-4) return true;
   vec3 nAB = sumN / lenN;
   float wAB = (plA.w + plB.w) / lenN;
 
@@ -7600,7 +7636,7 @@ bool applyTinyEdgeChip(int row, int ka, int kb, vec3 ro, vec3 rd, inout float tn
   float nodePresence = clamp(body(row, 2).x, 0.0, 1.0);
   float rA = plA.w - dot(plA.xyz, rt);
   float rB = plB.w - dot(plB.xyz, rt);
-  float symWeight = (1.0 - smoothstep(r * 1.45, r * 2.15, rA)) * (1.0 - smoothstep(r * 1.45, r * 2.15, rB));
+  float symWeight = dihedralW * (1.0 - smoothstep(r * 1.45, r * 2.15, rA)) * (1.0 - smoothstep(r * 1.45, r * 2.15, rB));
   if (symWeight <= 1e-4) return true;
 
   float chipSz = clamp(u_chipSize, 0.1, 2.5);
@@ -7621,8 +7657,11 @@ bool applyTinyEdgeChip(int row, int ka, int kb, vec3 ro, vec3 rd, inout float tn
     if (m == ka || m == kb) continue;
     vec4 plM = body(row, PA + m);
     float cM = dot(plM.xyz, nAB);
-    if (cM > 0.92 || cM < -0.55) continue;
-    float dM = plM.w - dot(plM.xyz, pStart);
+    if (cM > 0.98 || cM < -0.62) continue;
+    // Soft angular gate (was a hard cut at 0.92 / -0.55 that swapped the corner plane instantly):
+    // planes drifting out of range are pushed smoothly out of reach instead of vanishing.
+    float dM = plM.w - dot(plM.xyz, pStart)
+             + r * 4.0 * (smoothstep(0.86, 0.92, cM) + 1.0 - smoothstep(-0.55, -0.49, cM));
     if (dM < dCorner3) {
       dCorner4 = dCorner3;
       kCorner4 = kCorner3;
@@ -7699,19 +7738,19 @@ bool applyTinyEdgeChip(int row, int ka, int kb, vec3 ro, vec3 rd, inout float tn
   float slotIdA = floor(slotCoordA);
   float localUA = fract(slotCoordA) - 0.5;
   float hA = hash(vec3(uid * 5.0 + float(kLo) * 19.0 + float(kHi), slotIdA + 17.0, 11.0));
-  bool inCornerZone = (cornerMask >= 0.18);
-  float threshA = inCornerZone ? mix(0.76, 0.34, cornerMask) : 0.988;
+  // Continuous corner-zone weight (was a hard cornerMask >= 0.18 switch that changed chip depth and
+  // odds instantly as the zone boundary swept across a chip while the crystal morphed).
+  float zoneW = smoothstep(0.12, 0.24, cornerMask);
+  float threshA = mix(0.988, mix(0.76, 0.34, cornerMask), zoneW);
   if (hA > threshA) {
-    float sizeMultA = inCornerZone
-      ? mix(0.42, 1.85, pow(fract(hA * 19.3), 1.5)) * smoothstep(0.14, 0.48, cornerMask)
-      : 0.18;
+    float sizeMultA = mix(0.18, mix(0.42, 1.85, pow(fract(hA * 19.3), 1.5)) * smoothstep(0.14, 0.48, cornerMask), zoneW);
     float halfSpanA = mix(0.16, 0.44, pow(fract(hA * 7.3), 1.4));
     float uNormA = localUA / halfSpanA;
     if (abs(uNormA) < 1.0) {
       float microStepA = 0.88 + 0.16 * sin(localUA * 14.0 * gran + hA * 6.283);
       float profA = (1.0 - uNormA * uNormA) * microStepA;
       float depthMultA = sizeMultA * (1.0 + 0.35 * cornerProximity);
-      float cutA = baseCut * depthMultA * smoothstep(threshA, min(0.999, threshA + (inCornerZone ? 0.08 : 0.01)), hA) * profA;
+      float cutA = baseCut * depthMultA * smoothstep(threshA, min(0.999, threshA + mix(0.01, 0.08, zoneW)), hA) * profA;
       if (cutA - dRidge > chipCut - activeDist) {
         chipCut = cutA;
         activeClipN = nAB;
@@ -7721,8 +7760,8 @@ bool applyTinyEdgeChip(int row, int ka, int kb, vec3 ro, vec3 rd, inout float tn
     }
   }
 
-  // Scale B: Conchoidal corner-shoulder flake scars — strictly restricted to 3- and 4-edge corners (cornerMask >= 0.18)
-  if (inCornerZone) {
+  // Scale B: Conchoidal corner-shoulder flake scars — restricted to 3- and 4-edge corners (faded in by zoneW)
+  if (zoneW > 1e-4) {
     float slotCoordB = alongEdge * 6.5 * gran + 0.37;
     float slotIdB = floor(slotCoordB);
     float localUB = fract(slotCoordB) - 0.5;
@@ -7735,7 +7774,7 @@ bool applyTinyEdgeChip(int row, int ka, int kb, vec3 ro, vec3 rd, inout float tn
       if (abs(uNormB) < 1.0) {
         float scallop = 0.84 + 0.22 * sin(localUB * 18.0 * gran + hB * 6.283);
         float profB = (1.0 - abs(uNormB)) * (1.0 + 0.35 * (1.0 - abs(uNormB))) * scallop;
-        float depthMultB = sizeMultB * (1.0 + 0.35 * cornerProximity);
+        float depthMultB = sizeMultB * zoneW * (1.0 + 0.35 * cornerProximity);
         float cutB = baseCut * depthMultB * smoothstep(threshB, min(0.99, threshB + 0.08), hB) * profB;
         if (cutB - dRidge > chipCut - activeDist) {
           chipCut = cutB;
@@ -8082,8 +8121,7 @@ float edgeDist(int id, int k, vec3 p, out vec3 adjN) {
     return max(body(id, 2).w, 0.02) * 0.012;
   }
   if (k == CP || k == CP + 1) {
-    int nc = max(1, int(f_crystals + 0.5));
-    int nextRow = (id + 1) % nc;
+    int nextRow = occPartnerRow(id, k - CP);
     vec4 rawEc = body(nextRow, k - CP);
     vec4 ec = vec4(rawEc.xyz, rawEc.w * u_occlusion);
     adjN = normalize(ec.xyz - p + vec3(1e-5));
@@ -8221,6 +8259,15 @@ vec3 shadeBehindRay(vec3 roIn, vec3 rdIn, int skipIn, float travIn, float jitter
     travB += bT;
     skipB |= (1 << bId);
     float bRawA = clamp(body(bId, 2).x, 0.0, 1.0);
+    if (u_occlusion > 0.001) {
+      // Same void carve (and cap) as the main path, so a crystal seen through a semi-transparent
+      // one is carved exactly as when it is seen directly (no uncarved ghost through the hole).
+      float bOccNorm = clamp(u_occlusion / 0.92, 0.0, 1.0);
+      float bOccBlend = bOccNorm * bOccNorm * (3.0 - 2.0 * bOccNorm) * smoothstep(0.6, 1.0, bRawA);
+      vec3 bWallN; float bRim;
+      float bCut = evalMassiveOcclusionVoid(bId, roB, rdB, bT, bWallN, bRim);
+      bRawA *= (1.0 - min(0.995, bOccBlend * bCut));
+    }
     float bAlpha = bRawA * bRawA * (3.0 - 2.0 * bRawA);
     if (bAlpha <= 1e-5) { roB = bP; continue; }
     vec3 bEnvCol = refractedEnv(rdB, 0.0, 0.0);
@@ -8525,9 +8572,15 @@ void main() {
     float voidRim = 0.0;
     if (u_occlusion > 0.001) {
       float occNorm = clamp(u_occlusion / 0.92, 0.0, 1.0);
-      float occBlend = occNorm * occNorm * (3.0 - 2.0 * occNorm);
+      // Voids only carve fully grown crystals: a crystal that is still budding in or fading out
+      // (alpha < 1) gets a proportionally weaker void, so it is never carved away while it grows.
+      float occBlend = occNorm * occNorm * (3.0 - 2.0 * occNorm) * smoothstep(0.6, 1.0, rawAlpha);
       float voidCut = evalMassiveOcclusionVoid(id, ro, rd, t, voidWallN, voidRim);
-      rawAlpha *= (1.0 - occBlend * voidCut);
+      // Cap the carve just short of 100%: a fully carved crystal otherwise drops below the
+      // alpha <= 1e-5 skip threshold at one exact occlusion level, flipping every voided pixel at
+      // once between the see-through render and the skip render (whole crystals popped in/out at
+      // the start and end of each void hold). Capped, voided regions render one consistent way.
+      rawAlpha *= (1.0 - min(0.995, occBlend * voidCut));
       voidRim *= occBlend;
     }
     float budgetWeight = clamp(float(depth) - hopCost, 0.0, 1.0);
@@ -8540,6 +8593,8 @@ void main() {
       vec3 behindCol = shadeBehindRay(pEntry, rd, skipMask, travelled, jitter);
       col += thr * (1.0 - alpha) * behindCol;
       thr *= alpha;
+      // A (near-)fully carved crystal contributes < 0.2% from here on: stop tracing it.
+      if (alpha < 2e-3) break;
     }
     float effIor = ior;
     float cAlpha = 1.0;
@@ -8565,8 +8620,7 @@ void main() {
       vec3 nAB = normalize(body(id, PA + ka).xyz + body(id, PA + kb).xyz);
       rawFaceN = normalize(nAB + ax * (wallBit == 0 ? -0.32 : 0.32));
     } else if (isOcclusionVoid) {
-      int nc = max(1, int(f_crystals + 0.5));
-      int nextRow = (id + 1) % nc;
+      int nextRow = occPartnerRow(id, k - CP);
       vec4 rawEc = body(nextRow, k - CP);
       vec4 ec = vec4(rawEc.xyz, rawEc.w * u_occlusion);
       rawFaceN = normalize(ec.xyz - p + vec3(1e-5));
@@ -8598,8 +8652,7 @@ void main() {
       float granFreq = 65.0 * clamp(u_edgeGranularity, 0.2, 3.5);
       float chipSubtle = 0.72 + 0.28 * clamp(u_chipSize, 0.1, 2.0);
       if (isOcclusionVoid) {
-        int nc = max(1, int(f_crystals + 0.5));
-        int nextRow = (id + 1) % nc;
+        int nextRow = occPartnerRow(id, k - CP);
         vec4 rawEc = body(nextRow, k - CP);
         vec4 ec = vec4(rawEc.xyz, rawEc.w * u_occlusion);
         vec3 relC = p - ec.xyz;
