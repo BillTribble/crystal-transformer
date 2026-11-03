@@ -5650,7 +5650,6 @@ function run(slug, { manifest, params, presets, randomize, sketch }) {
     morphState.elapsed = 0;
     morphState.holdRemaining = holdSeconds;
     morphState.progress = 0;
-    morphState.fromLive = false;
     morphState.fromMap = Object.create(null);
     morphState.toMap = Object.create(null);
     morphState.fromOkhsl = Object.create(null);
@@ -5695,24 +5694,6 @@ function run(slug, { manifest, params, presets, randomize, sketch }) {
     prepareMorphStage(presetName, nextIdx, holdSeconds);
   }
 
-  // Start every morph from the values actually on screen, so its first moving frame can never
-  // snap (page-load defaults or saved overrides, a finished preset glide, a randomize landing).
-  function captureLiveFrom() {
-    for (const p of store.params) {
-      if (NON_MORPH_KEYS.has(p.key) || p.key === 'bloom' || p.noPreset || p.randomize === false) continue;
-      if (morphState.toMap[p.key] === undefined) continue;
-      if (p.type === 'color') {
-        morphState.fromMap[p.key] = parseHexUnit(p.value);
-        morphState.fromOkhsl[p.key] = hexToOkhsl(String(p.value));
-      } else if (p.type === 'select' || p.type === 'bool') {
-        morphState.fromMap[p.key] = p.value;
-      } else {
-        morphState.fromMap[p.key] = Number(p.value);
-      }
-    }
-    morphState.fromLive = true;
-  }
-
   function tickMorphPresets(dt) {
     if (!P.morphPresets?.value || dt <= 0) return false;
     if (P.evolve?.value && cluster.phase === 'growing') return false;
@@ -5726,7 +5707,6 @@ function run(slug, { manifest, params, presets, randomize, sketch }) {
     let moved = false;
 
     while (rem > 1e-6) {
-      if (!morphState.fromLive) captureLiveFrom();
       const duration = Math.max(5, Math.min(600, Number(P.morphTime?.value) || 30));
       const needed = Math.max(0, duration - morphState.elapsed);
       const take = Math.min(rem, needed > 1e-6 ? needed : duration);
