@@ -7,7 +7,7 @@ An interactive real-time WebGL2 crystal ray-tracing studio (**Crystal Transforme
 ## Credits & Attribution
 
 - **Original Geode Ray-Tracer & Convex Polyhedron Shader Architecture**: **[Jack Bush (@jackbush)](https://github.com/jackbush)** — [`https://github.com/jackbush/glimmers`](https://github.com/jackbush/glimmers) (`src/sketches/geode`).
-- **Interactive Studio Extensions**: 3D mouse/touch orbit with smooth post-drag momentum blending back into continuous slow rotation, viewport-aware continuous crystal growth (growing sideways on wider viewports or upwards on taller viewports until filling the screen, then slowing down), 8 mineralogical crystal habits, settings randomization, and custom preset saving.
+- **Interactive Studio Extensions**: 3D mouse/touch orbit with smooth post-drag momentum blending back into continuous slow rotation, viewport-aware continuous crystal growth (growing sideways on wider viewports or upwards on taller viewports until filling the screen, then slowing down), all 7 crystallographic crystal systems with smooth 3D half-space geometry morphing, settings randomization, and custom preset saving.
 
 ## Features
 
@@ -16,11 +16,11 @@ An interactive real-time WebGL2 crystal ray-tracing studio (**Crystal Transforme
   - **Auto Grow (ON by default in Settings)**: Crystals automatically nucleate and grow outward until they fill the screen, then smoothly slow down.
   - **Grow Plant Button (`G`)**: Click the sprout/plant button in the top-right HUD anytime to surge crystal growth even further — sprouting additional crystal branches and extending spire lengths with every click.
   - **Aspect-Aware Growth Direction**: Measures the live viewport (`width` vs `height`) and camera frustum so crystals grow **sideways** when there is more horizontal width or **upwards** when there is more vertical height.
-  - **8 Crystal Habits**: *Quartz Cluster*, *Cathedral Spire*, *Twin Branching*, *Scepter Overgrowth*, *Octahedral Fluorite*, *Tabular Gem*, *Druzy Geode Bowl*, and *Dendritic Starburst*.
-  - **Rich Morphology & Optics**: Prism fold symmetry (`3..6`), shaft taper, crown bevels, stepped bismuth/hopper terraces, multi-generation concentric growth phantoms, bi-colour core-to-rim absorption zoning, golden rutile needles, iridescent thin-film cleavage fractures, and wavelength-split chromatic dispersion (`fire`).
+  - **All 7 Crystallographic Crystal Systems**: *Trigonal* (rhombohedral quartz/corundum/tourmaline), *Cubic / Isometric* (octahedral/dodecahedral diamond), *Hexagonal* (6-fold beryl/ice with flat `{0001}` basal pinacoids), *Tetragonal* (4-fold zircon square prisms & bipyramids), *Orthorhombic* (unequal-axis rhombic topaz domes), *Monoclinic* (oblique slanted spodumene laths), and *Triclinic* (asymmetric non-orthogonal kyanite blades), with continuous 3D half-space facet morphing across habit and preset changes.
+  - **Rich Morphology & Optics**: Prism fold symmetry (`3..8`), shaft taper, crown bevels, stepped bismuth/hopper terraces, multi-generation concentric growth phantoms, bi-colour core-to-rim absorption zoning, golden rutile needles, iridescent thin-film cleavage fractures, and wavelength-split chromatic dispersion (`fire`).
 - **Settings Randomization (`R`)**: One-click mineralogical randomizer generating physically plausible crystal habits, jewel-tone OKHSL absorption colours, inclusions, and studio softbox lighting.
 - **Curated Presets & Custom Settings Saving**:
-  - **10 Curated Gem Presets**: Fixed-width preset bar (`‹` / `›`) with *Amethyst Cathedral*, *High-Dispersion Diamond*, *Rutilated Smoky Scepter*, *Glacial Ice*, *Phantom Emerald Twin*, *Stepped Bismuth Hopper*, *Ruby Druzy Spire*, *Watermelon Tourmaline*, *Tabular Aquamarine*, and *Classic Quartz Prism*.
+  - **14 Curated Gem Presets**: Fixed-width preset bar (`‹` / `›`) with *Amethyst Cathedral*, *High-Dispersion Diamond*, *Rutilated Smoky Scepter*, *Glacial Ice*, *Imperial Zircon (Tetragonal)*, *Imperial Topaz (Orthorhombic)*, *Kunzite Spodumene (Monoclinic)*, *Sapphire Kyanite (Triclinic)*, *Phantom Emerald Twin*, *Stepped Bismuth Hopper*, *Ruby Druzy Spire*, *Watermelon Tourmaline*, *Tabular Aquamarine*, and *Classic Quartz Prism*.
   - **Custom Preset Saving**: Save, load, and delete custom named presets in `localStorage`, copy shareable URLs with encoded settings (`?preset=...&s=...`), and export/import JSON state files.
 
 ## Run Locally

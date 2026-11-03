@@ -21,10 +21,26 @@ function writeDerived(p) {
   if (p.type === 'color') hexToRgb(String(p.value), p.rgb, 1 / 255);
 }
 
+const LEGACY_HABIT_MAP = {
+  'Quartz Cluster': 'Trigonal',
+  'Cathedral Spire': 'Hexagonal',
+  'Twin Branching': 'Trigonal',
+  'Scepter Overgrowth': 'Trigonal',
+  'Octahedral Fluorite': 'Cubic / Isometric',
+  'Tabular Gem': 'Hexagonal',
+  'Druzy Geode Bowl': 'Trigonal',
+  'Dendritic Starburst': 'Hexagonal',
+  'Cubic': 'Cubic / Isometric',
+  'Isometric': 'Cubic / Isometric',
+};
+
 function coerce(p, v) {
   if (p.type === 'bool') return v === 'false' ? false : v === '0' ? false : !!v;
   if (p.type === 'color') return typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v) ? v.toLowerCase() : p.value;
-  if (p.type === 'select') return typeof v === 'string' && p.options.includes(v) ? v : p.value;
+  if (p.type === 'select') {
+    if (p.key === 'habit' && typeof v === 'string' && LEGACY_HABIT_MAP[v]) v = LEGACY_HABIT_MAP[v];
+    return typeof v === 'string' && p.options.includes(v) ? v : p.value;
+  }
   const n = Number(v);
   return Number.isFinite(n) ? roundTo(n, p.decimals) : p.value;
 }
@@ -472,7 +488,7 @@ export function createModel(schema, storageKey, presets = {}) {
           migrated = true;
         }
         if (preset && presets?.[preset]) {
-          for (const rk of ['fire', 'fractures', 'fractureGlow', 'phantom', 'phantomRate', 'phantomLayers', 'frostShare', 'frost']) {
+          for (const rk of ['habit', 'fire', 'fractures', 'fractureGlow', 'phantom', 'phantomRate', 'phantomLayers', 'frostShare', 'frost', 'ditherBlend']) {
             if (presets[preset][rk] !== undefined && byKey[rk]) {
               assign(byKey[rk], presets[preset][rk]);
               byKey[rk].base = presets[preset][rk];

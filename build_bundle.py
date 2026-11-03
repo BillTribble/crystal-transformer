@@ -49,7 +49,7 @@ MODULES = [
         "cluster",
         "cluster.js",
         [],
-        ["MAX_CRYSTALS", "CRYSTAL_PLANES", "PLANES_AT", "ROW_W", "ROWS", "cluster", "buildCluster", "resetEvolution", "stepEvolution"],
+        ["MAX_CRYSTALS", "CRYSTAL_PLANES", "PLANES_AT", "ROW_W", "ROWS", "cluster", "resolveHabitSystem", "buildCluster", "resetEvolution", "stepEvolution"],
         None,
     ),
     (

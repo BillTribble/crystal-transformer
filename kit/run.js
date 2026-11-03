@@ -21,7 +21,6 @@ const NON_MORPH_KEYS = new Set([
   'mirrorMode', 'mirrorScale', 'mirrorStrength', 'mirrorDepthFade', 'mirrorLiquid', 'mirrorChecker', 'mirrorComplement', 'occlusionStyle', 'occlusionType', 'occlusion',
   'seed', 'filmFps', 'fireSamples', 'bounces', 'depth', 'rainbow', 'rainbowGlow', 'bloom', 'faceGlare', 'chipSize', 'edgeGranularity',
   'patinaMacro', 'edgeMacro', 'surfaceMacro', 'edgeIrregularity', 'patina', 'hairlineFractures',
-  'symmetry', 'fan', 'twinAngle', 'cavityCurve', 'taper', 'tipAngle',
   ...SOUND_PARAM_KEYS,
 ]);
 
@@ -168,6 +167,9 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
     morphState.holdRemaining = holdSeconds;
     morphState.progress = 0;
     morphState.fromLive = false;
+    cluster.morphHabitFrom = null;
+    cluster.morphHabitTo = null;
+    cluster.morphHabitBlend = 0;
     morphState.fromMap = Object.create(null);
     morphState.toMap = Object.create(null);
     morphState.fromOkhsl = Object.create(null);
@@ -253,6 +255,9 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
       const rawT = Math.min(1, morphState.elapsed / duration);
       morphState.progress = Number(rawT.toFixed(4));
       const k = rawT * rawT * rawT * (rawT * (rawT * 6 - 15) + 10);
+      cluster.morphHabitFrom = morphState.fromMap.habit || P.habit?.value;
+      cluster.morphHabitTo = morphState.toMap.habit || P.habit?.value;
+      cluster.morphHabitBlend = k;
 
       for (const p of store.params) {
         if (NON_MORPH_KEYS.has(p.key) || p.key === 'bloom' || p.noPreset || p.randomize === false) continue;
@@ -465,6 +470,11 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
     store.applyPreset(name, s, !own && s > 0);
     if (own && s > 0) instance.morph(s, name);
     resetMorphFromPreset(name);
+    if (s <= 0) {
+      cluster.snapToTarget?.(P);
+    } else {
+      cluster.applyManualParam?.('habit', P);
+    }
     syncPageColour();
     syncHudButtons();
     panel.syncAll();
