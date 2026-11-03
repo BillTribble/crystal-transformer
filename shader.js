@@ -415,7 +415,8 @@ float evalMassiveOcclusionVoid(int row, vec3 ro, vec3 rd, float tEntry, out vec3
   return mix(cOvoid, cCryst, kType);
 }
 
-// 2. Tiny Crystal-Locked 3D Edge & 3-Vector Vertex Chips (u_edgeChips): concentrated where 3 vectors/faces meet + broad shoulders, with wide size variation (0.45x..2.65x)
+// 2. Tiny Crystal-Locked 3D 3-Edge & 4-Edge Corner Chips (u_edgeChips, u_chipSize, u_edgeGranularity):
+//    concentrated almost exclusively at corners where 3 or 4 edges/faces meet, keeping 2-face straight edges clean.
 bool applyTinyEdgeChip(int row, int ka, int kb, vec3 ro, vec3 rd, inout float tn, inout float tf, inout int kn) {
   if (u_edgeChips <= 0.01 || ka >= 16 || kb >= 16 || ka == kb) return true;
   vec4 plA = body(row, PA + ka);
@@ -437,27 +438,40 @@ bool applyTinyEdgeChip(int row, int ka, int kb, vec3 ro, vec3 rd, inout float tn
   float symWeight = (1.0 - smoothstep(r * 1.45, r * 2.15, rA)) * (1.0 - smoothstep(r * 1.45, r * 2.15, rB));
   if (symWeight <= 1e-4) return true;
 
+  float chipSz = clamp(u_chipSize, 0.1, 2.5);
+  float gran = clamp(u_edgeGranularity, 0.2, 3.5);
+
   float tStart = max(tn, 0.0);
   vec3 pStart = ro + rd * tStart;
   float dRidge = wAB - dot(nAB, pStart);
-  float maxPossibleCut = r * (0.032 + 0.078 * u_edgeChips) * nodePresence * symWeight;
+  float maxPossibleCut = r * (0.026 + 0.064 * u_edgeChips) * chipSz * nodePresence * symWeight;
   if (dRidge >= maxPossibleCut) return true;
 
-  // Find nearest 3rd plane (3-vector vertex where three crystal faces/vectors meet)
-  float dCorner = 1e9;
-  int kCorner = -1;
+  // Find nearest 3rd plane (dCorner3: 3-edge corner) and 4th plane (dCorner4: 4-edge corner)
+  float dCorner3 = 1e9;
+  float dCorner4 = 1e9;
+  int kCorner3 = -1;
+  int kCorner4 = -1;
   for (int m = 0; m < 18; m++) {
     if (m == ka || m == kb) continue;
     vec4 plM = body(row, PA + m);
     float cM = dot(plM.xyz, nAB);
     if (cM > 0.92 || cM < -0.55) continue;
     float dM = plM.w - dot(plM.xyz, pStart);
-    if (dM < dCorner) {
-      dCorner = dM;
-      kCorner = m;
+    if (dM < dCorner3) {
+      dCorner4 = dCorner3;
+      kCorner4 = kCorner3;
+      dCorner3 = dM;
+      kCorner3 = m;
+    } else if (dM < dCorner4) {
+      dCorner4 = dM;
+      kCorner4 = m;
     }
   }
-  float cornerProximity = exp(-max(0.0, dCorner) / (r * 0.48));
+  float c3 = exp(-max(0.0, dCorner3) / (r * 0.085 * max(0.4, chipSz)));
+  float c4 = exp(-max(0.0, dCorner4) / (r * 0.135 * max(0.4, chipSz)));
+  float cornerMask = clamp(max(c3, c4 * 1.3), 0.0, 1.0);
+  float cornerProximity = cornerMask;
 
   vec3 edgeDir = cross(plA.xyz, plB.xyz);
   float edLen = length(edgeDir);
@@ -469,55 +483,70 @@ bool applyTinyEdgeChip(int row, int ka, int kb, vec3 ro, vec3 rd, inout float tn
   if (alongEdge < 0.02 || alongEdge > 0.98) return true;
 
   int kLo = min(ka, kb), kHi = max(ka, kb);
-  float baseCut = r * (0.0085 + 0.021 * u_edgeChips) * nodePresence * symWeight;
+  float baseCut = r * (0.0074 + 0.0185 * u_edgeChips) * chipSz * nodePresence * symWeight;
   float chipCut = 0.0;
   int wallBit = 0;
   vec3 activeClipN = nAB;
   float activeDist = dRidge;
 
-  // Scale V: 3-Vector Vertex Chips where 3 faces/vectors meet (ka, kb, kCorner) — high frequency (~72% of vertices) & wide size variation (0.45x..2.65x)
-  if (kCorner >= 0) {
-    int v0 = min(kLo, kCorner);
-    int v2 = max(kHi, kCorner);
-    int v1 = (kLo + kHi + kCorner) - v0 - v2;
+  // Scale V: 3-Edge & 4-Edge Corner Vertex Chips where 3 or 4 faces/edges meet (ka, kb, kCorner3, [kCorner4])
+  if (kCorner3 >= 0) {
+    int v0 = min(kLo, kCorner3);
+    int v2 = max(kHi, kCorner3);
+    int v1 = (kLo + kHi + kCorner3) - v0 - v2;
     float hV = hash(vec3(uid * 11.0 + float(v0) * 29.0, float(v1) * 17.0 + float(v2), 43.0));
-    if (hV > 0.28) {
-      float sizeMultV = mix(0.45, 2.65, pow(fract(hV * 19.3), 1.45));
-      float vSpan = r * (0.036 + 0.068 * u_edgeChips) * sizeMultV;
-      if (dCorner < vSpan) {
-        vec4 plC = body(row, PA + kCorner);
-        vec3 nTri = normalize(plA.xyz + plB.xyz + plC.xyz);
+    float threshV = mix(0.24, 0.12, clamp(c4 * 1.4, 0.0, 1.0));
+    if (hV > threshV) {
+      float sizeMultV = mix(0.48, 2.35, pow(fract(hV * 19.3), 1.45)) * (1.0 + 0.28 * c4);
+      float vSpan = r * (0.034 + 0.062 * u_edgeChips) * chipSz * sizeMultV;
+      if (dCorner3 < vSpan) {
+        vec4 plC = body(row, PA + kCorner3);
+        vec3 sumCornerN = plA.xyz + plB.xyz + plC.xyz;
         float dA = max(0.0, plA.w - dot(plA.xyz, pStart));
         float dB = max(0.0, plB.w - dot(plB.xyz, pStart));
-        float dTri = (dA + dB + max(0.0, dCorner)) * 0.57735027;
-        float uV = clamp(dCorner / max(vSpan, 1e-4), 0.0, 1.0);
-        float scallopV = 0.84 + 0.24 * sin(dCorner / max(r * 0.012, 1e-4) + hV * 6.283);
+        float dTri = (dA + dB + max(0.0, dCorner3)) * 0.57735027;
+        if (kCorner4 >= 0 && dCorner4 < vSpan * 1.35) {
+          vec4 plD = body(row, PA + kCorner4);
+          float w4 = clamp(1.0 - dCorner4 / (vSpan * 1.35), 0.0, 1.0);
+          sumCornerN += plD.xyz * (0.65 * w4);
+          dTri = mix(dTri, (dA + dB + max(0.0, dCorner3) + max(0.0, dCorner4)) * 0.5, 0.45 * w4);
+        }
+        vec3 nTri = normalize(sumCornerN);
+        float uV = clamp(dCorner3 / max(vSpan, 1e-4), 0.0, 1.0);
+        float stepFreq = gran / max(r * 0.0085, 1e-4);
+        float scallopV = 0.86 + 0.18 * sin(dCorner3 * stepFreq + hV * 6.283)
+                              + 0.11 * cos((dA - dB) * stepFreq * 1.35 + hV * 11.3);
         float profV = (1.0 - uV * uV) * scallopV;
-        float cutV = baseCut * sizeMultV * 1.35 * smoothstep(0.28, 0.42, hV) * profV;
+        float cutV = baseCut * sizeMultV * 1.32 * smoothstep(threshV, threshV + 0.14, hV) * profV;
         if (cutV > dTri) {
           chipCut = cutV;
           activeClipN = nTri;
           activeDist = dTri;
-          wallBit = fract(hV * 31.7) >= 0.5 ? 0 : 1;
+          wallBit = sin((dA - dB) * stepFreq + hV * 6.283) >= 0.0 ? 0 : 1;
         }
       }
     }
   }
 
-  // Scale A: Crisp micro-nicks & medium chips on broad shoulders/edges (16 slots along edge, wider size variation 0.45x..2.35x)
-  float slotCoordA = alongEdge * 16.0;
+  // Scale A: Fine granular micro-nicks tightly gated to 3- and 4-edge corners (cornerMask >= 0.18);
+  // out on straight 2-face edges (cornerMask < 0.18), only allow an ultra-rare (< 1.2%), micro-shallow (0.18x) nick.
+  float slotCoordA = alongEdge * 16.0 * gran;
   float slotIdA = floor(slotCoordA);
   float localUA = fract(slotCoordA) - 0.5;
   float hA = hash(vec3(uid * 5.0 + float(kLo) * 19.0 + float(kHi), slotIdA + 17.0, 11.0));
-  float threshA = mix(0.88, 0.42, cornerProximity);
+  bool inCornerZone = (cornerMask >= 0.18);
+  float threshA = inCornerZone ? mix(0.76, 0.34, cornerMask) : 0.988;
   if (hA > threshA) {
-    float sizeMultA = mix(0.45, 2.35, pow(fract(hA * 19.3), 1.5));
-    float halfSpanA = mix(0.15, 0.48, pow(fract(hA * 7.3), 1.4));
+    float sizeMultA = inCornerZone
+      ? mix(0.42, 1.85, pow(fract(hA * 19.3), 1.5)) * smoothstep(0.14, 0.48, cornerMask)
+      : 0.18;
+    float halfSpanA = mix(0.16, 0.44, pow(fract(hA * 7.3), 1.4));
     float uNormA = localUA / halfSpanA;
     if (abs(uNormA) < 1.0) {
-      float profA = (1.0 - uNormA * uNormA);
-      float depthMultA = sizeMultA * (1.0 + 0.40 * cornerProximity);
-      float cutA = baseCut * depthMultA * smoothstep(threshA, min(0.99, threshA + 0.08), hA) * profA;
+      float microStepA = 0.88 + 0.16 * sin(localUA * 14.0 * gran + hA * 6.283);
+      float profA = (1.0 - uNormA * uNormA) * microStepA;
+      float depthMultA = sizeMultA * (1.0 + 0.35 * cornerProximity);
+      float cutA = baseCut * depthMultA * smoothstep(threshA, min(0.999, threshA + (inCornerZone ? 0.08 : 0.01)), hA) * profA;
       if (cutA - dRidge > chipCut - activeDist) {
         chipCut = cutA;
         activeClipN = nAB;
@@ -527,26 +556,28 @@ bool applyTinyEdgeChip(int row, int ka, int kb, vec3 ro, vec3 rd, inout float tn
     }
   }
 
-  // Scale B: Longer elongated conchoidal flake scars on broad shoulders (5.5 slots along edge, wider size variation 0.55x..2.65x)
-  float slotCoordB = alongEdge * 5.5 + 0.37;
-  float slotIdB = floor(slotCoordB);
-  float localUB = fract(slotCoordB) - 0.5;
-  float hB = hash(vec3(uid * 7.0 + float(kLo) * 23.0 + float(kHi), slotIdB + 41.0, 29.0));
-  float threshB = mix(0.90, 0.48, cornerProximity);
-  if (hB > threshB) {
-    float sizeMultB = mix(0.55, 2.65, pow(fract(hB * 17.3), 1.45));
-    float halfSpanB = mix(0.22, 0.48, fract(hB * 9.1));
-    float uNormB = localUB / halfSpanB;
-    if (abs(uNormB) < 1.0) {
-      float scallop = 0.82 + 0.26 * sin(localUB * 18.0 + hB * 6.283);
-      float profB = (1.0 - abs(uNormB)) * (1.0 + 0.35 * (1.0 - abs(uNormB))) * scallop;
-      float depthMultB = sizeMultB * (1.0 + 0.35 * cornerProximity);
-      float cutB = baseCut * depthMultB * smoothstep(threshB, min(0.99, threshB + 0.08), hB) * profB;
-      if (cutB - dRidge > chipCut - activeDist) {
-        chipCut = cutB;
-        activeClipN = nAB;
-        activeDist = dRidge;
-        wallBit = sin(localUB * 18.0 + hB * 6.283) >= 0.0 ? 0 : 1;
+  // Scale B: Conchoidal corner-shoulder flake scars — strictly restricted to 3- and 4-edge corners (cornerMask >= 0.18)
+  if (inCornerZone) {
+    float slotCoordB = alongEdge * 6.5 * gran + 0.37;
+    float slotIdB = floor(slotCoordB);
+    float localUB = fract(slotCoordB) - 0.5;
+    float hB = hash(vec3(uid * 7.0 + float(kLo) * 23.0 + float(kHi), slotIdB + 41.0, 29.0));
+    float threshB = mix(0.82, 0.40, cornerMask);
+    if (hB > threshB) {
+      float sizeMultB = mix(0.48, 2.15, pow(fract(hB * 17.3), 1.45)) * cornerMask;
+      float halfSpanB = mix(0.20, 0.45, fract(hB * 9.1));
+      float uNormB = localUB / halfSpanB;
+      if (abs(uNormB) < 1.0) {
+        float scallop = 0.84 + 0.22 * sin(localUB * 18.0 * gran + hB * 6.283);
+        float profB = (1.0 - abs(uNormB)) * (1.0 + 0.35 * (1.0 - abs(uNormB))) * scallop;
+        float depthMultB = sizeMultB * (1.0 + 0.35 * cornerProximity);
+        float cutB = baseCut * depthMultB * smoothstep(threshB, min(0.99, threshB + 0.08), hB) * profB;
+        if (cutB - dRidge > chipCut - activeDist) {
+          chipCut = cutB;
+          activeClipN = nAB;
+          activeDist = dRidge;
+          wallBit = sin(localUB * 18.0 * gran + hB * 6.283) >= 0.0 ? 0 : 1;
+        }
       }
     }
   }
@@ -595,7 +626,7 @@ bool convexHit(int row, vec3 ro, vec3 rd, out float tn, out float tf, out int kn
       float dJ = plJ.w - dot(plJ.xyz, pStart);
       if (dJ < dAdjMin) { dAdjMin = dJ; kAdj = kCand; }
     }
-    if (kAdj >= 0 && dAdjMin < r * 0.088) {
+    if (kAdj >= 0 && dAdjMin < r * 0.088 * max(0.4, clamp(u_chipSize, 0.1, 2.5))) {
       if (!applyTinyEdgeChip(row, kn, kAdj, ro, rd, tn, tf, kn)) return false;
     }
   }
@@ -913,9 +944,16 @@ float edgeDist(int id, int k, vec3 p, out vec3 adjN) {
 
 float wearFromDist(int id, vec3 p, float dmin) {
   if (u_edgeWear <= 0.0) return 0.0;
-  float edge = 1.0 - smoothstep(0.0, u_edgeWidth * 0.45 * body(id, 2).w, dmin);
-  float nz = texture(u_incl, p * 6.0 + 0.71).b * 0.75 + texture(u_incl, p * 21.0).b * 0.35;
-  return 0.25 * edge * smoothstep(1.02 - 0.32 * u_edgeWear, 1.08 - 0.32 * u_edgeWear, nz);
+  float gran = clamp(u_edgeGranularity, 0.2, 3.5);
+  float r = max(body(id, 2).w, 0.02);
+  float edgeSpan = u_edgeWidth * 0.34 * r * (0.65 + 0.35 * clamp(u_chipSize, 0.1, 2.0));
+  float edge = 1.0 - smoothstep(0.0, edgeSpan, dmin);
+  if (edge <= 1e-4) return 0.0;
+  vec3 pLoc = (p - body(id, 3).xyz) * gran;
+  float nz = texture(u_incl, pLoc * 7.5 + 0.71).b * 0.55
+           + texture(u_incl, pLoc * 24.0).b * 0.30
+           + n3(pLoc * 68.0) * 0.25;
+  return 0.22 * edge * smoothstep(1.04 - 0.30 * u_edgeWear, 1.10 - 0.30 * u_edgeWear, nz);
 }
 
 // Softens & tints bright studio softbox glare on crystal faces (governed by u_faceGlare)
@@ -1392,6 +1430,8 @@ void main() {
       vec3 t2 = cross(axis, t1);
       vec3 rel = p - root;
       vec3 lp = vec3(dot(rel, t1), dot(rel, axis), dot(rel, t2));
+      float granFreq = 65.0 * clamp(u_edgeGranularity, 0.2, 3.5);
+      float chipSubtle = 0.72 + 0.28 * clamp(u_chipSize, 0.1, 2.0);
       if (isOcclusionVoid) {
         int nc = max(1, int(f_crystals + 0.5));
         int nextRow = (id + 1) % nc;
@@ -1406,24 +1446,32 @@ void main() {
         float dDn = max(0.0, ec.w * 0.66 - dot(nDn, relC));
         vec3 cavWallN = (dUp < dSph && dUp < dDn) ? -nUp : ((dDn < dSph) ? -nDn : -normalize(relC + 1e-5));
         float incFeather = smoothstep(0.0, max(1e-3, ec.w * 0.25), min(dSph, min(dUp, dDn)) + ec.w * 0.12);
-        vec3 chipN = normalize(vec3(n3(lp * 62.0) - 0.5, n3(lp * 62.0 + 7.1) - 0.5, n3(lp * 62.0 + 13.3) - 0.5));
+        vec3 chipN = normalize(vec3(n3(lp * granFreq) - 0.5, n3(lp * granFreq + 7.1) - 0.5, n3(lp * granFreq + 13.3) - 0.5));
         n = normalize(cavWallN + chipN * (0.11 * incFeather));
         inChip = 0.28 * incFeather * clamp(u_occlusion * 1.4, 0.0, 1.0);
         rough = max(rough, 0.28 * incFeather);
       } else if (isTinyEdgeChip) {
-        // Literal 3D V-notch / conchoidal smash incursion carved into the crystal edge (pure refractive crystal facet, no white paint)
+        // Literal 3D V-notch / conchoidal smash incursion carved into a 3- or 4-edge corner (pure refractive crystal facet, finely granular)
         float incFeather = smoothstep(0.0, r * 0.015, eDist + r * 0.004);
-        vec3 chipN = normalize(vec3(n3(lp * 62.0) - 0.5, n3(lp * 62.0 + 7.1) - 0.5, n3(lp * 62.0 + 13.3) - 0.5));
-        n = normalize(rawFaceN + chipN * (0.085 * incFeather));
-        inChip = 0.08 * incFeather * clamp(u_edgeChips * 1.4, 0.0, 1.0);
-        rough = max(rough, 0.30 * incFeather);
+        vec3 chipN = normalize(vec3(
+          (n3(lp * granFreq) - 0.5) + 0.45 * (n3(lp * granFreq * 2.3 + 3.7) - 0.5),
+          (n3(lp * granFreq + 7.1) - 0.5) + 0.45 * (n3(lp * granFreq * 2.3 + 11.9) - 0.5),
+          (n3(lp * granFreq + 13.3) - 0.5) + 0.45 * (n3(lp * granFreq * 2.3 + 19.1) - 0.5)
+        ));
+        n = normalize(rawFaceN + chipN * (0.078 * incFeather * chipSubtle));
+        inChip = 0.068 * incFeather * chipSubtle * clamp(u_edgeChips * 1.4, 0.0, 1.0);
+        rough = max(rough, 0.28 * incFeather);
       } else {
         // Literal 3D chipped corner facet: smooth feather near edge so merging in/out never pops
         float nipFeather = smoothstep(0.0, r * 0.012, eDist);
-        vec3 chipN = normalize(vec3(n3(lp * 58.0) - 0.5, n3(lp * 58.0 + 7.1) - 0.5, n3(lp * 58.0 + 13.3) - 0.5));
-        n = normalize(n + chipN * (0.065 * nipFeather));
-        inChip = 0.08 * nipFeather * clamp(u_edgeChips * 1.4, 0.0, 1.0);
-        rough = max(rough, 0.24 * nipFeather);
+        vec3 chipN = normalize(vec3(
+          (n3(lp * granFreq * 0.92) - 0.5) + 0.45 * (n3(lp * granFreq * 2.1 + 5.3) - 0.5),
+          (n3(lp * granFreq * 0.92 + 7.1) - 0.5) + 0.45 * (n3(lp * granFreq * 2.1 + 14.7) - 0.5),
+          (n3(lp * granFreq * 0.92 + 13.3) - 0.5) + 0.45 * (n3(lp * granFreq * 2.1 + 23.9) - 0.5)
+        ));
+        n = normalize(n + chipN * (0.060 * nipFeather * chipSubtle));
+        inChip = 0.068 * nipFeather * chipSubtle * clamp(u_edgeChips * 1.4, 0.0, 1.0);
+        rough = max(rough, 0.22 * nipFeather);
       }
     }
     float F = fresnel(-dot(rd, n), 1.0 / effIor) * cAlpha;
