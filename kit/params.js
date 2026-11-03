@@ -40,7 +40,7 @@ const CUSTOM_PRESETS_KEY = 'crystals:custom-presets';
 const STICKY_USER_KEYS = new Set([
   'timeScale', 'defaultZoom', 'evolve', 'evolveSpeed', 'morphPresets', 'morphTime',
   'autoGrow', 'growSpeed', 'growth', 'spinStart', 'spin', 'tilt', 'fov',
-  'bloom', 'faceGlare', 'chipSize', 'edgeGranularity',
+  'rainbow', 'bloom', 'faceGlare', 'chipSize', 'edgeGranularity',
   'patinaMacro', 'edgeMacro', 'surfaceMacro', 'edgeIrregularity', 'patina', 'hairlineFractures',
   'mirrorMode', 'mirrorScale', 'mirrorStrength', 'mirrorDepthFade', 'mirrorLiquid', 'mirrorChecker', 'mirrorComplement',
   'occlusionStyle', 'occlusionType', 'occlusion',
@@ -409,8 +409,22 @@ export function createModel(schema, storageKey, presets = {}) {
           assign(byKey.edgeGranularity, 1.4);
           byKey.edgeGranularity.base = 1.4;
         }
+        if ((saved.values.iridescence === 0.38 || saved.values.iridescence === 0.22 || saved.values.iridescence === 0.29 || saved.values.iridescence === 0.46 || saved.values.iridescence === 0.14 || saved.values.iridescence === 0.42) && byKey.iridescence) {
+          const pDef = presets?.[preset]?.iridescence ?? 0.35;
+          assign(byKey.iridescence, pDef);
+          byKey.iridescence.base = pDef;
+        }
+        if (preset && presets?.[preset]) {
+          for (const rk of ['fire', 'fractures', 'fractureGlow', 'phantom', 'phantomRate', 'phantomLayers', 'frostShare', 'frost']) {
+            if (presets[preset][rk] !== undefined && byKey[rk]) {
+              assign(byKey[rk], presets[preset][rk]);
+              byKey[rk].base = presets[preset][rk];
+            }
+          }
+        }
       }
       if (byKey.chipSize && byKey.chipSize.max < 3.0) byKey.chipSize.max = 3.0;
+      if (byKey.iridescence && byKey.iridescence.max < 3.0) byKey.iridescence.max = 3.0;
     } catch { /* storage unavailable — run on defaults */ }
   }
 
