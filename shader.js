@@ -294,6 +294,25 @@ int occPartnerRow(int row, int m) {
   return (u + m) % nCore;
 }
 
+// Occlusion voids GROW into existence and shrink away: their size scales with the occlusion level
+// (0 -> full size) and their cut opacity ramps in early so a sub-pixel void can't twinkle.
+// (Previously a full-size void cross-dissolved in and out, which read as popping.)
+// Each crystal's void starts at a staggered moment in the first ~45% of the fade (by stable uid),
+// then eases to full size: the voids are big next to a thin crystal, so if they all grew at once
+// the whole cluster was eaten within ~4 s; staggered, the occlusion spreads over the whole fade
+// and recedes in the reverse order.
+float occGrowthFor(int row) {
+  float x = clamp(u_occlusion / 0.92, 0.0, 1.0);
+  float delay = 0.45 * fract(max(1.0, body(row, 2).z) * 0.6180339887);
+  float y = clamp((x - delay) / (1.0 - delay), 0.0, 1.0);
+  return y * y * (3.0 - 2.0 * y);
+}
+float occOpacityFor(int row) {
+  float x = clamp(u_occlusion / 0.92, 0.0, 1.0);
+  float delay = 0.45 * fract(max(1.0, body(row, 2).z) * 0.6180339887);
+  return smoothstep(0.0, 0.25, (x - delay) / (1.0 - delay));
+}
+
 // 1a. Massive Abstract Ovoid Occlusion Voids (u_occlusionType == 0): fixed-radius 3D displacing spheres/wedges
 float evalOvoidOcclusionVoid(int row, vec3 ro, vec3 rd, float tEntry, out vec3 outWallN, out float outRim) {
   outWallN = vec3(0.0, 1.0, 0.0);
@@ -301,11 +320,24 @@ float evalOvoidOcclusionVoid(int row, vec3 ro, vec3 rd, float tEntry, out vec3 o
   if (u_occlusion <= 0.001) return 0.0;
   vec3 ax = body(row, 1).xyz;
   vec3 rt = body(row, 3).xyz;
+  float Lh = max(body(row, 1).w, 0.02);
+  float rh = max(body(row, 2).w, 0.01);
+  vec3 sideC = body(row, PA).xyz - ax * dot(body(row, PA).xyz, ax);
   int nextRow = occPartnerRow(row, 0);
+  float g = occGrowthFor(row);
   float bestCut = 0.0;
   for (int m = 0; m < 2; m++) {
     vec4 rawEc = body(nextRow, m);
-    vec4 ec = vec4(rawEc.xyz, rawEc.w * 0.92);
+    // Each void is a bubble seeded just under this crystal's surface (on the side facing the
+    // partner crystal) that grows with the occlusion level and shrinks back to that seed. It opens
+    // as a small hole that steadily widens, instead of appearing late and already huge (when it
+    // grew from the partner's centre deep inside the cluster, whole crystals vanished in ~3 s).
+    vec3 axPt = rt + ax * (Lh * (m == 0 ? 0.55 : 0.8));
+    vec3 toC = rawEc.xyz - axPt;
+    vec3 perpT = toC - ax * dot(toC, ax);
+    vec3 outDir = normalize(perpT + sideC * max(0.0, rh - length(perpT)) + vec3(1e-6));
+    float rad = rawEc.w * 0.92 * g;
+    vec4 ec = vec4(axPt + outDir * (rh * 0.85 + 0.35 * rad), rad);
     if (ec.w <= 1e-4) continue;
     vec3 oc = ro - ec.xyz;
     float b = dot(oc, rd);
@@ -317,7 +349,6 @@ float evalOvoidOcclusionVoid(int row, vec3 ro, vec3 rd, float tEntry, out vec3 o
     // (or crosses) the axis line this vector is ~0 and normalizing it flips the wedge planes from
     // frame to frame (whole chunks popped), so blend smoothly toward the crystal's own side axis.
     vec3 perpC = ec.xyz - rt - ax * dot(ec.xyz - rt, ax);
-    vec3 sideC = body(row, PA).xyz - ax * dot(body(row, PA).xyz, ax);
     vec3 radDir = normalize(perpC + sideC * max(0.0, ec.w * 0.35 - length(perpC)) + vec3(1e-6));
     vec3 nUp = normalize(ax + radDir * 0.42);
     vec3 nDn = normalize(-ax + radDir * 0.48);
@@ -334,7 +365,7 @@ float evalOvoidOcclusionVoid(int row, vec3 ro, vec3 rd, float tEntry, out vec3 o
       if (dnDn < 0.0) tc0 = max(tc0, tDn); else tc1 = min(tc1, tDn);
     } else if (dDn < 0.0) continue;
     if (tc1 > tc0 && tc1 > tEntry) {
-      float frontSoft = smoothstep(tEntry + ec.w * 0.28, tEntry - ec.w * 0.06, tc0);
+      float frontSoft = 1.0 - smoothstep(tEntry - ec.w * 0.06, tEntry + ec.w * 0.28, tc0);
       float span = max(0.0, tc1 - max(tc0, tEntry));
       float depthSoft = smoothstep(0.0, max(ec.w * 0.36, 1e-3), span);
       float cut = frontSoft * depthSoft;
@@ -380,11 +411,13 @@ float evalInvisibleCrystalVoid(int row, vec3 ro, vec3 rd, float tEntry, out vec3
     vec3 cTpl = rtTpl + axTpl * (LTpl * 0.48);
 
     float hFrac = (m == 0) ? 0.44 : 0.72;
-    vec3 cAnchor = rtRow + axRow * (LRow * hFrac) + ((m == 0) ? side1 : side2) * (rRow * 0.22);
+    // While small, seed the void just under the crystal's surface so its hole is visible from the
+    // start and widens steadily; ease back to the original interior anchor as it reaches full size.
+    vec3 cAnchor = rtRow + axRow * (LRow * hFrac) + ((m == 0) ? side1 : side2) * (rRow * mix(0.92, 0.22, occGrowthFor(row)));
     vec3 rotAxis = (m == 0) ? normalize(side2 + axRow * 0.25) : normalize(side1 - axRow * 0.22);
     float ang = (m == 0) ? 1.08 : -0.96;
     float cosA = cos(ang), sinA = sin(ang);
-    float invScale = clamp((rTpl / max(rRow, 0.02)) * 0.80, 0.55, 1.35);
+    float invScale = clamp((rTpl / max(rRow, 0.02)) * 0.80, 0.55, 1.35) / max(occGrowthFor(row), 0.02);
 
     vec3 roTpl = cTpl + rotateAroundAxis((ro - cAnchor) * invScale, rotAxis, cosA, sinA);
     vec3 rdTpl = rotateAroundAxis(rd * invScale, rotAxis, cosA, sinA);
@@ -410,7 +443,7 @@ float evalInvisibleCrystalVoid(int row, vec3 ro, vec3 rd, float tEntry, out vec3
 
     if (tc1 > tc0 && tc1 > tEntry) {
       float feather = rRow * 0.06;
-      float frontSoft = smoothstep(tEntry + feather * 1.4, tEntry - feather * 0.4, tc0);
+      float frontSoft = 1.0 - smoothstep(tEntry - feather * 0.4, tEntry + feather * 1.4, tc0);
       float span = max(0.0, tc1 - max(tc0, tEntry));
       float depthSoft = smoothstep(0.0, max(rRow * 0.14, 1e-3), span);
       float cut = frontSoft * depthSoft;
@@ -784,7 +817,7 @@ vec3 inside(int id, vec3 ro, vec3 rd, float len, float travelled, float jitter, 
     if (u_iridescence > 0.01) {
       float iridPhase = hgt * 1.45 + radFrac * 0.95 + dot(rd, axis) * 0.95 + hueOff + v.b * 0.55;
       vec3 iridWave = spectralRainbow(iridPhase);
-      float veilBand = (0.022 + 0.11 * v.g + 0.045 * v.r) * clamp(u_iridescence * 0.45, 0.0, 0.75);
+      float veilBand = (0.022 + 0.11 * v.g + 0.045 * v.r) * clamp(u_iridescence * 0.7, 0.0, 0.9);
       scat += T * iridWave * tintedLightIn * veilBand * dt * 1.45;
     }
 
@@ -867,7 +900,7 @@ vec3 inside(int id, vec3 ro, vec3 rd, float len, float travelled, float jitter, 
 
   // Deep internal iridescent cleavage plane (guarded behind u_fractures > 0.01 || u_iridescence > 0.01)
   if (u_fractures > 0.01 || u_iridescence > 0.01 || u_flash > 0.01) {
-    float effFractures = clamp(u_fractures + u_iridescence * 0.22 + u_flash * 0.25, 0.0, 1.0);
+    float effFractures = clamp(u_fractures + u_iridescence * 0.32 + u_flash * 0.25, 0.0, 1.0);
     float fracRoll = hash(vec3(uid, f_seed, 91.0));
     float fracW = smoothstep(fracRoll - 0.14, fracRoll + 0.14, effFractures);
     if (fracW > 1e-4) {
@@ -1023,9 +1056,27 @@ vec3 facetIridescence(int id, int k, vec3 p, vec3 rd, vec3 n, float dEdge, vec3 
   vec3 specCol = normalize(mix(irid1, irid2, 0.35) + vec3(1e-4)) * 1.55;
   float fresRim = pow(1.0 - cosV, 2.0);
   float s = u_iridescence;
-  vec3 tinted = mix(baseRefl, baseRefl * specCol * 1.28, clamp(s * 0.58, 0.0, 0.78));
-  vec3 sheen = specCol * f_ambient * (0.18 + 0.58 * fresRim) * min(s, 1.5) * 0.28;
+  // Thin-film colour across more of each facet and at more viewing angles (it used to be a faint,
+  // mostly grazing-angle-only sheen that was rarely visible).
+  vec3 tinted = mix(baseRefl, baseRefl * specCol * 1.28, clamp(s * 0.9, 0.0, 0.88));
+  vec3 sheen = specCol * f_ambient * (0.32 + 0.68 * fresRim) * min(s, 1.5) * 0.5;
   return tinted + sheen;
+}
+
+// Iridescent thin-film sheen: a coloured interference film over every facet (strongest toward
+// grazing angles). It is added on top of the facet reflection instead of being scaled down with
+// it (Fresnel x glare suppression left facet iridescence at ~4%, so it was almost never visible).
+vec3 iridescentFilm(int id, int k, vec3 p, vec3 rd, vec3 n, float dEdge) {
+  if (u_iridescence <= 0.0) return vec3(0.0);
+  float cosV = clamp(abs(dot(rd, n)), 0.0, 1.0);
+  float L = max(body(id, 1).w, 0.1);
+  float r = max(body(id, 2).w, 0.02);
+  float hgt = dot(p - body(id, 3).xyz, body(id, 1).xyz) / L;
+  float filmT = cosV * 2.4 + hgt * 1.35 + (dEdge / r) * 0.95 + float(k) * 0.19 + body(id, 2).y;
+  vec3 film = spectralRainbow(filmT * 1.18 + 0.11);
+  float rim = pow(1.0 - cosV, 1.5);
+  float coat = 0.6 + 0.4 * hash(vec3(body(id, 2).z * 3.0, float(k) * 7.0, 61.0));
+  return film * f_ambient * (0.3 + 0.7 * rim) * coat * min(u_iridescence, 1.5) * 0.4;
 }
 
 // Surface facet catch-lights & bevel glints (governed by u_bloom and u_faceGlare)
@@ -1092,8 +1143,7 @@ vec3 shadeBehindRay(vec3 roIn, vec3 rdIn, int skipIn, float travIn, float jitter
     if (u_occlusion > 0.001) {
       // Same void carve (and cap) as the main path, so a crystal seen through a semi-transparent
       // one is carved exactly as when it is seen directly (no uncarved ghost through the hole).
-      float bOccNorm = clamp(u_occlusion / 0.92, 0.0, 1.0);
-      float bOccBlend = bOccNorm * bOccNorm * (3.0 - 2.0 * bOccNorm) * smoothstep(0.6, 1.0, bRawA);
+      float bOccBlend = occOpacityFor(bId) * smoothstep(0.6, 1.0, bRawA);
       vec3 bWallN; float bRim;
       float bCut = evalMassiveOcclusionVoid(bId, roB, rdB, bT, bWallN, bRim);
       bRawA *= (1.0 - min(0.995, bOccBlend * bCut));
@@ -1115,8 +1165,9 @@ vec3 shadeBehindRay(vec3 roIn, vec3 rdIn, int skipIn, float travIn, float jitter
     float bF = fresnel(-dot(rdB, bN), 1.0 / u_ior);
     vec3 bEntryRefl = facetIridescence(bId, bK, bP, rdB, bN, bDEdge, softFacetRefl(env(reflect(rdB, bN), bRough)));
     vec3 bEntryFlash = crystalBloomGlint(bId, bK, bP, rdB, bN, bDEdge, bRough);
-    float bIridBoost = clamp(bF + u_iridescence * 0.09, 0.0, 0.48) * (0.15 + 0.85 * glare);
+    float bIridBoost = clamp(bF + u_iridescence * 0.15, 0.0, 0.52) * (0.15 + 0.85 * glare);
     colB += thrB * (bIridBoost * bEntryRefl + bEntryFlash);
+    colB += thrB * iridescentFilm(bId, bK, bP, rdB, bN, bDEdge);
     thrB *= (1.0 - bF * (0.3 + 0.7 * glare));
     vec3 bRefrIn = refract(rdB, bN, 1.0 / u_ior);
     rdB = dot(bRefrIn, bRefrIn) > 1e-6 ? normalize(bRefrIn) : rdB;
@@ -1401,10 +1452,9 @@ void main() {
     vec3 voidWallN = vec3(0.0, 1.0, 0.0);
     float voidRim = 0.0;
     if (u_occlusion > 0.001) {
-      float occNorm = clamp(u_occlusion / 0.92, 0.0, 1.0);
       // Voids only carve fully grown crystals: a crystal that is still budding in or fading out
       // (alpha < 1) gets a proportionally weaker void, so it is never carved away while it grows.
-      float occBlend = occNorm * occNorm * (3.0 - 2.0 * occNorm) * smoothstep(0.6, 1.0, rawAlpha);
+      float occBlend = occOpacityFor(id) * smoothstep(0.6, 1.0, rawAlpha);
       float voidCut = evalMassiveOcclusionVoid(id, ro, rd, t, voidWallN, voidRim);
       // Cap the carve just short of 100%: a fully carved crystal otherwise drops below the
       // alpha <= 1e-5 skip threshold at one exact occlusion level, flipping every voided pixel at
@@ -1525,8 +1575,9 @@ void main() {
     float F = fresnel(-dot(rd, n), 1.0 / effIor) * cAlpha;
     vec3 entryRefl = facetIridescence(id, k, p, rd, n, dEdge, softFacetRefl(env(reflect(rd, n), rough)));
     vec3 entryFlash = crystalBloomGlint(id, k, p, rd, n, dEdge, rough);
-    float iridReflBoost = clamp(F + u_iridescence * 0.09 * cAlpha, 0.0, 0.48 * cAlpha) * (0.15 + 0.85 * glare);
+    float iridReflBoost = clamp(F + u_iridescence * 0.15 * cAlpha, 0.0, 0.52 * cAlpha) * (0.15 + 0.85 * glare);
     col += thr * (iridReflBoost * entryRefl + cAlpha * (chip * 0.12 * f_ambient + entryFlash));
+    col += thr * cAlpha * iridescentFilm(id, k, p, rd, n, dEdge);
     thr *= (1.0 - F * (0.3 + 0.7 * glare)) * (1.0 - 0.6 * chip * cAlpha);
     if (inChip > 0.001) {
       vec3 stoneCol = exp(-f_sigma * 0.35);
