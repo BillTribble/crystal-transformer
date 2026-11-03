@@ -1,5 +1,7 @@
 # Crystal Transformer
 
+**Ray traced crystal experiment with procedural growth and generative ambient soundtrack.**
+
 An interactive real-time WebGL2 crystal ray-tracing studio (**Crystal Transformer**) built on **[Jack Bush](https://github.com/jackbush)**'s [`geode` sketch in `jackbush/glimmers`](https://github.com/jackbush/glimmers/tree/main/src/sketches/geode).
 
 ## Credits & Attribution
