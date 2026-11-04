@@ -56,7 +56,7 @@
     /* Top-left preset pill — fixed width so < and > buttons never shift position */
     #hud-preset {
       position: fixed; top: max(14px, env(safe-area-inset-top)); left: max(14px, env(safe-area-inset-left));
-      z-index: 2; height: 38px; width: 274px; display: inline-flex; align-items: center; justify-content: space-between; gap: 2px;
+      z-index: 2; height: 38px; width: 304px; display: inline-flex; align-items: center; justify-content: space-between; gap: 2px;
       background: rgba(0, 0, 0, 0.38); border: 1px solid rgba(255, 255, 255, 0.12);
       border-radius: 19px; padding: 0 6px; color: var(--ink); font: 11px/1 var(--mono);
       backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
@@ -73,13 +73,23 @@
     #hud-preset button:hover { color: var(--ink); background: rgba(255, 255, 255, 0.08); }
     #hud-preset-name {
       color: var(--ink) !important; font-weight: 500 !important; letter-spacing: .02em;
-      width: 200px; min-width: 200px; max-width: 200px; flex: 0 0 200px;
+      width: 230px; min-width: 230px; max-width: 230px; flex: 0 0 230px;
       padding: 6px 4px; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
       display: inline-block;
     }
     #preset-name {
       display: inline-block; width: 100%; max-width: 100%; text-align: center;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: middle;
+    }
+    .drift-word {
+      display: inline-block;
+    }
+    .drift-word-enter {
+      animation: semanticDriftIn 0.58s cubic-bezier(.22, .68, .2, 1) both;
+    }
+    @keyframes semanticDriftIn {
+      from { opacity: 0; filter: blur(4px); transform: translateY(3px); }
+      to { opacity: 1; filter: blur(0px); transform: translateY(0); }
     }
 
     /* Top-right roundel buttons */
@@ -1174,7 +1184,7 @@ function createLoop(canvas, P, sketch) {
 
   // === Module: kit/params.js ===
   const __mod_kit_params = (() => {
-  const { okhslToHex } = __mod_okhsl;
+  const { hexToOkhsl, okhslToHex } = __mod_okhsl;
 // The param model: live values for params.js, overrides saved per browser,
 // curated + user-saved custom presets in localStorage, URL state sharing, and smooth morphing.
 
@@ -1209,6 +1219,15 @@ const LEGACY_HABIT_MAP = {
   'Dendritic Starburst': 'Hexagonal',
   'Cubic': 'Cubic / Isometric',
   'Isometric': 'Cubic / Isometric',
+};
+
+const LEGACY_PRESET_NAME_MAP = {
+  'Glacial Ice': 'Blue Celestite',
+  'Glacial Ice Dendrite': 'Blue Celestite',
+  'Imperial Zircon (Tetragonal)': 'Imperial Zircon',
+  'Imperial Topaz (Orthorhombic)': 'Imperial Topaz',
+  'Kunzite Spodumene (Monoclinic)': 'Kunzite Spodumene',
+  'Sapphire Kyanite (Triclinic)': 'Sapphire Kyanite',
 };
 
 function coerce(p, v) {
@@ -1285,6 +1304,11 @@ function createModel(schema, storageKey, presets = {}) {
 
   let glides = [];
   let glideT = 0, glideLen = 0;
+  let glideFromPreset = Object.keys(presets || {})[0] || 'Classic Quartz Prism';
+  let glideToPreset = glideFromPreset;
+  let glideHabitFrom = null;
+  let glideHabitTo = null;
+  let glideHabitBlend = 0;
 
   // Load user-saved custom presets from localStorage
   let customPresets = {};
@@ -1401,10 +1425,13 @@ function createModel(schema, storageKey, presets = {}) {
         } catch { /* storage unavailable */ }
       }, 250);
     },
-    applyValues(values, seconds = 0.6, presetName = '', glideNumbers = true) {
+    applyValues(values, seconds = 0.6, presetName = '', glideNumbers = true, colorSeconds = null) {
       if (!values) return;
       store.setBypass(false);
+      const prevPreset = preset || Object.keys(presets || {})[0] || 'Classic Quartz Prism';
       preset = presetName;
+      glideFromPreset = prevPreset;
+      glideToPreset = presetName || prevPreset;
       const resolveTarget = (p) => {
         if (p.key === 'bloom' || p.noPreset || p.randomize === false) return p.value;
         if (values[p.key] !== undefined) return values[p.key];
@@ -1420,11 +1447,26 @@ function createModel(schema, storageKey, presets = {}) {
         p.base = coerce(p, resolveTarget(p));
       }
       glides = [];
+      glideHabitFrom = byKey.habit ? String(byKey.habit.value) : 'Trigonal';
+      glideHabitTo = byKey.habit ? coerce(byKey.habit, resolveTarget(byKey.habit)) : glideHabitFrom;
+      glideHabitBlend = (seconds > 0 && glideNumbers) ? 0 : 1;
+
+      // When manually skipping through presets, allow colors to transition faster (~1.25s) while geometry
+      // completes a smooth single-stage glide over `seconds` (post-015529, post-015539).
+      const fastColorDur = colorSeconds !== null
+        ? Math.max(1e-3, colorSeconds)
+        : Math.max(1e-3, Math.min(seconds, 1.25));
+
       for (const p of params) {
         if (p.key === 'renderScale' || p.key === 'targetFps' || p.key === 'maxFps' || p.key === 'maxDpr' || p.key === 'bloom' || p.noPreset) continue;
         if (STICKY_USER_KEYS.has(p.key) && values[p.key] === undefined) continue;
         if (p.key === 'seed' && seconds > 0 && glideNumbers) continue;
         const to = coerce(p, resolveTarget(p));
+        if (p.key === 'habit' && seconds > 0 && glideNumbers) {
+          // Do NOT snap habit at t=0; blend habit planes & repulsion continuously in 1 stage via glideHabitBlend!
+          glides.push({ p, isHabit: true, from: glideHabitFrom, to });
+          continue;
+        }
         if (seconds <= 0 || p.type === 'select' || p.type === 'bool' || p.key === 'seed' || (p.type !== 'color' && !glideNumbers)) {
           assign(p, to);
           continue;
@@ -1432,19 +1474,23 @@ function createModel(schema, storageKey, presets = {}) {
         if (p.type === 'color') {
           const a = [0, 0, 0], b = [0, 0, 0];
           hexToRgb(String(p.value), a); hexToRgb(String(to), b);
-          glides.push({ p, from: 0, to: 1, rgbFrom: a, rgbTo: b });
+          const h0 = hexToOkhsl(String(p.value));
+          const h1 = hexToOkhsl(String(to));
+          glides.push({ p, from: 0, to: 1, rgbFrom: a, rgbTo: b, okhslFrom: h0, okhslTo: h1, dur: fastColorDur });
         } else if (Number(p.value) !== Number(to)) {
-          glides.push({ p, from: Number(p.value), to: Number(to) });
+          glides.push({ p, from: Number(p.value), to: Number(to), dur: seconds });
         }
       }
       glideT = 0;
       glideLen = Math.max(seconds, 1e-3);
     },
-    applyPreset(name, seconds = 0.65, glideNumbers = true) {
-      const resolvedName = (name === 'Glacial Ice Dendrite' && presets?.['Glacial Ice']) ? 'Glacial Ice' : name;
+    applyPreset(name, seconds = 0.65, glideNumbers = true, colorSeconds = null) {
+      const resolvedName = (LEGACY_PRESET_NAME_MAP[name] && presets?.[LEGACY_PRESET_NAME_MAP[name]])
+        ? LEGACY_PRESET_NAME_MAP[name]
+        : name;
       const values = customPresets[resolvedName] || presets?.[resolvedName];
       if (!values) return;
-      store.applyValues(values, seconds, resolvedName, glideNumbers);
+      store.applyValues(values, seconds, resolvedName, glideNumbers, colorSeconds);
     },
     randomize(customRandomizer, seconds = 10.0) {
       const next = typeof customRandomizer === 'function' ? { ...customRandomizer(store) } : {};
@@ -1456,13 +1502,18 @@ function createModel(schema, storageKey, presets = {}) {
           delete next[p.key];
         }
       }
-      store.applyValues(next, seconds, 'Randomized', seconds > 0);
+      store.applyValues(next, seconds, 'Randomized', seconds > 0, Math.min(seconds, 2.2));
       return next;
     },
     get gliding() { return glides.length > 0; },
     get glideElapsed() { return glideT; },
     get glideDuration() { return glideLen; },
     get glideProgress() { return glideLen > 0 ? Math.min(1, glideT / glideLen) : 0; },
+    get glideFromPreset() { return glideFromPreset; },
+    get glideToPreset() { return glideToPreset; },
+    get glideHabitFrom() { return glideHabitFrom; },
+    get glideHabitTo() { return glideHabitTo; },
+    get glideHabitBlend() { return glideHabitBlend; },
     saveCustomPreset(name) {
       const clean = String(name || '').trim();
       if (!clean) return null;
@@ -1557,20 +1608,41 @@ function createModel(schema, storageKey, presets = {}) {
       glideT = Math.min(glideLen, glideT + dt);
       const done = glideT >= glideLen;
       const k = easeInOut(glideT / glideLen);
+      glideHabitBlend = done ? 1 : k;
       for (const g of glides) {
+        if (g.isHabit) {
+          if (done) assign(g.p, g.to);
+          continue;
+        }
+        const gDur = g.dur || glideLen;
+        const gk = done || glideT >= gDur ? 1 : easeInOut(glideT / gDur);
         if (g.rgbFrom && g.rgbTo) {
-          const a = g.rgbFrom, b = g.rgbTo;
-          const r = a[0] + (b[0] - a[0]) * k, gr = a[1] + (b[1] - a[1]) * k, bl = a[2] + (b[2] - a[2]) * k;
-          if (done) assign(g.p, rgbToHex(r, gr, bl));
-          else assignSmooth(g.p, null, [r / 255, gr / 255, bl / 255]);
-        } else if (done) {
+          const h0 = g.okhslFrom, h1 = g.okhslTo;
+          if (done || glideT >= gDur) {
+            const b = g.rgbTo;
+            assign(g.p, rgbToHex(b[0], b[1], b[2]));
+          } else if (h0 && h1 && Number.isFinite(h0.h) && Number.isFinite(h1.h) && h0.s > 0.12 && h1.s > 0.12) {
+            const dh = ((h1.h - h0.h + 1.5) % 1) - 0.5;
+            const h = (h0.h + dh * gk + 1) % 1;
+            const s = h0.s + (h1.s - h0.s) * gk;
+            const l = h0.l + (h1.l - h0.l) * gk;
+            assignSmooth(g.p, okhslToHex(h, s, l));
+          } else {
+            const a = g.rgbFrom, b = g.rgbTo;
+            const r = a[0] + (b[0] - a[0]) * gk, gr = a[1] + (b[1] - a[1]) * gk, bl = a[2] + (b[2] - a[2]) * gk;
+            assignSmooth(g.p, null, [r / 255, gr / 255, bl / 255]);
+          }
+        } else if (done || glideT >= gDur) {
           assign(g.p, g.to);
         } else {
-          assignSmooth(g.p, g.from + (g.to - g.from) * k);
+          assignSmooth(g.p, g.from + (g.to - g.from) * gk);
         }
       }
       if (!done) return 'moving';
       glides = [];
+      glideHabitFrom = null;
+      glideHabitTo = null;
+      glideHabitBlend = 0;
       return 'done';
     },
     clearSaved() {
@@ -1584,6 +1656,9 @@ function createModel(schema, storageKey, presets = {}) {
     try {
       const saved = JSON.parse(localStorage.getItem(storageKey) || 'null');
       if (saved && typeof saved === 'object' && saved.values) {
+        if (typeof saved.preset === 'string' && LEGACY_PRESET_NAME_MAP[saved.preset]) {
+          saved.preset = LEGACY_PRESET_NAME_MAP[saved.preset];
+        }
         for (const k in saved.values) if (byKey[k]) assign(byKey[k], saved.values[k]);
         for (const k in saved.bases || {}) if (byKey[k]) byKey[k].base = coerce(byKey[k], saved.bases[k]);
         for (const k in saved.ranges || {}) {
@@ -1594,87 +1669,31 @@ function createModel(schema, storageKey, presets = {}) {
       }
       if (saved && saved.values) {
         let migrated = saved.sig !== sig;
-        if ((saved.values.rainbow === 1 || Number(saved.values.rainbow) === 1) && byKey.rainbow) {
-          assign(byKey.rainbow, 0.1);
-          byKey.rainbow.base = 0.1;
-          delete saved.values.rainbow;
-          if (saved.bases) delete saved.bases.rainbow;
-          migrated = true;
-        }
-        if ((saved.values.rainbowGlow === 0.5 || Number(saved.values.rainbowGlow) === 0.5 || saved.values.rainbowGlow === 1 || Number(saved.values.rainbowGlow) === 1) && byKey.rainbowGlow) {
-          assign(byKey.rainbowGlow, 1.3);
-          byKey.rainbowGlow.base = 1.3;
-          delete saved.values.rainbowGlow;
-          if (saved.bases) delete saved.bases.rainbowGlow;
-          migrated = true;
-        }
-        if ((saved.values.edgeMacro === 1 || Number(saved.values.edgeMacro) === 1) && byKey.edgeMacro) {
-          assign(byKey.edgeMacro, 0.38);
-          byKey.edgeMacro.base = 0.38;
-          delete saved.values.edgeMacro;
-          if (saved.bases) delete saved.bases.edgeMacro;
-          migrated = true;
-        }
-        if ((saved.values.surfaceMacro === 1 || Number(saved.values.surfaceMacro) === 1) && byKey.surfaceMacro) {
-          assign(byKey.surfaceMacro, 1.05);
-          byKey.surfaceMacro.base = 1.05;
-          delete saved.values.surfaceMacro;
-          if (saved.bases) delete saved.bases.surfaceMacro;
-          migrated = true;
-        }
-        if ((saved.values.chipSize === 0.55 || saved.values.chipSize === 1.5 || Number(saved.values.chipSize) === 0.55 || Number(saved.values.chipSize) === 1.5) && byKey.chipSize) {
-          assign(byKey.chipSize, 3);
-          byKey.chipSize.base = 3;
-          delete saved.values.chipSize;
-          if (saved.bases) delete saved.bases.chipSize;
-          migrated = true;
-        }
-        if ((saved.values.edgeGranularity === 1.65 || saved.values.edgeGranularity === 1.4 || Number(saved.values.edgeGranularity) === 1.65 || Number(saved.values.edgeGranularity) === 1.4) && byKey.edgeGranularity) {
-          assign(byKey.edgeGranularity, 3);
-          byKey.edgeGranularity.base = 3;
-          delete saved.values.edgeGranularity;
-          if (saved.bases) delete saved.bases.edgeGranularity;
-          migrated = true;
-        }
-        if ((saved.values.maxDpr === 1 || Number(saved.values.maxDpr) === 1) && byKey.maxDpr) {
-          assign(byKey.maxDpr, 1.5);
-          byKey.maxDpr.base = 1.5;
-          delete saved.values.maxDpr;
-          if (saved.bases) delete saved.bases.maxDpr;
-          migrated = true;
-        }
-        if ((saved.values.targetFps === 60 || Number(saved.values.targetFps) === 60) && byKey.targetFps) {
-          assign(byKey.targetFps, 30);
-          byKey.targetFps.base = 30;
-          delete saved.values.targetFps;
-          if (saved.bases) delete saved.bases.targetFps;
-          migrated = true;
-        }
-        if ([0.04, 0.12, 0.14, 0.22, 0.25].includes(Number(saved.values.growSpeed)) && byKey.growSpeed) {
-          assign(byKey.growSpeed, 0.07);
-          byKey.growSpeed.base = 0.07;
-          delete saved.values.growSpeed;
-          if (saved.bases) delete saved.bases.growSpeed;
-          migrated = true;
-        }
-        if ((saved.values.iridescence === 0.38 || saved.values.iridescence === 0.22 || saved.values.iridescence === 0.29 || saved.values.iridescence === 0.46 || saved.values.iridescence === 0.14 || saved.values.iridescence === 0.42) && byKey.iridescence) {
-          const pDef = presets?.[preset]?.iridescence ?? 0.35;
-          assign(byKey.iridescence, pDef);
-          byKey.iridescence.base = pDef;
-          migrated = true;
-        }
-        if ((saved.values.ditherBlend === 0.52 || Number(saved.values.ditherBlend) === 0.52) && byKey.ditherBlend) {
-          assign(byKey.ditherBlend, 0);
-          byKey.ditherBlend.base = 0;
-          delete saved.values.ditherBlend;
-          if (saved.bases) delete saved.bases.ditherBlend;
-          migrated = true;
-        }
-        if (preset && presets?.[preset]) {
-          for (const rk of ['habit', 'fire', 'fractures', 'fractureGlow', 'phantom', 'phantomRate', 'phantomLayers', 'frostShare', 'frost', 'ditherBlend', 'glimmer']) {
-            if (presets[preset][rk] !== undefined && byKey[rk]) {
-              assign(byKey[rk], presets[preset][rk]);
-              byKey[rk].base = presets[preset][rk];
+        if (migrated) {
+          const activePresetName = preset || Object.keys(presets || {})[0] || 'Classic Quartz Prism';
+          const pTarget = presets?.[activePresetName];
+          if (pTarget) {
+            for (const rk of [
+              'habit', 'crystals', 'fan', 'crossAt', 'lengthJitter', 'thickness', 'tipAngle', 'cavityCurve',
+              'hopper', 'phantom', 'phantomRate', 'phantomLayers', 'milk', 'milkBase', 'veils',
+              'frostShare', 'frost', 'striations', 'striationScale', 'edgeChips', 'edgeWear',
+              'stoneColour', 'colourDepth', 'colourZoning', 'biColour', 'coreColour',
+              'fire', 'fractures', 'fractureGlow', 'ditherBlend', 'glimmer', 'iridescence', 'flash',
+            ]) {
+              if (pTarget[rk] !== undefined && byKey[rk]) {
+                assign(byKey[rk], pTarget[rk]);
+                byKey[rk].base = byKey[rk].value;
+                delete saved.values[rk];
+                if (saved.bases) delete saved.bases[rk];
+              }
+            }
+          }
+          for (const mk of ['edgeMacro', 'surfaceMacro', 'edgeIrregularity', 'patina', 'hairlineFractures', 'chipSize', 'edgeGranularity']) {
+            if (byKey[mk]) {
+              assign(byKey[mk], byKey[mk].default);
+              byKey[mk].base = byKey[mk].default;
+              delete saved.values[mk];
+              if (saved.bases) delete saved.bases[mk];
             }
           }
         }
@@ -2125,11 +2144,34 @@ function buildPanel({ slug, store, onEdited, presets, onPreset, onRandomize, onS
   controls.appendChild(searchSection);
 
   let lastMenuKey = '';
+  function setHudPresetPhrase(hudEl, nextPhrase) {
+    const clean = String(nextPhrase || 'Classic Quartz Prism');
+    const prev = hudEl.dataset.driftPhrase || '';
+    if (prev === clean) return;
+    hudEl.dataset.driftPhrase = clean;
+    if (!prev) {
+      hudEl.textContent = clean;
+      return;
+    }
+    const prevWords = prev.split(/\s+/);
+    const nextWords = clean.split(/\s+/);
+    hudEl.innerHTML = '';
+    nextWords.forEach((word, idx) => {
+      if (idx > 0) hudEl.appendChild(document.createTextNode(' '));
+      const span = document.createElement('span');
+      const stayedSame = prevWords[idx] === word || prevWords.includes(word);
+      span.className = stayedSame ? 'drift-word' : 'drift-word drift-word-enter';
+      span.textContent = word;
+      hudEl.appendChild(span);
+    });
+  }
+
   function rebuildPresetMenu(force = false) {
     const hudPresetName = document.getElementById('preset-name') || document.getElementById('hud-preset-name');
     const firstPresetName = presets ? Object.keys(presets)[0] : 'Classic Quartz Prism';
     if (hudPresetName) {
-      hudPresetName.textContent = store.preset || firstPresetName || 'Classic Quartz Prism';
+      const displayTitle = store.semanticDriftTitle || store.preset || firstPresetName || 'Classic Quartz Prism';
+      setHudPresetPhrase(hudPresetName, displayTitle);
     }
     delPresetBtn.hidden = !(store.preset && store.customPresets && store.customPresets[store.preset]);
     if (!force && document.activeElement === presetMenu) return;
@@ -3500,10 +3542,13 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
   const rawEffPrimaryCount = Math.max(1.8, floatC * (1.0 - 0.38 * twinShare));
   const nodeDt = Math.max(0, Math.min(cluster.pendingNodeDt || 0, 10));
   cluster.pendingNodeDt = 0;
+  // Single unified smoothing factor across all crystal geometry properties (presence, twinW, axis, planes, chips)
+  // so every geometry change happens in ONE single smooth continuous stage (zero 2-stage snap+chase).
+  const aUnified = nodeDt > 0 ? (1 - Math.exp(-1.45 * nodeDt)) : 0;
   if (!Number.isFinite(cluster.smoothEffPrimaryCount)) {
     cluster.smoothEffPrimaryCount = rawEffPrimaryCount;
   } else if (nodeDt > 0) {
-    cluster.smoothEffPrimaryCount += (rawEffPrimaryCount - cluster.smoothEffPrimaryCount) * (1 - Math.exp(-0.22 * nodeDt));
+    cluster.smoothEffPrimaryCount += (rawEffPrimaryCount - cluster.smoothEffPrimaryCount) * aUnified;
   }
   const effPrimaryCount = cluster.smoothEffPrimaryCount;
   let activeCount = 0;
@@ -3514,11 +3559,9 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
     const i = node.cohortIdx;
     const nodeSymmetry = symmetry;
 
-    // Continuous presence & twinW with ultra-slow 2nd-order critically-damped spring (omega = 0.20..0.24 rad/s,
-    // max velocity <= 0.065/s, taking ~15-18s — 3x longer than before) so appearing and disappearing
-    // crystals bud and shrink very gradually across preset changes.
-    const rawPresence = smooth01(Math.max(0.0, Math.min(1.0, floatC - i)));
-    const rawTwinW = i < 2 ? 0.0 : smooth01(Math.max(0.0, Math.min(1.0, (twinShare - node.twinRoll + 0.44) / 0.88)));
+    // Smooth presence window: crystals i < floatC are active; when floatC == 3, only 3 crystals exist
+    const rawPresence = i < 3 ? 1.0 : smooth01(Math.max(0.0, Math.min(1.0, floatC - i)));
+    const rawTwinW = (i < 2 || twinShare <= 0.001) ? 0.0 : smooth01(Math.max(0.0, Math.min(1.0, (twinShare - node.twinRoll * 0.65) / 0.45)));
     if (!node.smoothInit) {
       node.smoothPresence = rawPresence;
       node.velPresence = 0;
@@ -3526,30 +3569,12 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
       node.velTwinW = 0;
       node.smoothInit = true;
     } else if (nodeDt > 0) {
-      let remN = nodeDt;
-      const omegaN = 0.20 + 0.04 * (0.5 + 0.5 * (node.uLen || 0));
-      const omegaN2 = omegaN * omegaN;
-      const dampN = 2.0 * omegaN;
-      const maxVelN = 0.065;
-      while (remN > 1e-6) {
-        const ndt = Math.min(remN, 0.05);
-        remN -= ndt;
-        node.velPresence += ((rawPresence - node.smoothPresence) * omegaN2 - dampN * node.velPresence) * ndt;
-        if (node.velPresence > maxVelN) node.velPresence = maxVelN;
-        else if (node.velPresence < -maxVelN) node.velPresence = -maxVelN;
-        node.smoothPresence = Math.max(0, Math.min(1, node.smoothPresence + node.velPresence * ndt));
-
-        node.velTwinW += ((rawTwinW - node.smoothTwinW) * omegaN2 - dampN * node.velTwinW) * ndt;
-        if (node.velTwinW > maxVelN) node.velTwinW = maxVelN;
-        else if (node.velTwinW < -maxVelN) node.velTwinW = -maxVelN;
-        node.smoothTwinW = Math.max(0, Math.min(1, node.smoothTwinW + node.velTwinW * ndt));
-      }
+      node.smoothPresence += (rawPresence - node.smoothPresence) * aUnified;
+      node.smoothTwinW += (rawTwinW - node.smoothTwinW) * aUnified;
       if (rawPresence <= 1e-4 && node.smoothPresence < 1e-3) {
         node.smoothPresence = 0;
-        node.velPresence = 0;
       } else if (rawPresence >= 1 - 1e-4 && node.smoothPresence > 1 - 1e-3) {
         node.smoothPresence = 1;
-        node.velPresence = 0;
       }
     }
 
@@ -3652,10 +3677,9 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
       node.v0 = new Float32Array(sz);
       node.frameInit = true;
     } else if (nodeDt > 0) {
-      const aAxis = 1 - Math.exp(-2.8 * nodeDt);
-      node.axis0[0] += (ax[0] - node.axis0[0]) * aAxis;
-      node.axis0[1] += (ax[1] - node.axis0[1]) * aAxis;
-      node.axis0[2] += (ax[2] - node.axis0[2]) * aAxis;
+      node.axis0[0] += (ax[0] - node.axis0[0]) * aUnified;
+      node.axis0[1] += (ax[1] - node.axis0[1]) * aUnified;
+      node.axis0[2] += (ax[2] - node.axis0[2]) * aUnified;
       const al = Math.hypot(node.axis0[0], node.axis0[1], node.axis0[2]) || 1;
       node.axis0[0] /= al; node.axis0[1] /= al; node.axis0[2] /= al;
       for (let k = 0; k < 3; k++) ax[k] = node.axis0[k];
@@ -3675,7 +3699,9 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
     const rho = node.rho;
     const az = node.az0 || (i * GOLDEN + 0.55 * node.uAz);
 
-    let primBaseL = (i === 0 ? 1 : Math.max(0.18, 1 - P.lengthJitter.value * (0.4 * node.uLen + 0.6 * rho))) * lenMod;
+    const geodeCompact = 1.0 - 0.52 * cavityCurve;
+    const leaderScale = 1.0 - 0.36 * cavityCurve;
+    let primBaseL = (i === 0 ? leaderScale : Math.max(0.24, 1 - P.lengthJitter.value * (0.4 * node.uLen + 0.6 * rho))) * geodeCompact * lenMod;
     const horizComp = Math.hypot(ax[0], ax[2]);
     const vertComp = Math.abs(ax[1]);
     if (growSideways) {
@@ -3684,7 +3710,7 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
       primBaseL *= 1 + dirProgress * (0.85 * vertComp * Math.min(1.9, 1 / aspect) - 0.16 * horizComp);
     }
 
-    const primBaseR = P.thickness.value * Math.pow(primBaseL, 0.65) * Math.max(0.25, 1 + P.thicknessJitter.value * 0.55 * node.uRadSym) * radMod;
+    const primBaseR = P.thickness.value * Math.pow(primBaseL, 0.55) * Math.max(0.25, 1 + P.thicknessJitter.value * 0.55 * node.uRadSym) * radMod;
 
     let baseL = primBaseL;
     let baseR = primBaseR;
@@ -3712,9 +3738,9 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
         }
       }
       if (cavityCurve > 0.001) {
-        const bowlR = 0.52 * cavityCurve * (0.35 + 0.65 * gScale) * presence;
-        const ringR = bowlR * rho;
-        const bowlY = -bowlR * Math.cos(rho * 1.15) + bowlR * 0.45;
+        const bowlR = 0.68 * cavityCurve * (0.35 + 0.65 * gScale) * presence;
+        const ringR = bowlR * (0.18 + 0.82 * rho);
+        const bowlY = (Math.sin(i * 1.7 + node.uRootV * 2.0) * 0.22 - 0.35 * rho * rho) * bowlR;
         root[0] += Math.cos(az) * ringR;
         root[1] += bowlY;
         root[2] += Math.sin(az) * ringR;
@@ -3777,14 +3803,15 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
   }
 
   const curHabit = P.habit ? String(P.habit.value) : 'Trigonal';
-  const morphBlend = Number(cluster.morphHabitBlend) || 0;
+  const morphBlend = Math.max(0, Math.min(1, Number(cluster.morphHabitBlend) || 0));
   const hFrom = cluster.morphHabitFrom ? resolveHabitSystem(cluster.morphHabitFrom) : '';
   const hTo = cluster.morphHabitTo ? resolveHabitSystem(cluster.morphHabitTo) : '';
   const curSys = resolveHabitSystem(curHabit);
-  const repelStrength = (morphBlend > 1e-4 && morphBlend < 1 - 1e-4 && hFrom && hTo && hFrom !== hTo)
+  const hasHabitMorph = Boolean(hFrom && hTo && hFrom !== hTo);
+  const repelStrength = hasHabitMorph
     ? habitRepelWeight(hFrom) * (1 - morphBlend) + habitRepelWeight(hTo) * morphBlend
     : habitRepelWeight(curSys);
-  const cubicBlend = (morphBlend > 1e-4 && morphBlend < 1 - 1e-4 && hFrom && hTo && hFrom !== hTo)
+  const cubicBlend = hasHabitMorph
     ? (hFrom === 'Cubic / Isometric' ? 1 - morphBlend : 0) + (hTo === 'Cubic / Isometric' ? morphBlend : 0)
     : (curSys === 'Cubic / Isometric' ? 1 : 0);
 
@@ -3902,7 +3929,7 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
     const dynTipJitter = Math.max(0.06, P.tipJitter.value);
     const dynChamfer = Math.max(0, chamfer);
 
-    if (morphBlend > 1e-4 && morphBlend < 1 - 1e-4 && hFrom && hTo && hFrom !== hTo) {
+    if (hasHabitMorph) {
       computeSystemPlanes(
         hFrom, nodeSymmetry, taperLy, latScale, nodeTilt, dynChamfer, dynDom, faceJitterAmt, dynTipJitter, fs, L, r,
         tgtLx, tgtLy, tgtLz, tgtOffR, tgtOffL
@@ -3924,7 +3951,7 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
       }
     } else {
       computeSystemPlanes(
-        curHabit, nodeSymmetry, taperLy, latScale, nodeTilt, dynChamfer, dynDom, faceJitterAmt, dynTipJitter, fs, L, r,
+        hTo || curHabit, nodeSymmetry, taperLy, latScale, nodeTilt, dynChamfer, dynDom, faceJitterAmt, dynTipJitter, fs, L, r,
         tgtLx, tgtLy, tgtLz, tgtOffR, tgtOffL
       );
     }
@@ -3937,17 +3964,16 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
       node.smoothOffL = new Float32Array(tgtOffL);
       node.planesInit = true;
     } else if (nodeDt > 0) {
-      const aPlane = 1 - Math.exp(-3.0 * nodeDt);
       for (let k = 0; k < 18; k++) {
-        const nx = node.smoothLx[k] + (tgtLx[k] - node.smoothLx[k]) * aPlane;
-        const ny = node.smoothLy[k] + (tgtLy[k] - node.smoothLy[k]) * aPlane;
-        const nz = node.smoothLz[k] + (tgtLz[k] - node.smoothLz[k]) * aPlane;
+        const nx = node.smoothLx[k] + (tgtLx[k] - node.smoothLx[k]) * aUnified;
+        const ny = node.smoothLy[k] + (tgtLy[k] - node.smoothLy[k]) * aUnified;
+        const nz = node.smoothLz[k] + (tgtLz[k] - node.smoothLz[k]) * aUnified;
         const inv = 1 / (Math.hypot(nx, ny, nz) || 1);
         node.smoothLx[k] = nx * inv;
         node.smoothLy[k] = ny * inv;
         node.smoothLz[k] = nz * inv;
-        node.smoothOffR[k] += (tgtOffR[k] - node.smoothOffR[k]) * aPlane;
-        node.smoothOffL[k] += (tgtOffL[k] - node.smoothOffL[k]) * aPlane;
+        node.smoothOffR[k] += (tgtOffR[k] - node.smoothOffR[k]) * aUnified;
+        node.smoothOffL[k] += (tgtOffL[k] - node.smoothOffL[k]) * aUnified;
       }
     }
 
@@ -3980,14 +4006,9 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
       node.smoothChip2 = rawChip2;
       node.smoothChip3 = rawChip3;
     } else if (nodeDt > 0) {
-      const aChip = 1 - Math.exp(-0.22 * nodeDt);
-      const maxStepChip = 0.065 * nodeDt;
-      const d1 = rawChip1 - node.smoothChip1;
-      node.smoothChip1 += Math.max(-maxStepChip, Math.min(maxStepChip, d1 * aChip));
-      const d2 = rawChip2 - node.smoothChip2;
-      node.smoothChip2 += Math.max(-maxStepChip, Math.min(maxStepChip, d2 * aChip));
-      const d3 = rawChip3 - node.smoothChip3;
-      node.smoothChip3 += Math.max(-maxStepChip, Math.min(maxStepChip, d3 * aChip));
+      node.smoothChip1 += (rawChip1 - node.smoothChip1) * aUnified;
+      node.smoothChip2 += (rawChip2 - node.smoothChip2) * aUnified;
+      node.smoothChip3 += (rawChip3 - node.smoothChip3) * aUnified;
     }
 
     // Lock corner-nip indices to fixed faces in {0, 1, 2} so they NEVER jump!
@@ -4005,29 +4026,24 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
     const kt0 = 1;
     const kt1 = 2;
 
-    const whaleRoll1 = cornerWhaleRoll(node.uid, 18);
-    const whaleRoll2 = cornerWhaleRoll(node.uid, 19);
-    const whaleRoll3 = cornerWhaleRoll(node.uid, 20);
-    const whaleMult1 = whaleRoll1 >= 0.99 ? 20.0 : (whaleRoll1 >= 0.93 ? 10.0 : 1.0);
-    const whaleMult2 = whaleRoll2 >= 0.99 ? 20.0 : (whaleRoll2 >= 0.93 ? 10.0 : 1.0);
-    const whaleMult3 = whaleRoll3 >= 0.99 ? 20.0 : (whaleRoll3 >= 0.93 ? 10.0 : 1.0);
-
-    const nipSizeMult1 = (0.40 + 1.25 * Math.pow(((node.uid * 41 + 11) % 29) / 28, 1.35)) * whaleMult1;
-    const nipSizeMult2 = (0.40 + 1.25 * Math.pow(((node.uid * 59 + 17) % 31) / 30, 1.35)) * whaleMult2;
-    const nipSizeMult3 = (0.40 + 1.25 * Math.pow(((node.uid * 67 + 23) % 37) / 36, 1.35)) * whaleMult3;
-
     // Exact vertices of this crystal (planes 0..17) so every corner nip is a cap measured from the
     // crystal's true support in its direction: continuous, always a corner, never culls the crystal.
     const vertCount = enumerateCrystalVertices(rowIdx);
 
-    const nipDepth1 = r * (0.0045 + 0.0105 * edgeChipsVal) * chipSizeVal * nipSizeMult1 * (whaleMult1 > 1.0 ? Math.max(0.65, node.smoothChip1) : node.smoothChip1);
-    writeCornerNipPlane(rowIdx, 18, k0, k1, shHoriz1, shVert1, nipDepth1, 0.85, 1.15, vertCount, L, r);
+    if (edgeChipsVal > 0.005) {
+      const nipSizeMult1 = 0.40 + 0.85 * Math.pow(((node.uid * 41 + 11) % 29) / 28, 1.35);
+      const nipSizeMult2 = 0.40 + 0.85 * Math.pow(((node.uid * 59 + 17) % 31) / 30, 1.35);
+      const nipSizeMult3 = 0.40 + 0.85 * Math.pow(((node.uid * 67 + 23) % 37) / 36, 1.35);
 
-    const nipDepth2 = r * (0.0040 + 0.0095 * edgeChipsVal) * chipSizeVal * nipSizeMult2 * (whaleMult2 > 1.0 ? Math.max(0.65, node.smoothChip2) : node.smoothChip2);
-    writeCornerNipPlane(rowIdx, 19, k2, k3, shHoriz2, shVert2, nipDepth2, 1.12, 0.88, vertCount, L, r);
+      const nipDepth1 = r * (0.0085 * edgeChipsVal) * chipSizeVal * nipSizeMult1 * node.smoothChip1;
+      writeCornerNipPlane(rowIdx, 18, k0, k1, shHoriz1, shVert1, nipDepth1, 0.85, 1.15, vertCount, L, r);
 
-    const nipDepth3 = r * (0.0036 + 0.0088 * edgeChipsVal) * chipSizeVal * nipSizeMult3 * (whaleMult3 > 1.0 ? Math.max(0.65, node.smoothChip3) : node.smoothChip3);
-    writeCornerNipPlane(rowIdx, 20, kt0, kt1, tipHoriz, tipVert, nipDepth3, 0.90, 1.10, vertCount, L, r);
+      const nipDepth2 = r * (0.0075 * edgeChipsVal) * chipSizeVal * nipSizeMult2 * node.smoothChip2;
+      writeCornerNipPlane(rowIdx, 19, k2, k3, shHoriz2, shVert2, nipDepth2, 1.12, 0.88, vertCount, L, r);
+
+      const nipDepth3 = r * (0.0068 * edgeChipsVal) * chipSizeVal * nipSizeMult3 * node.smoothChip3;
+      writeCornerNipPlane(rowIdx, 20, kt0, kt1, tipHoriz, tipVert, nipDepth3, 0.90, 1.10, vertCount, L, r);
+    }
 
     const half = 0.5 * L;
     const nodeAlpha = Math.max(0.0, Math.min(1.0, node.alpha * smooth01(Math.min(1.0, presence / 0.55))));
@@ -6126,6 +6142,1288 @@ function createEnsoSound({ onTrackChange, onStateChange } = {}) {
     return { TRACK_ROTATE_SECONDS, ENSO_REVERB_MODES, ENSO_DRONE_MODES, ENSO_WASH_INSTRUMENTS, SAMPLE_ZONES, ENSO_TRACKS, ENSO_TRACK_NAMES, createEnsoSound };
   })();
 
+  // === Module: manifest.js ===
+  const __mod_manifest = (() => {
+const __default_manifest = {
+  name: 'Crystal Transformer',
+  year: 2026,
+  pageColour: 'studioEdge',
+  presetSeconds: 4.2,
+  capture: { seconds: 1, crf: 16, tune: 'grain' },
+};
+
+    return { default: __default_manifest };
+  })();
+
+  // === Module: params.js ===
+  const __mod_params = (() => {
+  const { playback } = __mod_standard;
+  const { film } = __mod_film;
+  const { okhslToHex } = __mod_okhsl;
+  const { ENSO_TRACK_NAMES, ENSO_REVERB_MODES, ENSO_DRONE_MODES, ENSO_WASH_INSTRUMENTS } = __mod_sound;
+// Crystal Transformer — every default, curated mineralogical presets, and smart gemstone randomizer.
+// Built on Jack Bush's Geode ray-tracing shader (jackbush/glimmers).
+const HABITS = [
+  'Trigonal',
+  'Cubic / Isometric',
+  'Hexagonal',
+  'Tetragonal',
+  'Orthorhombic',
+  'Monoclinic',
+  'Triclinic',
+];
+const MIRROR_MODES = [
+  'Plain (None)',
+  'Above & Below (Classic)',
+  'Above & Below (Natural)',
+  'Cube (4-Wall)',
+  'Hall of Mirrors (Stretched)',
+  'Hexagon (Stretched)',
+  'Above & Below (Classic — Liquid)',
+  'Above & Below (Natural — Liquid)',
+  'Cube (Liquid)',
+  'Hall of Mirrors (Stretched — Liquid)',
+  'Hexagon (Stretched — Liquid)',
+];
+const __default_params = [
+  playback({ timeScale: 1.5, fxaa: 1, targetFps: 30, maxDpr: 1.5, maxFps: 30 }, {
+    quality: true,
+    extra: [
+      { key: 'seed', label: 'Seed', value: 19, min: 0, max: 100, step: 1, uniform: false, desc: 'A different cluster: layout, faces and inclusions.' },
+    ],
+  }),
+  {
+    group: 'Ambient Sound (Enso)',
+    params: [
+      { key: 'sound', label: 'Ambient sound', type: 'bool', value: false, default: false, randomize: false, noPreset: true, uniform: false, desc: 'Generative Brian Eno / Enso ambient piano & synth soundscape using 320 kbps OGG reverb-stamped instrument samples (shortcut: M).' },
+      { key: 'soundVolume', label: 'Volume', type: 'range', value: 0.75, default: 0.75, min: 0, max: 1, step: 0.01, randomize: false, noPreset: true, uniform: false, desc: 'Master ambient soundscape volume.' },
+      { key: 'soundTrack', label: 'Enso track', type: 'select', options: ENSO_TRACK_NAMES, value: 'Luminous Drift (C Lydian)', default: 'Luminous Drift (C Lydian)', randomize: false, noPreset: true, uniform: false, desc: 'Active Enso modal ambient track (cycles around the Circle of Fifths).' },
+      { key: 'soundRotate', label: 'Rotate tracks (3m)', type: 'bool', value: true, default: true, randomize: false, noPreset: true, uniform: false, desc: 'Automatically rotate to the next Enso track on the Circle of Fifths every 3 minutes (180s).' },
+      { key: 'washLevel', label: 'Drone / wash level', type: 'range', value: 0.33, default: 0.33, min: 0, max: 1, step: 0.01, randomize: false, noPreset: true, uniform: false, desc: 'Level of the continuous low harmonic drone or breathing wash in the key of the active track.' },
+      { key: 'droneMode', label: 'Drone mode', type: 'select', options: ENSO_DRONE_MODES, value: 'Breathing wash', default: 'Breathing wash', randomize: false, noPreset: true, uniform: false, desc: 'Breathing wash fades each wash smoothly in and out with a silent breathing gap between washes; Continuous drone sustains an uninterrupted low tonic/fifth harmonic foundation.' },
+      { key: 'washInstrument', label: 'Drone instrument', type: 'select', options: ENSO_WASH_INSTRUMENTS, value: 'choir', default: 'choir', randomize: false, noPreset: true, uniform: false, desc: 'Sustained harmonic timbre used for the active track drone or wash (choir, drone, pad, or tape).' },
+      { key: 'washFade', label: 'Wash fade (s)', type: 'range', value: 4.2, default: 4.2, min: 1.5, max: 10, step: 0.1, randomize: false, noPreset: true, uniform: false, desc: 'Smooth cosine fade-in and fade-out duration in seconds for the drone or breathing wash.' },
+      { key: 'washGap', label: 'Wash gap (s)', type: 'range', value: 3.0, default: 3.0, min: 0, max: 8, step: 0.25, randomize: false, noPreset: true, uniform: false, desc: 'Silent breathing gap in seconds after a wash fades completely out before the next wash fades in (0s = continuous drone).' },
+      { key: 'soundReverbMode', label: 'Reverb engine', type: 'select', options: ENSO_REVERB_MODES, value: ENSO_REVERB_MODES[0], default: ENSO_REVERB_MODES[0], randomize: false, noPreset: true, uniform: false, desc: 'Stamped OGG plays pre-baked 320 kbps stereo convolution-reverb samples with zero live reverb CPU; Lite FDN adds a lightweight 4-tap non-convolution delay network.' },
+    ],
+  },
+  {
+    group: 'Camera',
+    params: [
+      { key: 'defaultZoom', label: 'Default zoom level', type: 'range', value: 1, default: 1, min: 0.4, max: 2.5, step: 0.05, uniform: false, desc: 'Baseline camera zoom level persisted across presets, randomizations, and page loads (1.0 = standard framing, >1 = zoomed in closer, <1 = zoomed out).' },
+      { key: 'fov', label: 'Lens °', value: 21, min: 8, max: 70, step: 1, uniform: false, desc: 'Field of view: low = flat telephoto, high = wide. With Distance: zoom in from far, or go wide and close.' },
+      { key: 'tilt', label: 'Height °', value: 6, min: -75, max: 75, step: 0.5, uniform: false, desc: 'Camera elevation (drag vertically on canvas to orbit).' },
+      { key: 'distance', label: 'Distance', value: 2.9, min: 1, max: 18, step: 0.05, uniform: false, desc: 'Camera distance from the middle of the cluster (scroll or pinch on canvas to zoom).' },
+    ],
+  },
+  {
+    group: 'Motion',
+    params: [
+      { key: 'spin', label: 'Spin °/s', value: 1.5, default: 1.5, min: 0, max: 7, step: 0.05, uniform: false, desc: 'How fast the cluster turns about its upright axis.' },
+      { key: 'spinStart', label: 'Orbit angle °', value: 280.757, default: 280.757, min: 0, max: 360, step: 0.5, uniform: false, desc: 'Current horizontal orbit angle around the cluster (drag horizontally on canvas).' },
+      { key: 'sway', label: 'Sway °', value: 0, min: 0, max: 25, step: 0.5, uniform: false, desc: 'The cluster rocks gently as it turns.' },
+      { key: 'swaySpeed', label: 'Sway speed', value: 0.07, min: 0, max: 0.5, step: 0.005, uniform: false, desc: 'Rocks per second.', when: { key: 'sway', not: [0] } },
+    ],
+  },
+  {
+    group: 'Growth & Habit',
+    params: [
+      { key: 'evolve', label: 'Evolve', type: 'bool', value: true, default: true, uniform: false, desc: 'Gradually transforming creation: crystals spawn from their seed growing to full size, then continuously branch at frontier tips while the oldest segments fade and dissolve to keep total vector count bounded.' },
+      { key: 'evolveSpeed', label: 'Evolve speed', type: 'range', value: 1, default: 1, min: 0.02, max: 2, step: 0.01, randomize: false, noPreset: true, uniform: false, desc: 'Speed of crystal seed growth, frontier branching, and old-segment dissolving (lower = calm glacial drift, higher = brisk evolution).' },
+      { key: 'morphPresets', label: 'Morph presets', type: 'bool', value: true, default: true, uniform: false, desc: 'Secondary evolve setting: very gradually morphs parameters across the standard presets in sequence and then rolls random dice for endless new variations.' },
+      { key: 'morphTime', label: 'Morph time (s)', type: 'range', value: 60, default: 60, min: 5, max: 600, step: 5, uniform: false, desc: 'Seconds for each gradual parameter transition between presets and random variations (60s default, up to 10 min / 600s).' },
+      { key: 'rainbow', label: 'Rainbow amount', value: 0.1, default: 0.1, min: 0, max: 2, step: 0.01, randomize: false, noPreset: true, desc: 'Master fader for full spectral rainbow interference, internal cleavage rainbows, and prismatic dispersion (0.1 = default subtle rainbow, 1.0 = 100% full rainbow, 0 = off, up to 2.0 = 200%).' },
+      { key: 'rainbowGlow', label: 'Prism & cleavage glow', value: 1.3, default: 1.3, min: 0, max: 2, step: 0.01, randomize: false, noPreset: true, desc: 'Soft post-process optical glow halo around bright crystal facets, cleavage planes, and rainbow highlights — independent of Rainbow amount.' },
+      { key: 'glimmer', label: 'Glimmer & rainbow sparkle', value: 1, default: 1, min: 0, max: 2, step: 0.01, desc: 'Jack Bush glimmers/geode rainbow glittery sparkliness: uncrushed HDR studio softbox reflections, critical-angle prismatic fire flourishes, thin-film rainbow cracks, and 900-cell micro-crystalline druzy glitter (0 = current smooth/dithered look as on High-Dispersion Diamond, 1 = Jack Bush original geode sparkle, up to 2 = hyper-glitter).' },
+      { key: 'ditherBlend', label: 'Transparent dither blend', value: 0, default: 0, min: 0, max: 1, step: 0.01, desc: 'Universal macro control blending from the glossy rainbow-hued pipeline (0.0) to the pre-reversion transparent, abstract Gaussian-dithered crystal texture (1.0).' },
+      { key: 'iridescence', label: 'Iridescence', value: 0.35, default: 0.35, min: 0, max: 3, step: 0.01, desc: 'Thin-film spectral interference and chromatic rainbow dispersion across crystal facets, bevels, and internal growth zones (crank up to 3 for hyper-prismatic rainbows).' },
+      { key: 'flash', label: 'Flash', value: 0.5, default: 0.5, min: 0, max: 2, step: 0.01, desc: 'Subtle, occasional deep internal glow that lights up inside the heart of select crystals as they turn.' },
+      { key: 'habit', label: 'Crystal habit', type: 'select', options: HABITS, value: 'Trigonal', uniform: false, desc: 'The 7 crystallographic crystal systems: Trigonal (rhombohedral quartz/tourmaline), Cubic/Isometric (octahedral diamond/fluorite), Hexagonal (beryl/ice pinacoids), Tetragonal (4-fold zircon bipyramids), Orthorhombic (rhombic topaz domes), Monoclinic (oblique slanted spodumene), and Triclinic (asymmetric kyanite blades).' },
+      { key: 'autoGrow', label: 'Auto grow', type: 'bool', value: false, default: false, uniform: false, desc: 'Automatically grow the crystals sideways (on wide screens) or upwards (on tall screens) until they fill the viewport, then slow down.' },
+      { key: 'growth', label: 'Growth', value: 1, min: 0.05, max: 3.5, step: 0.005, uniform: false, desc: 'Procedural crystal growth stage from seed nuclei (0.05) through standard cluster (1.0) up to full viewport-filling and boosted super-cluster growth (3.5+).' },
+      { key: 'growSpeed', label: 'Grow speed', value: 0.07, default: 0.07, min: 0, max: 1, step: 0.01, randomize: false, noPreset: true, uniform: false, desc: 'Continuous whole-cluster growth and organic transformation speed.' },
+      { key: 'symmetry', label: 'Prism symmetry', value: 6, default: 6, min: 3, max: 8, step: 0.01, uniform: false, desc: 'Continuous fold symmetry (3 = trigonal, 4 = tetragonal, 5 = pentagonal, 6 = hexagonal, 8 = octagonal); fractional values smoothly unfold a new face.' },
+      { key: 'taper', label: 'Shaft taper', value: 0.08, min: -0.5, max: 0.5, step: 0.01, uniform: false, desc: 'Positive = tapers toward the tip (laser quartz); negative = flares outward toward the crown (scepter).' },
+      { key: 'chamfer', label: 'Crown bevel', value: 0.06, min: 0, max: 0.6, step: 0.01, uniform: false, desc: 'Secondary steeper bevel facets between the prism shaft and termination apex (or cubic truncations on octahedra).' },
+      { key: 'twinShare', label: 'Twin branches', value: 0, min: 0, max: 1, step: 0.01, uniform: false, desc: 'Share of crystals that sprout secondary twin offshoots or parallel buds along parent shafts.' },
+      { key: 'twinAngle', label: 'Branch angle °', value: 48, min: 15, max: 90, step: 1, uniform: false, desc: 'Crystallographic angle at which twin branches bud off parent shafts (Japan-law twin ≈ 84.5°).', when: { key: 'twinShare', not: [0] } },
+      { key: 'cavityCurve', label: 'Geode curvature', value: 0, min: 0, max: 1, step: 0.01, uniform: false, desc: 'Curves the root matrix into a hemispherical geode bowl with points converging inward.' },
+      { key: 'hopper', label: 'Hopper terraces', value: 0, min: 0, max: 1, step: 0.01, desc: 'Stepped skeletal growth terraces carved into crystal faces, as in bismuth or hopper crystals.' },
+    ],
+  },
+  {
+    group: 'Cluster',
+    params: [
+      { key: 'crystals', label: 'Crystals', value: 3, default: 3, min: 3, max: 15, step: 0.01, uniform: false, desc: 'Total crystal points and twin offshoots in the cluster.' },
+      { key: 'fan', label: 'Fan °', value: 38, min: 0, max: 85, step: 1, uniform: false, desc: 'How far the outer points lean away from upright.' },
+      { key: 'crossAt', label: 'Cross point', value: 0.15, min: 0, max: 1, step: 0.01, uniform: false, desc: 'Where along their length the points cross: 0.5 through their middles, 1 at their outer tips, 0 at their roots.' },
+      { key: 'lengthJitter', label: 'Length variety', value: 0.28, min: 0, max: 0.9, step: 0.01, uniform: false, desc: 'How much shorter the subsidiary points are than the tallest.' },
+      { key: 'thickness', label: 'Thickness', value: 0.092, min: 0.04, max: 0.42, step: 0.005, uniform: false, desc: 'Prism radius as a share of a point\'s length.' },
+      { key: 'thicknessJitter', label: 'Thickness variety', value: 0.35, min: 0, max: 1, step: 0.01, uniform: false, desc: 'How much each point\'s girth varies.' },
+      { key: 'faceJitter', label: 'Face variety', value: 0.5, min: 0, max: 0.6, step: 0.01, uniform: false, desc: 'Uneven prism faces: wide and narrow sides, like natural quartz.' },
+      { key: 'tipAngle', label: 'Tip angle °', value: 58.5, min: 25, max: 82, step: 0.1, uniform: false, desc: 'Angle between each tip face\'s normal and the point\'s axis (lower = blunter/tabular, higher = steeper spire).' },
+      { key: 'tipJitter', label: 'Tip variety', value: 0.65, min: 0, max: 0.8, step: 0.01, uniform: false, desc: 'Uneven tip faces, so points end in ridges and chisels, not perfect pyramids.' },
+      { key: 'faceDominance', label: 'Big/small faces', value: 0.24, min: 0, max: 0.5, step: 0.01, uniform: false, desc: 'Three large tip faces and three small, as quartz grows (0 = all equal).' },
+    ],
+  },
+  {
+    group: 'Stone',
+    params: [
+      { key: 'stoneColour', label: 'Colour', type: 'color', value: '#e6f0ff', uniform: false, desc: 'Light through one unit of stone. Also sets the studio backdrop\'s hue.' },
+      { key: 'colourDepth', label: 'Colour depth', value: 0.22, min: 0, max: 6, step: 0.05, uniform: false, desc: 'How strongly the stone tints light that passes through it (0 = water-clear).' },
+      { key: 'colourZoning', label: 'Tip colour', value: 0.12, min: 0, max: 1, step: 0.01, desc: 'Colour gathers toward the tips, as in amethyst (0 = even).', when: { key: 'colourDepth', not: [0] } },
+      { key: 'biColour', label: 'Bi-colour zone', value: 0, min: 0, max: 1, step: 0.01, desc: 'Blends a second colour zone in the crystal core and base (as in watermelon tourmaline or ametrine).' },
+      { key: 'coreColour', label: 'Core colour', type: 'color', value: '#2dd4bf', uniform: false, desc: 'Absorption colour at the crystal core and root.', when: { key: 'biColour', not: [0] } },
+      { key: 'ior', label: 'Refraction', value: 1.544, min: 1, max: 2.6, step: 0.001, desc: 'Index of refraction (fluorite 1.434, quartz 1.544, beryl 1.58, corundum 1.77, diamond 2.417).' },
+      { key: 'faceGlare', label: 'Face glare', value: 0.28, default: 0.28, min: 0, max: 1, step: 0.01, randomize: false, noPreset: true, desc: 'Opacity of bright studio light reflections on crystal faces (lower = see-through facets showing internal details; higher = stronger surface reflection).' },
+      { key: 'fire', label: 'Fire', value: 0.046, min: 0, max: 0.15, step: 0.001, desc: 'Chromatic dispersion: how far white light splits into spectral wavelengths on exit.' },
+      { key: 'fireSamples', label: 'Fire samples', value: 6, min: 2, max: 9, step: 1, desc: 'Wavelengths traced for fire. More = smoother spectral rainbows.', when: { key: 'fire', not: [0] } },
+      { key: 'bounces', label: 'Bounces', value: 6, min: 1, max: 8, step: 1, desc: 'Internal reflections followed inside each point.' },
+      { key: 'depth', label: 'Pass-throughs', value: 3, min: 1, max: 4, step: 1, desc: 'How many crystal points one ray can pass through.' },
+    ],
+  },
+  {
+    group: 'Surface',
+    params: [
+      { key: 'patinaMacro', label: 'Natural wear & patina (macro)', value: 1.0, default: 1.0, min: 0, max: 2, step: 0.01, randomize: false, noPreset: true, desc: 'Master macro fader for the entire natural-specimen patina, contoured edges, micro-scratches, and hairline fractures (0 = pristine digital clarity, 1 = natural mineral specimen, 2 = heavily weathered).' },
+      { key: 'edgeMacro', label: 'Contoured edges & chipping (macro)', value: 0.26, default: 0.26, min: 0, max: 2, step: 0.01, randomize: false, noPreset: true, desc: 'Macro multiplier for 3D CSG edge contouring, corner chipping, and stepped facet bevels.' },
+      { key: 'surfaceMacro', label: 'Surface scratches & fractures (macro)', value: 0.95, default: 0.95, min: 0, max: 2, step: 0.01, randomize: false, noPreset: true, desc: 'Macro multiplier for directional surface micro-scratch patina, growth-hillock etch steps, and sub-surface hairline fractures.' },
+      { key: 'edgeIrregularity', label: 'Edge irregularity', value: 0.32, default: 0.32, min: 0, max: 1, step: 0.01, randomize: false, noPreset: true, desc: 'Organic non-digital 3D CSG stepped bevel facets and conchoidal chips along crystal ridges and termination edges.' },
+      { key: 'patina', label: 'Patina & micro-scratches', value: 0.36, default: 0.36, min: 0, max: 1, step: 0.01, randomize: false, noPreset: true, desc: 'Directional anisotropic micro-scratches, faint growth-hillock etch steps, and tiny surface pits that catch grazing specular light on crystal faces without clouding internal clarity.' },
+      { key: 'hairlineFractures', label: 'Hairline fractures', value: 0.34, default: 0.34, min: 0, max: 1, step: 0.01, randomize: false, noPreset: true, desc: 'Razor-thin, high-contrast internal and sub-surface silvery hairline cracks and feathery cleavage wisps near terminations and edges.' },
+      { key: 'striations', label: 'Striations', value: 0.16, min: 0, max: 1, step: 0.01, desc: 'Fine horizontal growth ridges across the prism faces.' },
+      { key: 'striationScale', label: 'Ridge spacing', value: 175, min: 20, max: 400, step: 1, desc: 'Ridges per unit of length.', when: { key: 'striations', not: [0] } },
+      { key: 'frostShare', label: 'Frosted faces', value: 0.28, default: 0.28, min: 0, max: 1, step: 0.01, desc: 'Share of faces that are etched with grainy micro-crystalline mineral texture rather than mirror-polished.' },
+      { key: 'frost', label: 'Frost', value: 0.14, default: 0.14, min: 0, max: 1, step: 0.01, desc: 'Intensity of the grainy micro-crystalline surface etching on frosted faces.', when: { key: 'frostShare', not: [0] } },
+      { key: 'edgeChips', label: 'Edge chipping', value: 0.0, default: 0.0, min: 0, max: 1, step: 0.01, desc: 'Crystal-locked 3D CSG corner chips and stepped conchoidal fracture facets where crystal edges meet.' },
+      { key: 'chipSize', label: 'Chip size', value: 1.8, default: 1.8, min: 0.1, max: 3.0, step: 0.05, randomize: false, noPreset: true, desc: 'Size and cut depth of 3D CSG corner chips and stepped ridge nicks (lower = subtle micro-nicks, higher = deeper 3D corner chips).' },
+      { key: 'edgeGranularity', label: 'Edge wear granularity', value: 2.2, default: 2.2, min: 0.2, max: 3.0, step: 0.05, randomize: false, noPreset: true, desc: 'Spatial frequency of 3D micro-fracture cells, conchoidal steps, and granular corner wear (higher = finer, more granular crystalline texture).' },
+      { key: 'occlusionStyle', label: 'Occlusion mode', type: 'select', options: ['Auto alternate (Ovoids & Invisible Crystals)', 'Always on (Invisible Crystals)', 'Always on (Ovoids)', 'Subtle', 'Off'], value: 'Auto alternate (Ovoids & Invisible Crystals)', default: 'Auto alternate (Ovoids & Invisible Crystals)', randomize: false, noPreset: true, uniform: false, desc: 'Auto alternate smoothly brings Ovoids and Invisible Crystals (of the same shape and form as the current batch) in and out over 12s; or lock Always on (Invisible Crystals), Always on (Ovoids), Subtle, or Off.' },
+      { key: 'occlusionType', label: 'Occlusion shape', value: 0, default: 0, min: 0, max: 1, step: 0.01, randomize: false, noPreset: true, desc: 'Occlusion cutout geometry: 0 = smooth abstract Ovoids, 1 = Invisible Crystals of the exact same shape and form as the current batch.' },
+      { key: 'occlusion', label: 'Occlusion voids', value: 0, default: 0, min: 0, max: 1, step: 0.01, randomize: false, noPreset: true, desc: 'Massive abstract Ovoids or Invisible Crystals that carve negative-space architectural gaps and faceted crystal cutouts out of the visible crystals.' },
+      { key: 'edgeWear', label: 'Edge wear', value: 0.32, min: 0, max: 1, step: 0.01, desc: 'Chips and bruising along facet edges.' },
+      { key: 'edgeWidth', label: 'Wear width', value: 0.04, min: 0.005, max: 0.2, step: 0.001, desc: 'How far the wear reaches from an edge.', when: { key: 'edgeWear', not: [0] } },
+    ],
+  },
+  {
+    group: 'Inclusions',
+    params: [
+      { key: 'milk', label: 'Milky cloud', value: 0.14, min: 0, max: 4, step: 0.01, desc: 'Cloudy white wisps inside the stone.' },
+      { key: 'milkBase', label: 'Milkier at base', value: 0.85, min: 0, max: 1, step: 0.01, desc: 'Cloud gathers toward the roots and clears toward the tips.', when: { key: 'milk', not: [0] } },
+      { key: 'veils', label: 'Veils', value: 0.28, min: 0, max: 4, step: 0.01, desc: 'Thin rippling sheets of tiny trapped fluid bubbles.' },
+      { key: 'inclusionScale', label: 'Scale', value: 2.2, min: 0.5, max: 8, step: 0.05, desc: 'Size of clouds and veils: higher = finer.' },
+      { key: 'inclusionLight', label: 'Brightness', value: 1.2, min: 0, max: 5, step: 0.05, desc: 'How brightly clouds and veils catch the studio light.' },
+      { key: 'inclusionSteps', label: 'Steps', value: 17, min: 2, max: 32, step: 1, desc: 'Samples per ray through each point.' },
+      { key: 'phantom', label: 'Phantoms', value: 0, min: 0, max: 2, step: 0.01, desc: 'Ghostly outline of earlier growth stages inside each crystal.' },
+      { key: 'phantomRate', label: 'Phantom rate', value: 0.45, min: 0, max: 1, step: 0.01, desc: 'Share of the points that show internal growth phantoms.', when: { key: 'phantom', not: [0] } },
+      { key: 'phantomSize', label: 'Phantom size', value: 0.68, min: 0.2, max: 0.95, step: 0.01, desc: 'Outer phantom shell as a share of its point.', when: { key: 'phantom', not: [0] } },
+      { key: 'phantomLayers', label: 'Phantom shells', value: 2, min: 1, max: 4, step: 0.05, desc: 'Nested concentric phantom growth generations inside each crystal.', when: { key: 'phantom', not: [0] } },
+      { key: 'needles', label: 'Rutile needles', value: 0, min: 0, max: 12, step: 1, desc: 'Fine golden rutile or tourmaline needles per point.' },
+      { key: 'needleWidth', label: 'Needle width', value: 0.0025, min: 0.0005, max: 0.012, step: 0.0001, desc: 'Needle radius in units.', when: { key: 'needles', not: [0] } },
+      { key: 'needleColour', label: 'Needle colour', type: 'color', value: '#d8a24a', desc: 'Rutile gold.', when: { key: 'needles', not: [0] } },
+      { key: 'fractures', label: 'Rainbow cracks', value: 0.34, min: 0, max: 1, step: 0.01, desc: 'Share of points with an internal cleavage crack that shimmers in thin-film colours.' },
+      { key: 'fractureGlow', label: 'Crack shimmer', value: 1.55, min: 0, max: 4, step: 0.05, desc: 'How strongly the cracks reflect.', when: { key: 'fractures', not: [0] } },
+    ],
+  },
+  {
+    group: 'Studio',
+    params: [
+      { key: 'mirrorMode', label: 'Mirrored background', type: 'select', options: MIRROR_MODES, value: 'Plain (None)', default: 'Plain (None)', randomize: false, noPreset: true, uniform: false, desc: 'Analytical GPU mirrored background mode: Plain (default), Above & Below (Classic & Natural), Cube (4-Wall), Hall of Mirrors (Stretched), Hexagon (Stretched), plus their 5 subtle Liquid variations.' },
+      { key: 'mirrorScale', label: 'Mirror scale', value: 1.0, default: 1.0, min: 0.25, max: 4.0, step: 0.05, randomize: false, noPreset: true, desc: 'Scales the mirror plane distance, tunnel width, and checkerboard tile size.', when: { key: 'mirrorMode', not: ['Plain (None)'] } },
+      { key: 'mirrorStrength', label: 'Mirror reflectivity', value: 0.65, default: 0.65, min: 0, max: 1, step: 0.01, randomize: false, noPreset: true, desc: 'Reflectivity of the mirrored background when a mirror mode is active.', when: { key: 'mirrorMode', not: ['Plain (None)'] } },
+      { key: 'mirrorDepthFade', label: 'Mirror depth fade', value: 0.45, default: 0.45, min: 0, max: 1, step: 0.01, randomize: false, noPreset: true, desc: 'Controls the opacity fade of the mirror planes, reflections, and checkerboard with depth into the horizon.', when: { key: 'mirrorMode', not: ['Plain (None)'] } },
+      { key: 'mirrorLiquid', label: 'Liquid wave amount', value: 0.22, default: 0.22, min: 0, max: 1, step: 0.01, randomize: false, noPreset: true, desc: 'Subtle liquid surface wave undulation across the mirrored background.', when: { key: 'mirrorMode', not: ['Plain (None)'] } },
+      { key: 'mirrorChecker', label: 'Checkerboard pattern', value: 0.0, default: 0.0, min: 0, max: 1, step: 0.01, randomize: false, noPreset: true, desc: 'Anti-aliased 3D perspective checkerboard pattern on the mirror surfaces across all variations.', when: { key: 'mirrorMode', not: ['Plain (None)'] } },
+      { key: 'mirrorComplement', label: 'Complementary mirror tint', value: 0.0, default: 0.0, min: 0, max: 1, step: 0.01, randomize: false, noPreset: true, desc: 'Blends the 180° complementary color of the studio background into the mirrored background and its reflections.', when: { key: 'mirrorMode', not: ['Plain (None)'] } },
+      { key: 'graduallyShift', label: 'Complementary bg', type: 'bool', value: true, default: true, uniform: false, desc: 'Always shift the background color to the opposite (180° complementary) hue of the main crystal color.' },
+      { key: 'hueShift', label: 'Hue shift °', value: 180, default: 180, min: 0, max: 360, step: 1, uniform: false, desc: 'Backdrop hue relative to the stone\'s (0 or 360 = same hue, 180 = opposite).' },
+      { key: 'backdropSat', label: 'Backdrop sat.', value: 0.55, default: 0.55, min: 0, max: 1, step: 0.01, uniform: false, desc: 'Saturation of the backdrop glow.' },
+      { key: 'backdropLight', label: 'Backdrop light', value: 0.095, default: 0.095, min: 0, max: 0.4, step: 0.005, uniform: false, desc: 'Brightness of the glow behind the cluster.' },
+      { key: 'glowSize', label: 'Glow size °', value: 18.5, default: 18.5, min: 2, max: 40, step: 0.5, desc: 'Spread of the glow behind the cluster.', when: { key: 'backdropLight', not: [0] } },
+      { key: 'studioEdge', label: 'Edge colour', type: 'color', value: '#141208', default: '#141208', desc: 'The studio away from the glow; also the page colour.' },
+      { key: 'lightColour', label: 'Light colour', type: 'color', value: '#fff3e4', uniform: false, desc: 'Colour of every softbox.' },
+      { key: 'keyLight', label: 'Key light', value: 7, min: 0, max: 30, step: 0.1, uniform: false, desc: 'The main softbox, up and to the left of the camera.' },
+      { key: 'keyAngle', label: 'Key angle °', value: -48, min: -180, max: 180, step: 1, uniform: false, desc: 'Where the key light sits around the cluster.', when: { key: 'keyLight', not: [0] } },
+      { key: 'keyHeight', label: 'Key height °', value: 38, min: -20, max: 85, step: 1, uniform: false, desc: 'How high the key light sits.', when: { key: 'keyLight', not: [0] } },
+      { key: 'fillLight', label: 'Fill light', value: 1.6, min: 0, max: 20, step: 0.1, uniform: false, desc: 'A large dim softbox opposite the key.' },
+      { key: 'rimLight', label: 'Rim lights', value: 9, min: 0, max: 40, step: 0.1, uniform: false, desc: 'Two tall strip lights behind the cluster that line its edges.' },
+      { key: 'rimAngle', label: 'Rim angle °', value: 125, min: 60, max: 175, step: 1, uniform: false, desc: 'How far round behind the cluster the strips stand.', when: { key: 'rimLight', not: [0] } },
+      { key: 'lightSize', label: 'Light size', value: 0.8, min: 0.2, max: 3, step: 0.01, uniform: false, desc: 'Scales every softbox: bigger = broader, softer highlights.' },
+      { key: 'lightSoftness', label: 'Light softness', value: 0.06, min: 0, max: 0.5, step: 0.005, desc: 'Feathering at the softbox edges.' },
+    ],
+  },
+  {
+    group: 'Image',
+    params: [
+      { key: 'exposure', label: 'Exposure', value: 1, min: 0.1, max: 4, step: 0.01, desc: 'Brightness before tone mapping.' },
+      { key: 'bloom', label: 'Bloom', value: 0.2, default: 0.2, min: 0, max: 2, step: 0.01, randomize: false, noPreset: true, desc: 'Surface facet catch-lights, star-burst glints, and optical glow around the brightest crystal highlights.' },
+      { key: 'bloomThreshold', label: 'Bloom threshold', value: 1.2, min: 0, max: 6, step: 0.05, desc: 'Brightness above which light blooms.', when: { key: 'bloom', not: [0] } },
+      { key: 'vignette', label: 'Vignette', value: 0, min: 0, max: 1, step: 0.01, desc: 'Darkening toward the corners.' },
+      { key: 'filmFps', label: 'Film frame rate', value: 24, min: 6, max: 60, step: 1, uniform: false, desc: 'Rate at which grain and dust update.' },
+    ],
+  },
+  film({ grainAmount: 0.02, grainSharpness: 1.29, dust: 0 }),
+];
+
+/** Curated mineralogical & optical presets — ordered for high consecutive colour & habit contrast */
+const presets = {
+  // 1. Water-Clear Rock Crystal Quartz — tall, slender vitreous prisms with natural surface frosting & a crack or two (zero geometric hopper/phantom boxes)
+  'Classic Quartz Prism': {
+    seed: 19,
+    habit: 'Trigonal',
+    growth: 1,
+    symmetry: 6,
+    taper: 0.08,
+    chamfer: 0.06,
+    twinShare: 0,
+    twinAngle: 48,
+    cavityCurve: 0,
+    hopper: 0,
+    crystals: 3,
+    fan: 38,
+    crossAt: 0.15,
+    lengthJitter: 0.28,
+    thickness: 0.092,
+    faceJitter: 0.42,
+    faceDominance: 0.24,
+    tipAngle: 58.5,
+    tipJitter: 0.48,
+    stoneColour: '#e6f0ff',
+    colourDepth: 0.22,
+    colourZoning: 0.12,
+    biColour: 0,
+    ior: 1.544,
+    fire: 0.046,
+    fireSamples: 6,
+    bounces: 6,
+    striations: 0.14,
+    striationScale: 175,
+    frostShare: 0.28,
+    frost: 0.14,
+    edgeChips: 0,
+    edgeWear: 0.18,
+    milk: 0.14,
+    milkBase: 0.85,
+    veils: 0.28,
+    phantom: 0,
+    phantomRate: 0,
+    phantomLayers: 1,
+    needles: 0,
+    fractures: 0.38,
+    fractureGlow: 1.65,
+    hueShift: 180,
+    backdropLight: 0.095,
+    glimmer: 1.08,
+    ditherBlend: 0,
+    iridescence: 0.28,
+    flash: 0.35,
+  },
+  // 2. Amethyst Cathedral — dense geode cluster of 13 shorter, smaller rhombohedral heads radiating from a curved cathedral bowl (strong shape contrast vs Quartz #1)
+  'Amethyst Cathedral': {
+    seed: 7,
+    habit: 'Trigonal',
+    growth: 1,
+    symmetry: 6,
+    taper: 0.02,
+    chamfer: 0.14,
+    twinShare: 0.32,
+    twinAngle: 54,
+    cavityCurve: 0.78,
+    hopper: 0,
+    crystals: 13,
+    fan: 72,
+    crossAt: 0.28,
+    lengthJitter: 0.46,
+    thickness: 0.125,
+    thicknessJitter: 0.35,
+    faceJitter: 0.32,
+    faceDominance: 0.32,
+    tipAngle: 51.8,
+    tipJitter: 0.34,
+    stoneColour: '#9333ea',
+    colourDepth: 2.85,
+    colourZoning: 0.78,
+    biColour: 0.22,
+    coreColour: '#f3e8ff',
+    ior: 1.544,
+    fire: 0.052,
+    fireSamples: 6,
+    bounces: 6,
+    striations: 0.12,
+    frostShare: 0.36,
+    frost: 0.3,
+    edgeChips: 0,
+    edgeWear: 0.22,
+    milk: 0.16,
+    milkBase: 0.82,
+    veils: 0.38,
+    phantom: 0.12,
+    phantomRate: 0.35,
+    phantomSize: 0.68,
+    phantomLayers: 2,
+    needles: 0,
+    fractures: 0.38,
+    fractureGlow: 1.65,
+    hueShift: 180,
+    glimmer: 1.15,
+    ditherBlend: 0,
+    iridescence: 0.36,
+    flash: 0.45,
+  },
+  // 3. High-Dispersion Diamond — ultra-clear adamantine octahedral crystal (zero cloudiness, zero milk/veils/frost, razor-sharp dispersion)
+  'High-Dispersion Diamond': {
+    seed: 88,
+    habit: 'Cubic / Isometric',
+    growth: 1,
+    symmetry: 4,
+    taper: 0,
+    chamfer: 0.28,
+    twinShare: 0.32,
+    twinAngle: 60,
+    cavityCurve: 0,
+    hopper: 0,
+    crystals: 3,
+    fan: 42,
+    crossAt: 0.5,
+    lengthJitter: 0.26,
+    thickness: 0.24,
+    faceJitter: 0.1,
+    tipAngle: 54.7,
+    tipJitter: 0.08,
+    faceDominance: 0.06,
+    stoneColour: '#ffffff',
+    colourDepth: 0.04,
+    colourZoning: 0,
+    biColour: 0,
+    ior: 2.417,
+    fire: 0.145,
+    fireSamples: 8,
+    bounces: 8,
+    depth: 4,
+    striations: 0,
+    frostShare: 0,
+    frost: 0,
+    edgeChips: 0,
+    edgeWear: 0,
+    milk: 0,
+    veils: 0,
+    phantom: 0,
+    phantomRate: 0,
+    phantomLayers: 1,
+    needles: 0,
+    fractures: 0.06,
+    fractureGlow: 2.1,
+    hueShift: 180,
+    keyLight: 12,
+    rimLight: 19,
+    glimmer: 1.15,
+    ditherBlend: 0,
+    iridescence: 0.72,
+    flash: 0.15,
+  },
+  // 4. Rutilated Smoky Scepter — warm cognac-amber smoky quartz with golden acicular rutile needles
+  'Rutilated Smoky Scepter': {
+    seed: 14,
+    habit: 'Trigonal',
+    growth: 1,
+    symmetry: 6,
+    taper: -0.14,
+    chamfer: 0.22,
+    twinShare: 0.46,
+    twinAngle: 54,
+    cavityCurve: 0,
+    hopper: 0,
+    crystals: 4,
+    fan: 40,
+    crossAt: 0.38,
+    lengthJitter: 0.25,
+    thickness: 0.11,
+    faceDominance: 0.26,
+    tipAngle: 60.5,
+    stoneColour: '#d97706',
+    colourDepth: 2.45,
+    colourZoning: 0.62,
+    biColour: 0.35,
+    coreColour: '#fef3c7',
+    ior: 1.544,
+    fire: 0.038,
+    striations: 0.24,
+    frostShare: 0.38,
+    frost: 0.28,
+    edgeChips: 0.28,
+    milk: 0.08,
+    veils: 0.34,
+    phantom: 0.12,
+    phantomRate: 0.4,
+    phantomLayers: 2,
+    needles: 10,
+    needleWidth: 0.0032,
+    needleColour: '#fbbf24',
+    fractures: 0.32,
+    fractureGlow: 1.45,
+    hueShift: 180,
+    glimmer: 1.05,
+    ditherBlend: 0,
+    iridescence: 0.3,
+    flash: 0.42,
+  },
+  // 5. Phantom Emerald Twin — lush Colombian emerald green hexagonal beryl with delicate phantom zoning & jardin veils (cool green vs warm amber #4)
+  'Phantom Emerald Twin': {
+    seed: 42,
+    habit: 'Hexagonal',
+    growth: 1,
+    symmetry: 6,
+    taper: -0.04,
+    chamfer: 0.38,
+    twinShare: 0.48,
+    twinAngle: 34,
+    cavityCurve: 0,
+    hopper: 0,
+    crystals: 5,
+    fan: 28,
+    crossAt: 0.32,
+    lengthJitter: 0.36,
+    thickness: 0.135,
+    faceJitter: 0.2,
+    tipAngle: 34,
+    tipJitter: 0.18,
+    faceDominance: 0.05,
+    stoneColour: '#10b981',
+    colourDepth: 3.55,
+    colourZoning: 0.45,
+    biColour: 0.55,
+    coreColour: '#047857',
+    ior: 1.582,
+    fire: 0.026,
+    striations: 0.18,
+    frostShare: 0.38,
+    frost: 0.3,
+    edgeChips: 0.28,
+    milk: 0.14,
+    veils: 0.62,
+    phantom: 0.55,
+    phantomRate: 0.78,
+    phantomSize: 0.74,
+    phantomLayers: 3,
+    needles: 2,
+    needleColour: '#a7f3d0',
+    fractures: 0.42,
+    fractureGlow: 1.55,
+    hueShift: 180,
+    glimmer: 1.05,
+    ditherBlend: 0,
+    iridescence: 0.28,
+    flash: 0.46,
+  },
+  // 6. Ruby Druzy Spire — vivid pigeon-blood crimson corundum spires with golden rutile silk (hot crimson vs emerald green #5)
+  'Ruby Druzy Spire': {
+    seed: 31,
+    habit: 'Trigonal',
+    growth: 1,
+    symmetry: 6,
+    taper: 0.16,
+    chamfer: 0.22,
+    twinShare: 0.42,
+    twinAngle: 58,
+    cavityCurve: 0.65,
+    hopper: 0,
+    crystals: 8,
+    fan: 60,
+    crossAt: 0.24,
+    lengthJitter: 0.42,
+    thickness: 0.098,
+    tipAngle: 64,
+    stoneColour: '#e11d48',
+    colourDepth: 3.85,
+    colourZoning: 0.62,
+    biColour: 0.42,
+    coreColour: '#fb7185',
+    ior: 1.768,
+    fire: 0.048,
+    striations: 0.22,
+    frostShare: 0.36,
+    frost: 0.3,
+    edgeChips: 0.26,
+    milk: 0.12,
+    veils: 0.38,
+    phantom: 0,
+    phantomRate: 0,
+    phantomLayers: 1,
+    needles: 5,
+    needleWidth: 0.002,
+    needleColour: '#fde047',
+    fractures: 0.36,
+    fractureGlow: 1.65,
+    hueShift: 180,
+    rimLight: 14,
+    glimmer: 1.15,
+    ditherBlend: 0,
+    iridescence: 0.35,
+    flash: 0.5,
+  },
+  // 7. Blue Celestite — icy sky-blue orthorhombic strontium sulfate cluster with vitreous frosted bevels (cool sky-blue vs crimson #6)
+  'Blue Celestite': {
+    seed: 77,
+    habit: 'Orthorhombic',
+    growth: 1,
+    symmetry: 4,
+    taper: 0.05,
+    chamfer: 0.32,
+    twinShare: 0.62,
+    twinAngle: 56,
+    cavityCurve: 0.28,
+    hopper: 0,
+    crystals: 7,
+    fan: 58,
+    crossAt: 0.42,
+    lengthJitter: 0.34,
+    thickness: 0.118,
+    tipAngle: 44,
+    stoneColour: '#38bdf8',
+    colourDepth: 1.85,
+    colourZoning: 0.52,
+    biColour: 0.45,
+    coreColour: '#e0f2fe',
+    ior: 1.622,
+    fire: 0.032,
+    striations: 0.14,
+    frostShare: 0.54,
+    frost: 0.38,
+    edgeChips: 0.26,
+    milk: 0.22,
+    milkBase: 0.65,
+    veils: 0.52,
+    phantom: 0,
+    phantomRate: 0,
+    phantomLayers: 1,
+    fractures: 0.44,
+    fractureGlow: 1.75,
+    hueShift: 180,
+    glimmer: 1.1,
+    ditherBlend: 0,
+    iridescence: 0.42,
+    flash: 0.42,
+  },
+  // 8. Imperial Topaz — warm golden-sherry orthorhombic prism with vertical striations & basal cleavage (warm gold-orange vs sky-blue #7)
+  'Imperial Topaz': {
+    seed: 61,
+    habit: 'Orthorhombic',
+    growth: 1,
+    symmetry: 4,
+    taper: 0.03,
+    chamfer: 0.22,
+    twinShare: 0.34,
+    twinAngle: 46,
+    cavityCurve: 0,
+    hopper: 0,
+    crystals: 4,
+    fan: 34,
+    crossAt: 0.36,
+    lengthJitter: 0.28,
+    thickness: 0.135,
+    faceJitter: 0.18,
+    tipAngle: 48,
+    tipJitter: 0.16,
+    faceDominance: 0.15,
+    stoneColour: '#f59e0b',
+    colourDepth: 2.85,
+    colourZoning: 0.68,
+    biColour: 0.62,
+    coreColour: '#fb7185',
+    ior: 1.63,
+    fire: 0.036,
+    striations: 0.48,
+    striationScale: 185,
+    frostShare: 0.32,
+    frost: 0.26,
+    edgeChips: 0.24,
+    milk: 0.06,
+    veils: 0.28,
+    phantom: 0,
+    phantomRate: 0,
+    phantomLayers: 1,
+    needles: 0,
+    fractures: 0.38,
+    fractureGlow: 1.65,
+    hueShift: 180,
+    glimmer: 1.05,
+    ditherBlend: 0,
+    iridescence: 0.38,
+    flash: 0.48,
+  },
+  // 9. Sapphire Kyanite — deep royal cornflower-blue triclinic blades with pearly cleavage sheen (deep blue vs golden-orange #8)
+  'Sapphire Kyanite': {
+    seed: 83,
+    habit: 'Triclinic',
+    growth: 1,
+    symmetry: 4,
+    taper: 0.04,
+    chamfer: 0.18,
+    twinShare: 0.46,
+    twinAngle: 38,
+    cavityCurve: 0,
+    hopper: 0,
+    crystals: 5,
+    fan: 48,
+    crossAt: 0.35,
+    lengthJitter: 0.32,
+    thickness: 0.118,
+    faceJitter: 0.26,
+    tipAngle: 41,
+    tipJitter: 0.24,
+    faceDominance: 0.22,
+    stoneColour: '#2563eb',
+    colourDepth: 3.45,
+    colourZoning: 0.66,
+    biColour: 0.68,
+    coreColour: '#38bdf8',
+    ior: 1.72,
+    fire: 0.042,
+    striations: 0.44,
+    striationScale: 160,
+    frostShare: 0.38,
+    frost: 0.3,
+    edgeChips: 0.28,
+    milk: 0.14,
+    milkBase: 0.65,
+    veils: 0.45,
+    phantom: 0,
+    phantomRate: 0,
+    phantomLayers: 1,
+    needles: 2,
+    needleColour: '#bae6fd',
+    fractures: 0.48,
+    fractureGlow: 1.85,
+    hueShift: 180,
+    rimLight: 15,
+    glimmer: 1.08,
+    ditherBlend: 0,
+    iridescence: 0.46,
+    flash: 0.52,
+  },
+  // 10. Watermelon Tourmaline — bi-colour rubellite pink core & mint-green elbaite rim with trigonal striations (vivid pink/mint vs royal blue #9)
+  'Watermelon Tourmaline': {
+    seed: 53,
+    habit: 'Trigonal',
+    growth: 1,
+    symmetry: 3,
+    taper: 0.025,
+    chamfer: 0.32,
+    twinShare: 0.52,
+    twinAngle: 44,
+    cavityCurve: 0,
+    hopper: 0,
+    crystals: 4,
+    fan: 39,
+    crossAt: 0.35,
+    lengthJitter: 0.3,
+    thickness: 0.118,
+    faceJitter: 0.25,
+    tipAngle: 46.5,
+    stoneColour: '#ec4899',
+    colourDepth: 3.25,
+    colourZoning: 0.64,
+    biColour: 0.92,
+    coreColour: '#10b981',
+    ior: 1.624,
+    fire: 0.034,
+    striations: 0.64,
+    striationScale: 215,
+    frostShare: 0.36,
+    frost: 0.28,
+    edgeChips: 0.26,
+    milk: 0.1,
+    milkBase: 0.72,
+    veils: 0.48,
+    phantom: 0.22,
+    phantomRate: 0.5,
+    phantomLayers: 2,
+    needles: 2,
+    needleColour: '#fbcfe8',
+    fractures: 0.36,
+    fractureGlow: 1.5,
+    hueShift: 180,
+    glimmer: 1.08,
+    ditherBlend: 0,
+    iridescence: 0.38,
+    flash: 0.45,
+  },
+  // 11. Glimmer Diamond — crystal-clear rainbow-dispersive isometric diamond cluster with spectral fire (brilliant white vs pink/mint #10)
+  'Glimmer Diamond': {
+    seed: 88,
+    habit: 'Cubic / Isometric',
+    growth: 1,
+    symmetry: 4,
+    taper: 0,
+    chamfer: 0.26,
+    twinShare: 0.35,
+    twinAngle: 60,
+    cavityCurve: 0,
+    hopper: 0,
+    crystals: 4,
+    fan: 46,
+    crossAt: 0.48,
+    lengthJitter: 0.26,
+    thickness: 0.22,
+    faceJitter: 0.14,
+    tipAngle: 54.7,
+    tipJitter: 0.12,
+    faceDominance: 0.08,
+    stoneColour: '#f8fafc',
+    colourDepth: 0.05,
+    colourZoning: 0.05,
+    biColour: 0,
+    coreColour: '#e0f2fe',
+    ior: 2.417,
+    fire: 0.15,
+    fireSamples: 8,
+    bounces: 8,
+    depth: 4,
+    striations: 0,
+    frostShare: 0,
+    frost: 0,
+    edgeChips: 0.16,
+    edgeWear: 0.12,
+    milk: 0,
+    veils: 0,
+    phantom: 0,
+    phantomRate: 0,
+    phantomLayers: 1,
+    needles: 0,
+    fractures: 0.14,
+    fractureGlow: 2.2,
+    hueShift: 180,
+    keyLight: 12,
+    rimLight: 19,
+    glimmer: 1.35,
+    ditherBlend: 0,
+    iridescence: 0.92,
+    flash: 0.22,
+  },
+  // 12. Imperial Zircon — fiery hyacinth red-orange tetragonal bipyramids with sub-adamantine luster (fiery red-gold vs white diamond #11)
+  'Imperial Zircon': {
+    seed: 28,
+    habit: 'Tetragonal',
+    growth: 1,
+    symmetry: 4,
+    taper: 0.02,
+    chamfer: 0.24,
+    twinShare: 0.36,
+    twinAngle: 56,
+    cavityCurve: 0,
+    hopper: 0,
+    crystals: 4,
+    fan: 38,
+    crossAt: 0.4,
+    lengthJitter: 0.26,
+    thickness: 0.145,
+    faceJitter: 0.14,
+    tipAngle: 52.5,
+    tipJitter: 0.14,
+    faceDominance: 0.08,
+    stoneColour: '#ea580c',
+    colourDepth: 3.15,
+    colourZoning: 0.62,
+    biColour: 0.58,
+    coreColour: '#fde047',
+    ior: 1.95,
+    fire: 0.072,
+    fireSamples: 7,
+    bounces: 7,
+    depth: 3,
+    striations: 0.14,
+    striationScale: 130,
+    frostShare: 0.3,
+    frost: 0.25,
+    edgeChips: 0.24,
+    milk: 0.04,
+    veils: 0.24,
+    phantom: 0,
+    phantomRate: 0,
+    phantomLayers: 1,
+    needles: 0,
+    fractures: 0.36,
+    fractureGlow: 1.85,
+    hueShift: 180,
+    rimLight: 15,
+    glimmer: 1.12,
+    ditherBlend: 0,
+    iridescence: 0.48,
+    flash: 0.52,
+  },
+  // 13. Tabular Aquamarine — cool seafoam-cyan hexagonal beryl with flat basal pinacoid & etched prism faces (cool cyan vs fiery red-orange #12)
+  'Tabular Aquamarine': {
+    seed: 91,
+    habit: 'Hexagonal',
+    growth: 1,
+    symmetry: 6,
+    taper: 0,
+    chamfer: 0.42,
+    twinShare: 0.3,
+    twinAngle: 48,
+    cavityCurve: 0,
+    hopper: 0,
+    crystals: 4,
+    fan: 36,
+    crossAt: 0.42,
+    lengthJitter: 0.28,
+    thickness: 0.165,
+    faceJitter: 0.18,
+    tipAngle: 31,
+    tipJitter: 0.12,
+    faceDominance: 0.06,
+    stoneColour: '#06b6d4',
+    colourDepth: 2.15,
+    colourZoning: 0.42,
+    biColour: 0.35,
+    coreColour: '#67e8f9',
+    ior: 1.578,
+    fire: 0.032,
+    striations: 0.42,
+    striationScale: 180,
+    frostShare: 0.42,
+    frost: 0.3,
+    edgeChips: 0.24,
+    milk: 0.08,
+    veils: 0.32,
+    phantom: 0.08,
+    phantomRate: 0.35,
+    phantomLayers: 2,
+    needles: 2,
+    needleColour: '#e0f2fe',
+    fractures: 0.28,
+    fractureGlow: 1.45,
+    hueShift: 180,
+    glimmer: 1.05,
+    ditherBlend: 0,
+    iridescence: 0.38,
+    flash: 0.44,
+  },
+  // 14. Kunzite Spodumene — orchid-lilac monoclinic laths with deep vertical striations & silky pleochroic glow (orchid pink vs seafoam cyan #13)
+  'Kunzite Spodumene': {
+    seed: 39,
+    habit: 'Monoclinic',
+    growth: 1,
+    symmetry: 4,
+    taper: 0.02,
+    chamfer: 0.2,
+    twinShare: 0.4,
+    twinAngle: 42,
+    cavityCurve: 0,
+    hopper: 0,
+    crystals: 5,
+    fan: 44,
+    crossAt: 0.38,
+    lengthJitter: 0.3,
+    thickness: 0.125,
+    faceJitter: 0.22,
+    tipAngle: 44,
+    tipJitter: 0.2,
+    faceDominance: 0.18,
+    stoneColour: '#d946ef',
+    colourDepth: 2.65,
+    colourZoning: 0.64,
+    biColour: 0.58,
+    coreColour: '#fda4af',
+    ior: 1.668,
+    fire: 0.038,
+    striations: 0.58,
+    striationScale: 210,
+    frostShare: 0.38,
+    frost: 0.3,
+    edgeChips: 0.26,
+    milk: 0.08,
+    veils: 0.36,
+    phantom: 0,
+    phantomRate: 0,
+    phantomLayers: 1,
+    needles: 3,
+    needleColour: '#f5d0fe',
+    fractures: 0.42,
+    fractureGlow: 1.7,
+    hueShift: 180,
+    glimmer: 1.08,
+    ditherBlend: 0,
+    iridescence: 0.44,
+    flash: 0.5,
+  },
+  // 15. Stepped Bismuth Hopper — iridescent peacock teal-gold orthorhombic skeletal hopper terraces (the ONE true hopper crystal, contrasting pink #14 and clear quartz #1)
+  'Stepped Bismuth Hopper': {
+    seed: 64,
+    habit: 'Orthorhombic',
+    growth: 1,
+    symmetry: 4,
+    taper: -0.22,
+    chamfer: 0.45,
+    twinShare: 0.65,
+    twinAngle: 88,
+    cavityCurve: 0.1,
+    hopper: 0.88,
+    crystals: 5,
+    fan: 48,
+    crossAt: 0.45,
+    lengthJitter: 0.32,
+    thickness: 0.16,
+    faceJitter: 0.15,
+    tipAngle: 42,
+    tipJitter: 0.18,
+    faceDominance: 0.35,
+    stoneColour: '#14b8a6',
+    colourDepth: 2.95,
+    colourZoning: 0.8,
+    biColour: 0.85,
+    coreColour: '#f472b6',
+    ior: 2.15,
+    fire: 0.095,
+    striations: 0.62,
+    striationScale: 55,
+    frostShare: 0.1,
+    frost: 0.25,
+    edgeChips: 0.34,
+    occlusion: 0.55,
+    edgeWear: 0.22,
+    milk: 0.04,
+    veils: 0.2,
+    phantom: 0.65,
+    phantomRate: 0.72,
+    phantomLayers: 3,
+    fractures: 0.65,
+    fractureGlow: 2.5,
+    hueShift: 180,
+    rimLight: 16,
+    glimmer: 1.25,
+    ditherBlend: 0,
+    iridescence: 1.65,
+    flash: 0.55,
+  },
+};
+
+/**
+ * Per-preset mineralogical & poetic semantic DNA used by the Semantic Drift title transformer
+ * when morphing between any two presets (or into a randomized crystal).
+ */
+const PRESET_SEMANTIC_DNA = {
+  'Classic Quartz Prism': {
+    adj: ['Frost-Etched', 'Water-Clear', 'Vitreous', 'Hyaline'],
+    mineral: ['Quartz', 'Rock-Crystal', 'Silica'],
+    form: ['Prism', 'Wand', 'Spire'],
+  },
+  'Amethyst Cathedral': {
+    adj: ['Violet-Crowned', 'Lavender', 'Druzy', 'Twilight'],
+    mineral: ['Amethyst', 'Quartz-Amethyst', 'Chevron-Quartz'],
+    form: ['Cathedral', 'Geode', 'Cluster'],
+  },
+  'High-Dispersion Diamond': {
+    adj: ['Adamantine', 'Spectral', 'Ice-Clear', 'Prismatic'],
+    mineral: ['Diamond', 'Carbon', 'Brilliance'],
+    form: ['Octahedron', 'Crystal', 'Apex'],
+  },
+  'Rutilated Smoky Scepter': {
+    adj: ['Golden-Threaded', 'Cognac', 'Cairngorm', 'Needled'],
+    mineral: ['Smoky-Quartz', 'Rutile-Scepter', 'Venus-Hair'],
+    form: ['Scepter', 'Spire', 'Crown'],
+  },
+  'Phantom Emerald Twin': {
+    adj: ['Jardin-Veiled', 'Verdant', 'Zoned', 'Ghost-Layered'],
+    mineral: ['Emerald', 'Green-Beryl', 'Chivor-Beryl'],
+    form: ['Twin', 'Pinacoid', 'Column'],
+  },
+  'Ruby Druzy Spire': {
+    adj: ['Pigeon-Blood', 'Crimson', 'Silk-Lit', 'Star-Zoned'],
+    mineral: ['Ruby', 'Corundum', 'Carmine-Spire'],
+    form: ['Spire', 'Scalenohedron', 'Druzy'],
+  },
+  'Blue Celestite': {
+    adj: ['Glacial-Blue', 'Sky-Frosted', 'Ethereal', 'Halcyon'],
+    mineral: ['Celestite', 'Celestine', 'Strontian'],
+    form: ['Cluster', 'Dome', 'Blade'],
+  },
+  'Imperial Topaz': {
+    adj: ['Sunburst', 'Sherry-Gold', 'Striated', 'Amber-Crowned'],
+    mineral: ['Topaz', 'Imperial-Topaz', 'Pyrophysalite'],
+    form: ['Prism', 'Rhomb', 'Domes'],
+  },
+  'Sapphire Kyanite': {
+    adj: ['Cornflower', 'Pearly-Cleaved', 'Abyssal', 'Indigo'],
+    mineral: ['Kyanite', 'Sapphire-Disthene', 'Cyanite'],
+    form: ['Blade', 'Lath', 'Sheaf'],
+  },
+  'Watermelon Tourmaline': {
+    adj: ['Bi-Zoned', 'Rubellite-Cored', 'Mint-Rimmed', 'Polychrome'],
+    mineral: ['Tourmaline', 'Elbaite', 'Liddicoatite'],
+    form: ['Trigonal', 'Column', 'Prism'],
+  },
+  'Glimmer Diamond': {
+    adj: ['Hyper-Spectral', 'Rainbow-Fired', 'Star-Lit', 'Luminous'],
+    mineral: ['Glimmer-Diamond', 'Diamond', 'Paragon'],
+    form: ['Octahedron', 'Cluster', 'Facet'],
+  },
+  'Imperial Zircon': {
+    adj: ['Hyacinth', 'Fire-Spun', 'Birefringent', 'Cinnamon-Gold'],
+    mineral: ['Zircon', 'Jacinth', 'Jargoon'],
+    form: ['Bipyramid', 'Tetragonal', 'Point'],
+  },
+  'Tabular Aquamarine': {
+    adj: ['Seafoam', 'Pelagic', 'Etched-Beryl', 'Tide-Clear'],
+    mineral: ['Aquamarine', 'Maxixe-Beryl', 'Sea-Beryl'],
+    form: ['Tablet', 'Pinacoid', 'Hexagon'],
+  },
+  'Kunzite Spodumene': {
+    adj: ['Orchid-Lit', 'Lilac-Pleochroic', 'Silky-Striated', 'Rose-Violet'],
+    mineral: ['Kunzite', 'Spodumene', 'Triphane'],
+    form: ['Lath', 'Monoclinic', 'Blade'],
+  },
+  'Stepped Bismuth Hopper': {
+    adj: ['Iridescent', 'Oxide-Tinted', 'Labyrinthine', 'Peacock-Foil'],
+    mineral: ['Bismuth', 'Hopper-Bismuth', 'Skeletal-Alloy'],
+    form: ['Hopper', 'Terrace', 'Spiral'],
+  },
+};
+
+/**
+ * Curated 4-step intermediate semantic drift bridges for all consecutive preset pairs.
+ * Each chain evolves gradually from Preset A's vocabulary -> hybrid mineralogical poetry -> Preset B's vocabulary.
+ */
+const SEMANTIC_DRIFT_CHAINS = {
+  'Classic Quartz Prism->Amethyst Cathedral': [
+    'Frost-Veiled Quartz Prism',
+    'Lavender-Mist Quartz Cluster',
+    'Violet-Zoned Silica Geode',
+    'Druzy Amethyst Cathedral',
+  ],
+  'Amethyst Cathedral->High-Dispersion Diamond': [
+    'Pale-Lilac Amethyst Cluster',
+    'Clearing Octahedral Geode',
+    'Prismatic Carbon Octahedron',
+    'Adamantine Dispersion Diamond',
+  ],
+  'High-Dispersion Diamond->Rutilated Smoky Scepter': [
+    'Golden-Flashed Diamond Apex',
+    'Amber-Threaded Quartz Scepter',
+    'Cognac Rutile-Spun Scepter',
+    'Golden Rutilated Scepter',
+  ],
+  'Rutilated Smoky Scepter->Phantom Emerald Twin': [
+    'Moss-Threaded Smoky Scepter',
+    'Verdant Needle-Veiled Beryl',
+    'Ghost-Zoned Emerald Pinacoid',
+    'Jardin Phantom Emerald Twin',
+  ],
+  'Phantom Emerald Twin->Ruby Druzy Spire': [
+    'Deep-Zoned Emerald Spire',
+    'Dichroic Beryl-Corundum Twin',
+    'Carmine Silk-Lit Corundum',
+    'Crimson Ruby Druzy Spire',
+  ],
+  'Ruby Druzy Spire->Blue Celestite': [
+    'Rose-Frost Corundum Druzy',
+    'Violet-Mist Geode Cluster',
+    'Halcyon Strontian Cluster',
+    'Glacial Blue Celestite',
+  ],
+  'Blue Celestite->Imperial Topaz': [
+    'Dawn-Tinted Celestite Dome',
+    'Champagne Orthorhombic Prism',
+    'Sherry-Gold Striated Topaz',
+    'Sunburst Imperial Topaz',
+  ],
+  'Imperial Topaz->Sapphire Kyanite': [
+    'Twilight-Edged Topaz Blade',
+    'Dichroic Indigo-Gold Lath',
+    'Pearly-Cleaved Disthene Blade',
+    'Cornflower Sapphire Kyanite',
+  ],
+  'Sapphire Kyanite->Watermelon Tourmaline': [
+    'Violet-Rimmed Kyanite Lath',
+    'Bi-Zoned Rubellite Blade',
+    'Pink-Cored Elbaite Tourmaline',
+    'Mint-Rimmed Watermelon Tourmaline',
+  ],
+  'Watermelon Tourmaline->Glimmer Diamond': [
+    'Rose-Clear Tourmaline Prism',
+    'Spectral-Fired Crystal Cluster',
+    'Rainbow-Split Carbon Octahedron',
+    'Prismatic Glimmer Diamond',
+  ],
+  'Glimmer Diamond->Imperial Zircon': [
+    'Golden-Fired Diamond Bipyramid',
+    'Amber-Refracting Zircon Point',
+    'Hyacinth Tetragonal Zircon',
+    'Fiery Imperial Zircon',
+  ],
+  'Imperial Zircon->Tabular Aquamarine': [
+    'Sunlit Beryl-Zircon Prism',
+    'Tide-Cleared Hexagonal Beryl',
+    'Seafoam Pinacoid Aquamarine',
+    'Etched Tabular Aquamarine',
+  ],
+  'Tabular Aquamarine->Kunzite Spodumene': [
+    'Lilac-Tinted Aquamarine Tablet',
+    'Pleochroic Rose-Cyan Lath',
+    'Silky-Striated Lilac Spodumene',
+    'Orchid Kunzite Spodumene',
+  ],
+  'Kunzite Spodumene->Stepped Bismuth Hopper': [
+    'Iridescent Lilac-Teal Lath',
+    'Oxide-Tinted Skeletal Terrace',
+    'Peacock-Foil Hopper Spiral',
+    'Labyrinthine Bismuth Hopper',
+  ],
+  'Stepped Bismuth Hopper->Classic Quartz Prism': [
+    'Silver-Cleared Hopper Terrace',
+    'Frost-Etched Silica Spire',
+    'Vitreous Rock-Crystal Wand',
+    'Water-Clear Quartz Prism',
+  ],
+};
+
+/**
+ * Computes the current display phrase for `#preset-name` with a calm steady-state window
+ * when "IN" a preset (`holdRemaining > 0` or `progress < 0.14` / `progress >= 0.88`),
+ * and a gradual 4-stage creative semantic drift across `progress` in `[0.14, 0.88)`.
+ */
+function computeSemanticDriftTitle(fromName, toName, progress = 0, holdRemaining = 0) {
+  const cleanFrom = String(fromName || 'Classic Quartz Prism');
+  const cleanTo = String(toName || cleanFrom);
+  if (!cleanTo || cleanFrom === cleanTo || holdRemaining > 0 || progress < 0.14) {
+    return cleanFrom;
+  }
+  if (progress >= 0.88) {
+    return cleanTo;
+  }
+
+  // Map progress in [0.14, 0.88) -> 4 discrete semantic drift stages (0, 1, 2, 3)
+  const u = Math.max(0, Math.min(0.9999, (progress - 0.14) / (0.88 - 0.14)));
+  const stage = Math.floor(u * 4);
+
+  const forwardKey = `${cleanFrom}->${cleanTo}`;
+  if (SEMANTIC_DRIFT_CHAINS[forwardKey]) {
+    return SEMANTIC_DRIFT_CHAINS[forwardKey][stage];
+  }
+  const reverseKey = `${cleanTo}->${cleanFrom}`;
+  if (SEMANTIC_DRIFT_CHAINS[reverseKey]) {
+    return SEMANTIC_DRIFT_CHAINS[reverseKey][3 - stage];
+  }
+
+  // Compositional fallback for arbitrary preset jumps or Randomized crystals
+  const dnaA = PRESET_SEMANTIC_DNA[cleanFrom] || {
+    adj: ['Vitreous', 'Crystalline'],
+    mineral: [cleanFrom.split(' ')[0] || 'Crystal'],
+    form: [cleanFrom.split(' ').slice(-1)[0] || 'Prism'],
+  };
+  const dnaB = PRESET_SEMANTIC_DNA[cleanTo] || {
+    adj: ['Prismatic', 'Luminous'],
+    mineral: [cleanTo.startsWith('Random') ? 'Alchemical-Gem' : (cleanTo.split(' ')[0] || 'Crystal')],
+    form: [cleanTo.startsWith('Random') ? 'Cluster' : (cleanTo.split(' ').slice(-1)[0] || 'Spire')],
+  };
+
+  if (stage === 0) {
+    return `${dnaA.adj[0]} ${dnaA.mineral[0]} ${dnaA.form[1] || dnaA.form[0]}`;
+  }
+  if (stage === 1) {
+    return `${dnaB.adj[1] || dnaB.adj[0]} ${dnaA.mineral[1] || dnaA.mineral[0]} ${dnaB.form[0]}`;
+  }
+  if (stage === 2) {
+    return `${dnaA.adj[1] || dnaA.adj[0]} ${dnaB.mineral[1] || dnaB.mineral[0]} ${dnaA.form[0]}`;
+  }
+  return `${dnaB.adj[0]} ${dnaB.mineral[0]} ${dnaB.form[0]}`;
+}
+
+/**
+ * Smart mineralogical randomizer: generates visually striking, physically plausible
+ * crystal habits, symmetry, twinning, optical dispersion, and jewel-tone OKHSL colours.
+ */
+function randomize(store) {
+  const r = () => Math.random();
+  const range = (lo, hi, step = 0.01) => {
+    const v = lo + r() * (hi - lo);
+    return Number((Math.round(v / step) * step).toFixed(4));
+  };
+  const pick = (arr) => arr[Math.floor(r() * arr.length)];
+
+  const habit = pick(HABITS);
+  const hue = r();
+  const hue2 = (hue + 0.18 + 0.48 * r()) % 1;
+  const stoneSat = range(0.78, 0.98);
+  const stoneColour = okhslToHex(hue, stoneSat, range(0.45, 0.65));
+  const coreColour = okhslToHex(hue2, range(0.76, 0.98), range(0.48, 0.68));
+  const needleColour = okhslToHex((hue + 0.12) % 1, range(0.65, 0.92), range(0.68, 0.85));
+  const studioEdge = okhslToHex((hue + 0.5) % 1, Math.max(0.45, Math.min(0.75, stoneSat * 0.82)), 0.075);
+
+  const symmetry = habit === 'Cubic / Isometric' || habit === 'Tetragonal' || habit === 'Orthorhombic' || habit === 'Monoclinic' || habit === 'Triclinic'
+    ? 4
+    : habit === 'Hexagonal'
+      ? 6
+      : pick([3, 6, 6]);
+  const iorChoices = [1.31, 1.434, 1.544, 1.578, 1.63, 1.668, 1.72, 1.768, 1.95, 2.15, 2.417];
+  const ior = pick(iorChoices);
+
+  return {
+    seed: Math.floor(r() * 100),
+    habit,
+    glimmer: range(0.85, 1.35),
+    ditherBlend: 0,
+    iridescence: r() < 0.15 ? range(0.08, 0.28) : range(0.28, 1.85),
+    flash: r() < 0.2 ? range(0.15, 0.35) : range(0.35, 0.95),
+    symmetry,
+    taper: range(-0.18, 0.24),
+    chamfer: habit === 'Hexagonal' ? range(0.24, 0.48) : range(0.06, 0.42),
+    twinShare: range(0.2, 0.72),
+    twinAngle: range(28, 86, 1),
+    cavityCurve: r() < 0.25 ? range(0.35, 0.78) : range(0, 0.18),
+    hopper: r() < 0.08 ? range(0.25, 0.75) : 0,
+    crystals: Math.min(15, Math.max(3, Math.floor(range(3, 15, 1)))),
+    fan: range(24, 68, 1),
+    crossAt: range(0.24, 0.56),
+    lengthJitter: range(0.15, 0.48),
+    thickness: habit === 'Cubic / Isometric' ? range(0.18, 0.26, 0.005) : range(0.075, 0.16, 0.005),
+    thicknessJitter: range(0.2, 0.55),
+    faceJitter: range(0.15, 0.55),
+    tipAngle: habit === 'Hexagonal' ? range(30, 46, 0.5) : range(44, 70, 0.5),
+    tipJitter: range(0.15, 0.7),
+    faceDominance: habit === 'Trigonal' ? range(0.18, 0.38) : range(0.05, 0.28),
+    stoneColour,
+    colourDepth: range(2.1, 4.4, 0.05),
+    colourZoning: range(0.3, 0.85),
+    biColour: r() < 0.68 ? range(0.28, 0.9) : 0,
+    coreColour,
+    ior,
+    fire: ior > 2.0 ? range(0.075, 0.135, 0.001) : range(0.02, 0.075, 0.001),
+    fireSamples: ior > 2.0 ? 7 : 5,
+    bounces: 6,
+    depth: 3,
+    striations: range(0.05, 0.55),
+    striationScale: range(80, 240, 1),
+    frostShare: range(0.32, 0.58),
+    frost: range(0.26, 0.42),
+    edgeChips: range(0.20, 0.36),
+    occlusion: r() < 0.22 ? range(0.35, 0.75) : 0,
+    edgeWear: range(0.16, 0.45),
+    milk: range(0.04, 0.28),
+    milkBase: range(0.55, 0.9),
+    veils: range(0.18, 0.65),
+    phantom: r() < 0.25 ? range(0.15, 0.5) : 0,
+    phantomRate: range(0.4, 0.85),
+    phantomSize: range(0.55, 0.82),
+    phantomLayers: Math.floor(range(1, 4, 1)),
+    needles: r() < 0.45 ? Math.floor(range(2, 9, 1)) : 0,
+    needleWidth: range(0.0018, 0.004, 0.0001),
+    needleColour,
+    fractures: range(0.25, 0.75),
+    fractureGlow: range(1.1, 2.6, 0.05),
+    hueShift: 180,
+    studioEdge,
+    backdropSat: range(0.48, 0.75),
+    backdropLight: range(0.08, 0.12, 0.005),
+    keyAngle: Math.floor(range(-75, 75, 1)),
+    keyHeight: Math.floor(range(20, 65, 1)),
+    rimLight: range(8, 18, 0.1),
+  };
+}
+
+    return { HABITS, MIRROR_MODES, presets, PRESET_SEMANTIC_DNA, SEMANTIC_DRIFT_CHAINS, computeSemanticDriftTitle, randomize, default: __default_params };
+  })();
+
   // === Module: kit/run.js ===
   const __mod_run = (() => {
   const { createModel } = __mod_kit_params;
@@ -6135,7 +7433,9 @@ function createEnsoSound({ onTrackChange, onStateChange } = {}) {
   const { hexToOkhsl, okhslToHex } = __mod_okhsl;
   const { buildCluster, cluster, resetEvolution, stepEvolution } = __mod_cluster;
   const { createEnsoSound } = __mod_sound;
+  const { computeSemanticDriftTitle } = __mod_params;
 // Boots the crystal ray-tracer: params -> saved overrides -> pane -> interactive orbit/zoom -> loop.
+
 
 
 
@@ -6292,8 +7592,8 @@ function run(slug, { manifest, params, presets, randomize, sketch }) {
     toOkhsl: Object.create(null),
   };
 
-  function prepareMorphStage(fromName, nextStageIdx, holdSeconds = 0) {
-    morphState.fromPreset = fromName || store.preset || standardPresetNames[0] || 'Current';
+  function prepareMorphStage(fromName, nextStageIdx, holdSeconds = 8.0) {
+    morphState.fromPreset = fromName || store.preset || standardPresetNames[0] || 'Classic Quartz Prism';
     morphState.stageIndex = nextStageIdx;
     morphState.elapsed = 0;
     morphState.holdRemaining = holdSeconds;
@@ -6302,6 +7602,7 @@ function run(slug, { manifest, params, presets, randomize, sketch }) {
     cluster.morphHabitFrom = null;
     cluster.morphHabitTo = null;
     cluster.morphHabitBlend = 0;
+    store.semanticDriftTitle = morphState.fromPreset;
     morphState.fromMap = Object.create(null);
     morphState.toMap = Object.create(null);
     morphState.fromOkhsl = Object.create(null);
@@ -6339,9 +7640,9 @@ function run(slug, { manifest, params, presets, randomize, sketch }) {
     }
   }
 
-  function resetMorphFromPreset(presetName, holdSeconds = 4.0) {
+  function resetMorphFromPreset(presetName, holdSeconds = 8.0) {
     const idx = standardPresetNames.indexOf(presetName);
-    const nextIdx = idx >= 0 ? idx + 1 : standardPresetNames.length;
+    const nextIdx = idx >= 0 ? (idx + 1) % standardPresetNames.length : 0;
     morphState.diceRolls = 0;
     prepareMorphStage(presetName, nextIdx, holdSeconds);
   }
@@ -6372,6 +7673,7 @@ function run(slug, { manifest, params, presets, randomize, sketch }) {
       const holdTake = Math.min(rem, morphState.holdRemaining);
       morphState.holdRemaining -= holdTake;
       rem -= holdTake;
+      store.semanticDriftTitle = morphState.fromPreset;
       if (rem <= 1e-6) return false;
     }
     let moved = false;
@@ -6390,6 +7692,12 @@ function run(slug, { manifest, params, presets, randomize, sketch }) {
       cluster.morphHabitFrom = morphState.fromMap.habit || P.habit?.value;
       cluster.morphHabitTo = morphState.toMap.habit || P.habit?.value;
       cluster.morphHabitBlend = k;
+      store.semanticDriftTitle = computeSemanticDriftTitle(
+        morphState.fromPreset,
+        morphState.toPreset,
+        morphState.progress,
+        morphState.holdRemaining
+      );
 
       for (const p of store.params) {
         if (NON_MORPH_KEYS.has(p.key) || p.key === 'bloom' || p.noPreset || p.randomize === false) continue;
@@ -6436,7 +7744,8 @@ function run(slug, { manifest, params, presets, randomize, sketch }) {
 
       if (morphState.elapsed >= duration - 1e-5) {
         store.setPresetName(morphState.toPreset);
-        prepareMorphStage(morphState.toPreset, morphState.stageIndex + 1);
+        store.semanticDriftTitle = morphState.toPreset;
+        prepareMorphStage(morphState.toPreset, (morphState.stageIndex + 1) % standardPresetNames.length, 8.0);
       }
     }
     return moved;
@@ -6594,18 +7903,21 @@ function run(slug, { manifest, params, presets, randomize, sketch }) {
 
   function applyPreset(name, seconds, save = true) {
     const all = { ...(presets || {}), ...(store.customPresets || {}) };
-    if (!all[name]) return 0;
-    const evolveOn = !!P.evolve?.value;
+    if (!all[name] && !(name === 'Glacial Ice' && all['Blue Celestite'])) return 0;
     const s = seconds !== undefined ? seconds : (instance?.presetSeconds?.(all[name]) ?? presetSeconds);
     saveOnLanding = save;
     const own = !!instance?.morph;
-    store.applyPreset(name, s, !own && s > 0);
-    if (own && s > 0) instance.morph(s, name);
-    resetMorphFromPreset(name);
+    store.applyPreset(name, s, !own && s > 0, Math.min(s, 1.25));
+    if (own && s > 0) instance.morph(s, store.preset);
+    resetMorphFromPreset(store.preset, 8.0);
     if (s <= 0) {
+      store.semanticDriftTitle = store.preset || name;
       cluster.snapToTarget?.(P);
     } else {
-      cluster.applyManualParam?.('habit', P);
+      cluster.morphHabitFrom = store.glideHabitFrom;
+      cluster.morphHabitTo = store.glideHabitTo;
+      cluster.morphHabitBlend = 0;
+      store.semanticDriftTitle = store.glideFromPreset || store.preset || name;
     }
     syncPageColour();
     syncHudButtons();
@@ -6926,6 +8238,23 @@ function run(slug, { manifest, params, presets, randomize, sketch }) {
     }
 
     const state = store.tick(dt);
+    if (state === 'moving') {
+      cluster.morphHabitFrom = store.glideHabitFrom;
+      cluster.morphHabitTo = store.glideHabitTo;
+      cluster.morphHabitBlend = store.glideHabitBlend;
+      store.semanticDriftTitle = computeSemanticDriftTitle(
+        store.glideFromPreset,
+        store.glideToPreset,
+        store.glideProgress,
+        0
+      );
+    } else if (state === 'done') {
+      cluster.morphHabitFrom = null;
+      cluster.morphHabitTo = null;
+      cluster.morphHabitBlend = 0;
+      store.semanticDriftTitle = store.preset || store.glideToPreset;
+      resetMorphFromPreset(store.preset || store.glideToPreset, 8.0);
+    }
 
     // 3. Secondary Evolve: gradual parameter morphing across standard presets -> random dice
     if (dt > 0 && state === 'idle' && P.morphPresets?.value) {
@@ -7087,6 +8416,7 @@ function run(slug, { manifest, params, presets, randomize, sketch }) {
     },
     computeComplementaryBg,
     computeDeviceDpr,
+    computeSemanticDriftTitle,
     preset: (name, seconds = 0) => applyPreset(name, seconds),
     randomize: (seconds = 10.0) => doRandomize(seconds),
     growMore: () => growMore(),
@@ -7097,1012 +8427,6 @@ function run(slug, { manifest, params, presets, randomize, sketch }) {
 }
 
     return { run };
-  })();
-
-  // === Module: manifest.js ===
-  const __mod_manifest = (() => {
-const __default_manifest = {
-  name: 'Crystal Transformer',
-  year: 2026,
-  pageColour: 'studioEdge',
-  presetSeconds: 18.0,
-  capture: { seconds: 1, crf: 16, tune: 'grain' },
-};
-
-    return { default: __default_manifest };
-  })();
-
-  // === Module: params.js ===
-  const __mod_params = (() => {
-  const { playback } = __mod_standard;
-  const { film } = __mod_film;
-  const { okhslToHex } = __mod_okhsl;
-  const { ENSO_TRACK_NAMES, ENSO_REVERB_MODES, ENSO_DRONE_MODES, ENSO_WASH_INSTRUMENTS } = __mod_sound;
-// Crystal Transformer — every default, curated mineralogical presets, and smart gemstone randomizer.
-// Built on Jack Bush's Geode ray-tracing shader (jackbush/glimmers).
-const HABITS = [
-  'Trigonal',
-  'Cubic / Isometric',
-  'Hexagonal',
-  'Tetragonal',
-  'Orthorhombic',
-  'Monoclinic',
-  'Triclinic',
-];
-const MIRROR_MODES = [
-  'Plain (None)',
-  'Above & Below (Classic)',
-  'Above & Below (Natural)',
-  'Cube (4-Wall)',
-  'Hall of Mirrors (Stretched)',
-  'Hexagon (Stretched)',
-  'Above & Below (Classic — Liquid)',
-  'Above & Below (Natural — Liquid)',
-  'Cube (Liquid)',
-  'Hall of Mirrors (Stretched — Liquid)',
-  'Hexagon (Stretched — Liquid)',
-];
-const __default_params = [
-  playback({ timeScale: 1.5, fxaa: 1, targetFps: 30, maxDpr: 1.5, maxFps: 30 }, {
-    quality: true,
-    extra: [
-      { key: 'seed', label: 'Seed', value: 19, min: 0, max: 100, step: 1, uniform: false, desc: 'A different cluster: layout, faces and inclusions.' },
-    ],
-  }),
-  {
-    group: 'Ambient Sound (Enso)',
-    params: [
-      { key: 'sound', label: 'Ambient sound', type: 'bool', value: false, default: false, randomize: false, noPreset: true, uniform: false, desc: 'Generative Brian Eno / Enso ambient piano & synth soundscape using 320 kbps OGG reverb-stamped instrument samples (shortcut: M).' },
-      { key: 'soundVolume', label: 'Volume', type: 'range', value: 0.75, default: 0.75, min: 0, max: 1, step: 0.01, randomize: false, noPreset: true, uniform: false, desc: 'Master ambient soundscape volume.' },
-      { key: 'soundTrack', label: 'Enso track', type: 'select', options: ENSO_TRACK_NAMES, value: 'Luminous Drift (C Lydian)', default: 'Luminous Drift (C Lydian)', randomize: false, noPreset: true, uniform: false, desc: 'Active Enso modal ambient track (cycles around the Circle of Fifths).' },
-      { key: 'soundRotate', label: 'Rotate tracks (3m)', type: 'bool', value: true, default: true, randomize: false, noPreset: true, uniform: false, desc: 'Automatically rotate to the next Enso track on the Circle of Fifths every 3 minutes (180s).' },
-      { key: 'washLevel', label: 'Drone / wash level', type: 'range', value: 0.33, default: 0.33, min: 0, max: 1, step: 0.01, randomize: false, noPreset: true, uniform: false, desc: 'Level of the continuous low harmonic drone or breathing wash in the key of the active track.' },
-      { key: 'droneMode', label: 'Drone mode', type: 'select', options: ENSO_DRONE_MODES, value: 'Breathing wash', default: 'Breathing wash', randomize: false, noPreset: true, uniform: false, desc: 'Breathing wash fades each wash smoothly in and out with a silent breathing gap between washes; Continuous drone sustains an uninterrupted low tonic/fifth harmonic foundation.' },
-      { key: 'washInstrument', label: 'Drone instrument', type: 'select', options: ENSO_WASH_INSTRUMENTS, value: 'choir', default: 'choir', randomize: false, noPreset: true, uniform: false, desc: 'Sustained harmonic timbre used for the active track drone or wash (choir, drone, pad, or tape).' },
-      { key: 'washFade', label: 'Wash fade (s)', type: 'range', value: 4.2, default: 4.2, min: 1.5, max: 10, step: 0.1, randomize: false, noPreset: true, uniform: false, desc: 'Smooth cosine fade-in and fade-out duration in seconds for the drone or breathing wash.' },
-      { key: 'washGap', label: 'Wash gap (s)', type: 'range', value: 3.0, default: 3.0, min: 0, max: 8, step: 0.25, randomize: false, noPreset: true, uniform: false, desc: 'Silent breathing gap in seconds after a wash fades completely out before the next wash fades in (0s = continuous drone).' },
-      { key: 'soundReverbMode', label: 'Reverb engine', type: 'select', options: ENSO_REVERB_MODES, value: ENSO_REVERB_MODES[0], default: ENSO_REVERB_MODES[0], randomize: false, noPreset: true, uniform: false, desc: 'Stamped OGG plays pre-baked 320 kbps stereo convolution-reverb samples with zero live reverb CPU; Lite FDN adds a lightweight 4-tap non-convolution delay network.' },
-    ],
-  },
-  {
-    group: 'Camera',
-    params: [
-      { key: 'defaultZoom', label: 'Default zoom level', type: 'range', value: 1, default: 1, min: 0.4, max: 2.5, step: 0.05, uniform: false, desc: 'Baseline camera zoom level persisted across presets, randomizations, and page loads (1.0 = standard framing, >1 = zoomed in closer, <1 = zoomed out).' },
-      { key: 'fov', label: 'Lens °', value: 21, min: 8, max: 70, step: 1, uniform: false, desc: 'Field of view: low = flat telephoto, high = wide. With Distance: zoom in from far, or go wide and close.' },
-      { key: 'tilt', label: 'Height °', value: 6, min: -75, max: 75, step: 0.5, uniform: false, desc: 'Camera elevation (drag vertically on canvas to orbit).' },
-      { key: 'distance', label: 'Distance', value: 2.9, min: 1, max: 18, step: 0.05, uniform: false, desc: 'Camera distance from the middle of the cluster (scroll or pinch on canvas to zoom).' },
-    ],
-  },
-  {
-    group: 'Motion',
-    params: [
-      { key: 'spin', label: 'Spin °/s', value: 1.5, default: 1.5, min: 0, max: 7, step: 0.05, uniform: false, desc: 'How fast the cluster turns about its upright axis.' },
-      { key: 'spinStart', label: 'Orbit angle °', value: 280.757, default: 280.757, min: 0, max: 360, step: 0.5, uniform: false, desc: 'Current horizontal orbit angle around the cluster (drag horizontally on canvas).' },
-      { key: 'sway', label: 'Sway °', value: 0, min: 0, max: 25, step: 0.5, uniform: false, desc: 'The cluster rocks gently as it turns.' },
-      { key: 'swaySpeed', label: 'Sway speed', value: 0.07, min: 0, max: 0.5, step: 0.005, uniform: false, desc: 'Rocks per second.', when: { key: 'sway', not: [0] } },
-    ],
-  },
-  {
-    group: 'Growth & Habit',
-    params: [
-      { key: 'evolve', label: 'Evolve', type: 'bool', value: true, default: true, uniform: false, desc: 'Gradually transforming creation: crystals spawn from their seed growing to full size, then continuously branch at frontier tips while the oldest segments fade and dissolve to keep total vector count bounded.' },
-      { key: 'evolveSpeed', label: 'Evolve speed', type: 'range', value: 1, default: 1, min: 0.02, max: 2, step: 0.01, randomize: false, noPreset: true, uniform: false, desc: 'Speed of crystal seed growth, frontier branching, and old-segment dissolving (lower = calm glacial drift, higher = brisk evolution).' },
-      { key: 'morphPresets', label: 'Morph presets', type: 'bool', value: true, default: true, uniform: false, desc: 'Secondary evolve setting: very gradually morphs parameters across the standard presets in sequence and then rolls random dice for endless new variations.' },
-      { key: 'morphTime', label: 'Morph time (s)', type: 'range', value: 60, default: 60, min: 5, max: 600, step: 5, uniform: false, desc: 'Seconds for each gradual parameter transition between presets and random variations (60s default, up to 10 min / 600s).' },
-      { key: 'rainbow', label: 'Rainbow amount', value: 0.1, default: 0.1, min: 0, max: 2, step: 0.01, randomize: false, noPreset: true, desc: 'Master fader for full spectral rainbow interference, internal cleavage rainbows, and prismatic dispersion (0.1 = default subtle rainbow, 1.0 = 100% full rainbow, 0 = off, up to 2.0 = 200%).' },
-      { key: 'rainbowGlow', label: 'Prism & cleavage glow', value: 1.3, default: 1.3, min: 0, max: 2, step: 0.01, randomize: false, noPreset: true, desc: 'Soft post-process optical glow halo around bright crystal facets, cleavage planes, and rainbow highlights — independent of Rainbow amount.' },
-      { key: 'glimmer', label: 'Glimmer & rainbow sparkle', value: 1, default: 1, min: 0, max: 2, step: 0.01, desc: 'Jack Bush glimmers/geode rainbow glittery sparkliness: uncrushed HDR studio softbox reflections, critical-angle prismatic fire flourishes, thin-film rainbow cracks, and 900-cell micro-crystalline druzy glitter (0 = current smooth/dithered look as on High-Dispersion Diamond, 1 = Jack Bush original geode sparkle, up to 2 = hyper-glitter).' },
-      { key: 'ditherBlend', label: 'Transparent dither blend', value: 0, default: 0, min: 0, max: 1, step: 0.01, desc: 'Universal macro control blending from the glossy rainbow-hued pipeline (0.0) to the pre-reversion transparent, abstract Gaussian-dithered crystal texture (1.0).' },
-      { key: 'iridescence', label: 'Iridescence', value: 0.35, default: 0.35, min: 0, max: 3, step: 0.01, desc: 'Thin-film spectral interference and chromatic rainbow dispersion across crystal facets, bevels, and internal growth zones (crank up to 3 for hyper-prismatic rainbows).' },
-      { key: 'flash', label: 'Flash', value: 0.5, default: 0.5, min: 0, max: 2, step: 0.01, desc: 'Subtle, occasional deep internal glow that lights up inside the heart of select crystals as they turn.' },
-      { key: 'habit', label: 'Crystal habit', type: 'select', options: HABITS, value: 'Trigonal', uniform: false, desc: 'The 7 crystallographic crystal systems: Trigonal (rhombohedral quartz/tourmaline), Cubic/Isometric (octahedral diamond/fluorite), Hexagonal (beryl/ice pinacoids), Tetragonal (4-fold zircon bipyramids), Orthorhombic (rhombic topaz domes), Monoclinic (oblique slanted spodumene), and Triclinic (asymmetric kyanite blades).' },
-      { key: 'autoGrow', label: 'Auto grow', type: 'bool', value: false, default: false, uniform: false, desc: 'Automatically grow the crystals sideways (on wide screens) or upwards (on tall screens) until they fill the viewport, then slow down.' },
-      { key: 'growth', label: 'Growth', value: 1, min: 0.05, max: 3.5, step: 0.005, uniform: false, desc: 'Procedural crystal growth stage from seed nuclei (0.05) through standard cluster (1.0) up to full viewport-filling and boosted super-cluster growth (3.5+).' },
-      { key: 'growSpeed', label: 'Grow speed', value: 0.07, default: 0.07, min: 0, max: 1, step: 0.01, randomize: false, noPreset: true, uniform: false, desc: 'Continuous whole-cluster growth and organic transformation speed.' },
-      { key: 'symmetry', label: 'Prism symmetry', value: 6, default: 6, min: 3, max: 8, step: 0.01, uniform: false, desc: 'Continuous fold symmetry (3 = trigonal, 4 = tetragonal, 5 = pentagonal, 6 = hexagonal, 8 = octagonal); fractional values smoothly unfold a new face.' },
-      { key: 'taper', label: 'Shaft taper', value: 0.08, min: -0.5, max: 0.5, step: 0.01, uniform: false, desc: 'Positive = tapers toward the tip (laser quartz); negative = flares outward toward the crown (scepter).' },
-      { key: 'chamfer', label: 'Crown bevel', value: 0.08, min: 0, max: 0.6, step: 0.01, uniform: false, desc: 'Secondary steeper bevel facets between the prism shaft and termination apex (or cubic truncations on octahedra).' },
-      { key: 'twinShare', label: 'Twin branches', value: 0.25, min: 0, max: 1, step: 0.01, uniform: false, desc: 'Share of crystals that sprout secondary twin offshoots or parallel buds along parent shafts.' },
-      { key: 'twinAngle', label: 'Branch angle °', value: 48, min: 15, max: 90, step: 1, uniform: false, desc: 'Crystallographic angle at which twin branches bud off parent shafts (Japan-law twin ≈ 84.5°).', when: { key: 'twinShare', not: [0] } },
-      { key: 'cavityCurve', label: 'Geode curvature', value: 0, min: 0, max: 1, step: 0.01, uniform: false, desc: 'Curves the root matrix into a hemispherical geode bowl with points converging inward.' },
-      { key: 'hopper', label: 'Hopper terraces', value: 0, min: 0, max: 1, step: 0.01, desc: 'Stepped skeletal growth terraces carved into crystal faces, as in bismuth or hopper crystals.' },
-    ],
-  },
-  {
-    group: 'Cluster',
-    params: [
-      { key: 'crystals', label: 'Crystals', value: 3, default: 3, min: 3, max: 15, step: 0.01, uniform: false, desc: 'Total crystal points and twin offshoots in the cluster.' },
-      { key: 'fan', label: 'Fan °', value: 46, min: 0, max: 85, step: 1, uniform: false, desc: 'How far the outer points lean away from upright.' },
-      { key: 'crossAt', label: 'Cross point', value: 0.36, min: 0, max: 1, step: 0.01, uniform: false, desc: 'Where along their length the points cross: 0.5 through their middles, 1 at their outer tips, 0 at their roots.' },
-      { key: 'lengthJitter', label: 'Length variety', value: 0.28, min: 0, max: 0.9, step: 0.01, uniform: false, desc: 'How much shorter the subsidiary points are than the tallest.' },
-      { key: 'thickness', label: 'Thickness', value: 0.095, min: 0.04, max: 0.42, step: 0.005, uniform: false, desc: 'Prism radius as a share of a point\'s length.' },
-      { key: 'thicknessJitter', label: 'Thickness variety', value: 0.35, min: 0, max: 1, step: 0.01, uniform: false, desc: 'How much each point\'s girth varies.' },
-      { key: 'faceJitter', label: 'Face variety', value: 0.5, min: 0, max: 0.6, step: 0.01, uniform: false, desc: 'Uneven prism faces: wide and narrow sides, like natural quartz.' },
-      { key: 'tipAngle', label: 'Tip angle °', value: 58.5, min: 25, max: 82, step: 0.1, uniform: false, desc: 'Angle between each tip face\'s normal and the point\'s axis (lower = blunter/tabular, higher = steeper spire).' },
-      { key: 'tipJitter', label: 'Tip variety', value: 0.65, min: 0, max: 0.8, step: 0.01, uniform: false, desc: 'Uneven tip faces, so points end in ridges and chisels, not perfect pyramids.' },
-      { key: 'faceDominance', label: 'Big/small faces', value: 0.24, min: 0, max: 0.5, step: 0.01, uniform: false, desc: 'Three large tip faces and three small, as quartz grows (0 = all equal).' },
-    ],
-  },
-  {
-    group: 'Stone',
-    params: [
-      { key: 'stoneColour', label: 'Colour', type: 'color', value: '#dbeafe', uniform: false, desc: 'Light through one unit of stone. Also sets the studio backdrop\'s hue.' },
-      { key: 'colourDepth', label: 'Colour depth', value: 0.35, min: 0, max: 6, step: 0.05, uniform: false, desc: 'How strongly the stone tints light that passes through it (0 = water-clear).' },
-      { key: 'colourZoning', label: 'Tip colour', value: 0.2, min: 0, max: 1, step: 0.01, desc: 'Colour gathers toward the tips, as in amethyst (0 = even).', when: { key: 'colourDepth', not: [0] } },
-      { key: 'biColour', label: 'Bi-colour zone', value: 0, min: 0, max: 1, step: 0.01, desc: 'Blends a second colour zone in the crystal core and base (as in watermelon tourmaline or ametrine).' },
-      { key: 'coreColour', label: 'Core colour', type: 'color', value: '#2dd4bf', uniform: false, desc: 'Absorption colour at the crystal core and root.', when: { key: 'biColour', not: [0] } },
-      { key: 'ior', label: 'Refraction', value: 1.544, min: 1, max: 2.6, step: 0.001, desc: 'Index of refraction (fluorite 1.434, quartz 1.544, beryl 1.58, corundum 1.77, diamond 2.417).' },
-      { key: 'faceGlare', label: 'Face glare', value: 0.28, default: 0.28, min: 0, max: 1, step: 0.01, randomize: false, noPreset: true, desc: 'Opacity of bright studio light reflections on crystal faces (lower = see-through facets showing internal details; higher = stronger surface reflection).' },
-      { key: 'fire', label: 'Fire', value: 0.052, min: 0, max: 0.15, step: 0.001, desc: 'Chromatic dispersion: how far white light splits into spectral wavelengths on exit.' },
-      { key: 'fireSamples', label: 'Fire samples', value: 6, min: 2, max: 9, step: 1, desc: 'Wavelengths traced for fire. More = smoother spectral rainbows.', when: { key: 'fire', not: [0] } },
-      { key: 'bounces', label: 'Bounces', value: 6, min: 1, max: 8, step: 1, desc: 'Internal reflections followed inside each point.' },
-      { key: 'depth', label: 'Pass-throughs', value: 3, min: 1, max: 4, step: 1, desc: 'How many crystal points one ray can pass through.' },
-    ],
-  },
-  {
-    group: 'Surface',
-    params: [
-      { key: 'patinaMacro', label: 'Natural wear & patina (macro)', value: 1.0, default: 1.0, min: 0, max: 2, step: 0.01, randomize: false, noPreset: true, desc: 'Master macro fader for the entire natural-specimen patina, contoured edges, micro-scratches, and hairline fractures (0 = pristine digital clarity, 1 = natural mineral specimen, 2 = heavily weathered).' },
-      { key: 'edgeMacro', label: 'Contoured edges & chipping (macro)', value: 0.38, default: 0.38, min: 0, max: 2, step: 0.01, randomize: false, noPreset: true, desc: 'Macro multiplier for 3D CSG edge contouring, corner chipping, and stepped facet bevels.' },
-      { key: 'surfaceMacro', label: 'Surface scratches & fractures (macro)', value: 1.05, default: 1.05, min: 0, max: 2, step: 0.01, randomize: false, noPreset: true, desc: 'Macro multiplier for directional surface micro-scratch patina, growth-hillock etch steps, and sub-surface hairline fractures.' },
-      { key: 'edgeIrregularity', label: 'Edge irregularity', value: 0.78, default: 0.78, min: 0, max: 1, step: 0.01, randomize: false, noPreset: true, desc: 'Organic non-digital 3D CSG stepped bevel facets and conchoidal chips along crystal ridges and termination edges.' },
-      { key: 'patina', label: 'Patina & micro-scratches', value: 0.65, default: 0.65, min: 0, max: 1, step: 0.01, randomize: false, noPreset: true, desc: 'Directional anisotropic micro-scratches, faint growth-hillock etch steps, and tiny surface pits that catch grazing specular light on crystal faces without clouding internal clarity.' },
-      { key: 'hairlineFractures', label: 'Hairline fractures', value: 0.55, default: 0.55, min: 0, max: 1, step: 0.01, randomize: false, noPreset: true, desc: 'Razor-thin, high-contrast internal and sub-surface silvery hairline cracks and feathery cleavage wisps near terminations and edges.' },
-      { key: 'striations', label: 'Striations', value: 0.12, min: 0, max: 1, step: 0.01, desc: 'Fine horizontal growth ridges across the prism faces.' },
-      { key: 'striationScale', label: 'Ridge spacing', value: 140, min: 20, max: 400, step: 1, desc: 'Ridges per unit of length.', when: { key: 'striations', not: [0] } },
-      { key: 'frostShare', label: 'Frosted faces', value: 0.42, default: 0.42, min: 0, max: 1, step: 0.01, desc: 'Share of faces that are etched with grainy micro-crystalline mineral texture rather than mirror-polished.' },
-      { key: 'frost', label: 'Frost', value: 0.34, default: 0.34, min: 0, max: 1, step: 0.01, desc: 'Intensity of the grainy micro-crystalline surface etching on frosted faces.', when: { key: 'frostShare', not: [0] } },
-      { key: 'edgeChips', label: 'Edge chipping', value: 0.42, default: 0.42, min: 0, max: 1, step: 0.01, desc: 'Crystal-locked 3D CSG corner chips and stepped conchoidal fracture facets where crystal edges meet.' },
-      { key: 'chipSize', label: 'Chip size', value: 3, default: 3, min: 0.1, max: 3.0, step: 0.05, randomize: false, noPreset: true, desc: 'Size and cut depth of 3D CSG corner chips and stepped ridge nicks (lower = subtle micro-nicks, higher = deeper 3D corner chips).' },
-      { key: 'edgeGranularity', label: 'Edge wear granularity', value: 3, default: 3, min: 0.2, max: 3.0, step: 0.05, randomize: false, noPreset: true, desc: 'Spatial frequency of 3D micro-fracture cells, conchoidal steps, and granular corner wear (higher = finer, more granular crystalline texture).' },
-      { key: 'occlusionStyle', label: 'Occlusion mode', type: 'select', options: ['Auto alternate (Ovoids & Invisible Crystals)', 'Always on (Invisible Crystals)', 'Always on (Ovoids)', 'Subtle', 'Off'], value: 'Auto alternate (Ovoids & Invisible Crystals)', default: 'Auto alternate (Ovoids & Invisible Crystals)', randomize: false, noPreset: true, uniform: false, desc: 'Auto alternate smoothly brings Ovoids and Invisible Crystals (of the same shape and form as the current batch) in and out over 12s; or lock Always on (Invisible Crystals), Always on (Ovoids), Subtle, or Off.' },
-      { key: 'occlusionType', label: 'Occlusion shape', value: 0, default: 0, min: 0, max: 1, step: 0.01, randomize: false, noPreset: true, desc: 'Occlusion cutout geometry: 0 = smooth abstract Ovoids, 1 = Invisible Crystals of the exact same shape and form as the current batch.' },
-      { key: 'occlusion', label: 'Occlusion voids', value: 0, default: 0, min: 0, max: 1, step: 0.01, randomize: false, noPreset: true, desc: 'Massive abstract Ovoids or Invisible Crystals that carve negative-space architectural gaps and faceted crystal cutouts out of the visible crystals.' },
-      { key: 'edgeWear', label: 'Edge wear', value: 0.55, min: 0, max: 1, step: 0.01, desc: 'Chips and bruising along facet edges.' },
-      { key: 'edgeWidth', label: 'Wear width', value: 0.05, min: 0.005, max: 0.2, step: 0.001, desc: 'How far the wear reaches from an edge.', when: { key: 'edgeWear', not: [0] } },
-    ],
-  },
-  {
-    group: 'Inclusions',
-    params: [
-      { key: 'milk', label: 'Milky cloud', value: 0.26, min: 0, max: 4, step: 0.01, desc: 'Cloudy white wisps inside the stone.' },
-      { key: 'milkBase', label: 'Milkier at base', value: 0.75, min: 0, max: 1, step: 0.01, desc: 'Cloud gathers toward the roots and clears toward the tips.', when: { key: 'milk', not: [0] } },
-      { key: 'veils', label: 'Veils', value: 1.2, min: 0, max: 4, step: 0.01, desc: 'Thin rippling sheets of tiny trapped fluid bubbles.' },
-      { key: 'inclusionScale', label: 'Scale', value: 2.2, min: 0.5, max: 8, step: 0.05, desc: 'Size of clouds and veils: higher = finer.' },
-      { key: 'inclusionLight', label: 'Brightness', value: 1.2, min: 0, max: 5, step: 0.05, desc: 'How brightly clouds and veils catch the studio light.' },
-      { key: 'inclusionSteps', label: 'Steps', value: 17, min: 2, max: 32, step: 1, desc: 'Samples per ray through each point.' },
-      { key: 'phantom', label: 'Phantoms', value: 0.35, min: 0, max: 2, step: 0.01, desc: 'Ghostly outline of earlier growth stages inside each crystal.' },
-      { key: 'phantomRate', label: 'Phantom rate', value: 0.45, min: 0, max: 1, step: 0.01, desc: 'Share of the points that show internal growth phantoms.', when: { key: 'phantom', not: [0] } },
-      { key: 'phantomSize', label: 'Phantom size', value: 0.68, min: 0.2, max: 0.95, step: 0.01, desc: 'Outer phantom shell as a share of its point.', when: { key: 'phantom', not: [0] } },
-      { key: 'phantomLayers', label: 'Phantom shells', value: 2, min: 1, max: 4, step: 0.05, desc: 'Nested concentric phantom growth generations inside each crystal.', when: { key: 'phantom', not: [0] } },
-      { key: 'needles', label: 'Rutile needles', value: 0, min: 0, max: 12, step: 1, desc: 'Fine golden rutile or tourmaline needles per point.' },
-      { key: 'needleWidth', label: 'Needle width', value: 0.0025, min: 0.0005, max: 0.012, step: 0.0001, desc: 'Needle radius in units.', when: { key: 'needles', not: [0] } },
-      { key: 'needleColour', label: 'Needle colour', type: 'color', value: '#d8a24a', desc: 'Rutile gold.', when: { key: 'needles', not: [0] } },
-      { key: 'fractures', label: 'Rainbow cracks', value: 0.58, min: 0, max: 1, step: 0.01, desc: 'Share of points with an internal cleavage crack that shimmers in thin-film colours.' },
-      { key: 'fractureGlow', label: 'Crack shimmer', value: 1.85, min: 0, max: 4, step: 0.05, desc: 'How strongly the cracks reflect.', when: { key: 'fractures', not: [0] } },
-    ],
-  },
-  {
-    group: 'Studio',
-    params: [
-      { key: 'mirrorMode', label: 'Mirrored background', type: 'select', options: MIRROR_MODES, value: 'Plain (None)', default: 'Plain (None)', randomize: false, noPreset: true, uniform: false, desc: 'Analytical GPU mirrored background mode: Plain (default), Above & Below (Classic & Natural), Cube (4-Wall), Hall of Mirrors (Stretched), Hexagon (Stretched), plus their 5 subtle Liquid variations.' },
-      { key: 'mirrorScale', label: 'Mirror scale', value: 1.0, default: 1.0, min: 0.25, max: 4.0, step: 0.05, randomize: false, noPreset: true, desc: 'Scales the mirror plane distance, tunnel width, and checkerboard tile size.', when: { key: 'mirrorMode', not: ['Plain (None)'] } },
-      { key: 'mirrorStrength', label: 'Mirror reflectivity', value: 0.65, default: 0.65, min: 0, max: 1, step: 0.01, randomize: false, noPreset: true, desc: 'Reflectivity of the mirrored background when a mirror mode is active.', when: { key: 'mirrorMode', not: ['Plain (None)'] } },
-      { key: 'mirrorDepthFade', label: 'Mirror depth fade', value: 0.45, default: 0.45, min: 0, max: 1, step: 0.01, randomize: false, noPreset: true, desc: 'Controls the opacity fade of the mirror planes, reflections, and checkerboard with depth into the horizon.', when: { key: 'mirrorMode', not: ['Plain (None)'] } },
-      { key: 'mirrorLiquid', label: 'Liquid wave amount', value: 0.22, default: 0.22, min: 0, max: 1, step: 0.01, randomize: false, noPreset: true, desc: 'Subtle liquid surface wave undulation across the mirrored background.', when: { key: 'mirrorMode', not: ['Plain (None)'] } },
-      { key: 'mirrorChecker', label: 'Checkerboard pattern', value: 0.0, default: 0.0, min: 0, max: 1, step: 0.01, randomize: false, noPreset: true, desc: 'Anti-aliased 3D perspective checkerboard pattern on the mirror surfaces across all variations.', when: { key: 'mirrorMode', not: ['Plain (None)'] } },
-      { key: 'mirrorComplement', label: 'Complementary mirror tint', value: 0.0, default: 0.0, min: 0, max: 1, step: 0.01, randomize: false, noPreset: true, desc: 'Blends the 180° complementary color of the studio background into the mirrored background and its reflections.', when: { key: 'mirrorMode', not: ['Plain (None)'] } },
-      { key: 'graduallyShift', label: 'Complementary bg', type: 'bool', value: true, default: true, uniform: false, desc: 'Always shift the background color to the opposite (180° complementary) hue of the main crystal color.' },
-      { key: 'hueShift', label: 'Hue shift °', value: 180, default: 180, min: 0, max: 360, step: 1, uniform: false, desc: 'Backdrop hue relative to the stone\'s (0 or 360 = same hue, 180 = opposite).' },
-      { key: 'backdropSat', label: 'Backdrop sat.', value: 0.55, default: 0.55, min: 0, max: 1, step: 0.01, uniform: false, desc: 'Saturation of the backdrop glow.' },
-      { key: 'backdropLight', label: 'Backdrop light', value: 0.095, default: 0.095, min: 0, max: 0.4, step: 0.005, uniform: false, desc: 'Brightness of the glow behind the cluster.' },
-      { key: 'glowSize', label: 'Glow size °', value: 18.5, default: 18.5, min: 2, max: 40, step: 0.5, desc: 'Spread of the glow behind the cluster.', when: { key: 'backdropLight', not: [0] } },
-      { key: 'studioEdge', label: 'Edge colour', type: 'color', value: '#141208', default: '#141208', desc: 'The studio away from the glow; also the page colour.' },
-      { key: 'lightColour', label: 'Light colour', type: 'color', value: '#fff3e4', uniform: false, desc: 'Colour of every softbox.' },
-      { key: 'keyLight', label: 'Key light', value: 7, min: 0, max: 30, step: 0.1, uniform: false, desc: 'The main softbox, up and to the left of the camera.' },
-      { key: 'keyAngle', label: 'Key angle °', value: -48, min: -180, max: 180, step: 1, uniform: false, desc: 'Where the key light sits around the cluster.', when: { key: 'keyLight', not: [0] } },
-      { key: 'keyHeight', label: 'Key height °', value: 38, min: -20, max: 85, step: 1, uniform: false, desc: 'How high the key light sits.', when: { key: 'keyLight', not: [0] } },
-      { key: 'fillLight', label: 'Fill light', value: 1.6, min: 0, max: 20, step: 0.1, uniform: false, desc: 'A large dim softbox opposite the key.' },
-      { key: 'rimLight', label: 'Rim lights', value: 9, min: 0, max: 40, step: 0.1, uniform: false, desc: 'Two tall strip lights behind the cluster that line its edges.' },
-      { key: 'rimAngle', label: 'Rim angle °', value: 125, min: 60, max: 175, step: 1, uniform: false, desc: 'How far round behind the cluster the strips stand.', when: { key: 'rimLight', not: [0] } },
-      { key: 'lightSize', label: 'Light size', value: 0.8, min: 0.2, max: 3, step: 0.01, uniform: false, desc: 'Scales every softbox: bigger = broader, softer highlights.' },
-      { key: 'lightSoftness', label: 'Light softness', value: 0.06, min: 0, max: 0.5, step: 0.005, desc: 'Feathering at the softbox edges.' },
-    ],
-  },
-  {
-    group: 'Image',
-    params: [
-      { key: 'exposure', label: 'Exposure', value: 1, min: 0.1, max: 4, step: 0.01, desc: 'Brightness before tone mapping.' },
-      { key: 'bloom', label: 'Bloom', value: 0.2, default: 0.2, min: 0, max: 2, step: 0.01, randomize: false, noPreset: true, desc: 'Surface facet catch-lights, star-burst glints, and optical glow around the brightest crystal highlights.' },
-      { key: 'bloomThreshold', label: 'Bloom threshold', value: 1.2, min: 0, max: 6, step: 0.05, desc: 'Brightness above which light blooms.', when: { key: 'bloom', not: [0] } },
-      { key: 'vignette', label: 'Vignette', value: 0, min: 0, max: 1, step: 0.01, desc: 'Darkening toward the corners.' },
-      { key: 'filmFps', label: 'Film frame rate', value: 24, min: 6, max: 60, step: 1, uniform: false, desc: 'Rate at which grain and dust update.' },
-    ],
-  },
-  film({ grainAmount: 0.02, grainSharpness: 1.29, dust: 0 }),
-];
-
-/** Curated mineralogical & optical presets */
-const presets = {
-  'Classic Quartz Prism': {
-    seed: 19,
-    habit: 'Trigonal',
-    growth: 1,
-    symmetry: 6,
-    taper: 0.08,
-    chamfer: 0.08,
-    twinShare: 0.25,
-    twinAngle: 48,
-    cavityCurve: 0,
-    hopper: 0,
-    crystals: 3,
-    fan: 46,
-    crossAt: 0.36,
-    lengthJitter: 0.28,
-    thickness: 0.095,
-    faceDominance: 0.24,
-    tipAngle: 58.5,
-    stoneColour: '#dbeafe',
-    colourDepth: 0.35,
-    colourZoning: 0.2,
-    biColour: 0,
-    ior: 1.544,
-    fire: 0.048,
-    fireSamples: 6,
-    bounces: 6,
-    striations: 0.48,
-    striationScale: 165,
-    frostShare: 0.44,
-    frost: 0.34,
-    edgeChips: 0.42,
-    edgeWear: 0.58,
-    milk: 0.65,
-    milkBase: 0.88,
-    veils: 1.5,
-    phantom: 0.55,
-    phantomRate: 0.6,
-    phantomLayers: 3,
-    needles: 0,
-    fractures: 0.52,
-    fractureGlow: 1.85,
-    hueShift: 180,
-    backdropLight: 0.095,
-    glimmer: 1.15,
-    ditherBlend: 0,
-    iridescence: 0.38,
-    flash: 0.48,
-  },
-  'Amethyst Cathedral': {
-    seed: 7,
-    habit: 'Trigonal',
-    growth: 1,
-    symmetry: 6,
-    taper: 0.04,
-    chamfer: 0.12,
-    twinShare: 0.32,
-    twinAngle: 52,
-    cavityCurve: 0.15,
-    hopper: 0,
-    crystals: 4,
-    fan: 52,
-    crossAt: 0.42,
-    lengthJitter: 0.24,
-    thickness: 0.085,
-    faceDominance: 0.28,
-    tipAngle: 64.8,
-    stoneColour: '#a77fe0',
-    colourDepth: 2.6,
-    colourZoning: 0.72,
-    biColour: 0.12,
-    coreColour: '#f5d0fe',
-    ior: 1.544,
-    fire: 0.052,
-    fireSamples: 6,
-    bounces: 6,
-    striations: 0.18,
-    frostShare: 0.42,
-    frost: 0.34,
-    edgeChips: 0.42,
-    edgeWear: 0.6,
-    milk: 0.26,
-    milkBase: 0.75,
-    veils: 1.2,
-    phantom: 0.42,
-    phantomRate: 0.45,
-    phantomSize: 0.66,
-    phantomLayers: 2,
-    needles: 0,
-    fractures: 0.52,
-    fractureGlow: 1.75,
-    hueShift: 180,
-    glimmer: 1.15,
-    ditherBlend: 0,
-    iridescence: 0.38,
-    flash: 0.5,
-  },
-  'High-Dispersion Diamond': {
-    seed: 88,
-    habit: 'Cubic / Isometric',
-    growth: 1,
-    symmetry: 4,
-    taper: 0,
-    chamfer: 0.26,
-    twinShare: 0.35,
-    twinAngle: 60,
-    cavityCurve: 0,
-    hopper: 0.15,
-    crystals: 3,
-    fan: 42,
-    crossAt: 0.5,
-    lengthJitter: 0.28,
-    thickness: 0.24,
-    faceJitter: 0.12,
-    tipAngle: 54.7,
-    tipJitter: 0.1,
-    faceDominance: 0.08,
-    stoneColour: '#f8fafc',
-    colourDepth: 0.18,
-    colourZoning: 0.1,
-    biColour: 0,
-    ior: 2.417,
-    fire: 0.135,
-    fireSamples: 8,
-    bounces: 8,
-    depth: 4,
-    striations: 0.05,
-    frostShare: 0.05,
-    frost: 0.3,
-    edgeChips: 0.42,
-    edgeWear: 0.15,
-    milk: 0.02,
-    veils: 0.15,
-    phantom: 0.25,
-    phantomRate: 0.35,
-    phantomLayers: 2,
-    needles: 0,
-    fractures: 0.35,
-    fractureGlow: 2.2,
-    hueShift: 180,
-    keyLight: 11,
-    rimLight: 18,
-    glimmer: 0,
-    ditherBlend: 0,
-    iridescence: 0.78,
-    flash: 0.45,
-  },
-  'Rutilated Smoky Scepter': {
-    seed: 14,
-    habit: 'Trigonal',
-    growth: 1,
-    symmetry: 6,
-    taper: -0.15,
-    chamfer: 0.25,
-    twinShare: 0.5,
-    twinAngle: 54,
-    cavityCurve: 0,
-    hopper: 0.36,
-    crystals: 4,
-    fan: 40,
-    crossAt: 0.38,
-    lengthJitter: 0.25,
-    thickness: 0.11,
-    faceDominance: 0.26,
-    tipAngle: 61,
-    stoneColour: '#d97706',
-    colourDepth: 2.4,
-    colourZoning: 0.65,
-    biColour: 0.35,
-    coreColour: '#fef3c7',
-    ior: 1.544,
-    fire: 0.038,
-    striations: 0.32,
-    frostShare: 0.54,
-    frost: 0.38,
-    edgeChips: 0.48,
-    occlusion: 0.58,
-    milk: 0.12,
-    veils: 0.75,
-    phantom: 0.85,
-    phantomRate: 0.8,
-    phantomLayers: 3,
-    needles: 10,
-    needleWidth: 0.0032,
-    needleColour: '#fbbf24',
-    fractures: 0.35,
-    hueShift: 180,
-    iridescence: 0.3,
-    flash: 0.5,
-  },
-  'Glimmer Diamond': {
-    seed: 88,
-    habit: 'Cubic / Isometric',
-    growth: 1,
-    symmetry: 4,
-    taper: 0,
-    chamfer: 0.26,
-    twinShare: 0.35,
-    twinAngle: 60,
-    cavityCurve: 0,
-    hopper: 0,
-    crystals: 4,
-    fan: 46,
-    crossAt: 0.48,
-    lengthJitter: 0.26,
-    thickness: 0.22,
-    faceJitter: 0.16,
-    tipAngle: 54.7,
-    tipJitter: 0.14,
-    faceDominance: 0.08,
-    stoneColour: '#f8fafc',
-    colourDepth: 0.22,
-    colourZoning: 0.15,
-    biColour: 0.12,
-    coreColour: '#e0f2fe',
-    ior: 2.417,
-    fire: 0.145,
-    fireSamples: 8,
-    bounces: 8,
-    depth: 4,
-    striations: 0.12,
-    frostShare: 0.28,
-    frost: 0.32,
-    edgeChips: 0.42,
-    edgeWear: 0.58,
-    milk: 0.08,
-    veils: 0.65,
-    phantom: 0.35,
-    phantomRate: 0.4,
-    phantomLayers: 2,
-    needles: 0,
-    fractures: 0.58,
-    fractureGlow: 2.4,
-    hueShift: 180,
-    keyLight: 11,
-    rimLight: 18,
-    glimmer: 1.25,
-    ditherBlend: 0,
-    iridescence: 0.95,
-    flash: 0.6,
-  },
-  'Glacial Ice': {
-    seed: 77,
-    habit: 'Hexagonal',
-    growth: 1,
-    symmetry: 6,
-    taper: 0.06,
-    chamfer: 0.34,
-    twinShare: 0.75,
-    twinAngle: 60,
-    cavityCurve: 0,
-    hopper: 0,
-    crystals: 6,
-    fan: 68,
-    crossAt: 0.5,
-    lengthJitter: 0.35,
-    thickness: 0.095,
-    tipAngle: 42,
-    stoneColour: '#7dd3fc',
-    colourDepth: 1.45,
-    colourZoning: 0.5,
-    biColour: 0.4,
-    coreColour: '#e0f2fe',
-    ior: 1.31,
-    fire: 0.022,
-    striations: 0.08,
-    frostShare: 0.62,
-    frost: 0.44,
-    edgeChips: 0.38,
-    milk: 0.85,
-    milkBase: 0.4,
-    veils: 2.2,
-    phantom: 0.7,
-    phantomRate: 0.7,
-    phantomLayers: 3,
-    fractures: 0.65,
-    fractureGlow: 1.9,
-    hueShift: 180,
-    iridescence: 0.55,
-    flash: 0.45,
-  },
-  'Imperial Zircon (Tetragonal)': {
-    seed: 28,
-    habit: 'Tetragonal',
-    growth: 1,
-    symmetry: 4,
-    taper: 0.02,
-    chamfer: 0.24,
-    twinShare: 0.36,
-    twinAngle: 56,
-    cavityCurve: 0,
-    hopper: 0.14,
-    crystals: 4,
-    fan: 38,
-    crossAt: 0.4,
-    lengthJitter: 0.26,
-    thickness: 0.145,
-    faceJitter: 0.14,
-    tipAngle: 52.5,
-    tipJitter: 0.14,
-    faceDominance: 0.08,
-    stoneColour: '#f97316',
-    colourDepth: 3.1,
-    colourZoning: 0.62,
-    biColour: 0.58,
-    coreColour: '#fde047',
-    ior: 1.95,
-    fire: 0.068,
-    fireSamples: 7,
-    bounces: 7,
-    depth: 3,
-    striations: 0.18,
-    striationScale: 130,
-    frostShare: 0.38,
-    frost: 0.32,
-    edgeChips: 0.4,
-    milk: 0.08,
-    veils: 0.65,
-    phantom: 0.75,
-    phantomRate: 0.7,
-    phantomLayers: 3,
-    needles: 0,
-    fractures: 0.48,
-    fractureGlow: 1.95,
-    hueShift: 180,
-    rimLight: 15,
-    iridescence: 0.52,
-    flash: 0.58,
-  },
-  'Imperial Topaz (Orthorhombic)': {
-    seed: 61,
-    habit: 'Orthorhombic',
-    growth: 1,
-    symmetry: 4,
-    taper: 0.03,
-    chamfer: 0.22,
-    twinShare: 0.34,
-    twinAngle: 46,
-    cavityCurve: 0,
-    hopper: 0.08,
-    crystals: 4,
-    fan: 34,
-    crossAt: 0.36,
-    lengthJitter: 0.28,
-    thickness: 0.135,
-    faceJitter: 0.18,
-    tipAngle: 48,
-    tipJitter: 0.16,
-    faceDominance: 0.15,
-    stoneColour: '#f59e0b',
-    colourDepth: 2.85,
-    colourZoning: 0.68,
-    biColour: 0.64,
-    coreColour: '#fb7185',
-    ior: 1.63,
-    fire: 0.034,
-    striations: 0.56,
-    striationScale: 185,
-    frostShare: 0.44,
-    frost: 0.34,
-    edgeChips: 0.38,
-    milk: 0.1,
-    veils: 0.85,
-    phantom: 0.65,
-    phantomRate: 0.65,
-    phantomLayers: 3,
-    needles: 0,
-    fractures: 0.52,
-    fractureGlow: 1.75,
-    hueShift: 180,
-    iridescence: 0.42,
-    flash: 0.52,
-  },
-  'Kunzite Spodumene (Monoclinic)': {
-    seed: 39,
-    habit: 'Monoclinic',
-    growth: 1,
-    symmetry: 4,
-    taper: 0.02,
-    chamfer: 0.2,
-    twinShare: 0.4,
-    twinAngle: 42,
-    cavityCurve: 0,
-    hopper: 0.12,
-    crystals: 5,
-    fan: 44,
-    crossAt: 0.38,
-    lengthJitter: 0.3,
-    thickness: 0.125,
-    faceJitter: 0.22,
-    tipAngle: 44,
-    tipJitter: 0.2,
-    faceDominance: 0.18,
-    stoneColour: '#d946ef',
-    colourDepth: 2.65,
-    colourZoning: 0.64,
-    biColour: 0.62,
-    coreColour: '#fda4af',
-    ior: 1.668,
-    fire: 0.038,
-    striations: 0.68,
-    striationScale: 210,
-    frostShare: 0.48,
-    frost: 0.35,
-    edgeChips: 0.44,
-    milk: 0.14,
-    veils: 1.15,
-    phantom: 0.55,
-    phantomRate: 0.6,
-    phantomLayers: 2,
-    needles: 3,
-    needleColour: '#f5d0fe',
-    fractures: 0.58,
-    fractureGlow: 1.85,
-    hueShift: 180,
-    iridescence: 0.48,
-    flash: 0.55,
-  },
-  'Sapphire Kyanite (Triclinic)': {
-    seed: 83,
-    habit: 'Triclinic',
-    growth: 1,
-    symmetry: 4,
-    taper: 0.04,
-    chamfer: 0.18,
-    twinShare: 0.46,
-    twinAngle: 38,
-    cavityCurve: 0,
-    hopper: 0.16,
-    crystals: 5,
-    fan: 48,
-    crossAt: 0.35,
-    lengthJitter: 0.32,
-    thickness: 0.12,
-    faceJitter: 0.26,
-    tipAngle: 41,
-    tipJitter: 0.24,
-    faceDominance: 0.22,
-    stoneColour: '#2563eb',
-    colourDepth: 3.45,
-    colourZoning: 0.66,
-    biColour: 0.72,
-    coreColour: '#38bdf8',
-    ior: 1.72,
-    fire: 0.042,
-    striations: 0.52,
-    striationScale: 160,
-    frostShare: 0.5,
-    frost: 0.36,
-    edgeChips: 0.46,
-    milk: 0.22,
-    milkBase: 0.65,
-    veils: 1.35,
-    phantom: 0.6,
-    phantomRate: 0.65,
-    phantomLayers: 3,
-    needles: 2,
-    needleColour: '#bae6fd',
-    fractures: 0.68,
-    fractureGlow: 2.15,
-    hueShift: 180,
-    rimLight: 15,
-    iridescence: 0.56,
-    flash: 0.6,
-  },
-  'Phantom Emerald Twin': {
-    seed: 42,
-    habit: 'Hexagonal',
-    growth: 1,
-    symmetry: 6,
-    taper: -0.05,
-    chamfer: 0.38,
-    twinShare: 0.48,
-    twinAngle: 34,
-    cavityCurve: 0,
-    hopper: 0.1,
-    crystals: 5,
-    fan: 26,
-    crossAt: 0.3,
-    lengthJitter: 0.38,
-    thickness: 0.135,
-    faceJitter: 0.22,
-    tipAngle: 34,
-    tipJitter: 0.2,
-    faceDominance: 0.05,
-    stoneColour: '#10b981',
-    colourDepth: 3.6,
-    colourZoning: 0.45,
-    biColour: 0.55,
-    coreColour: '#047857',
-    ior: 1.582,
-    fire: 0.024,
-    striations: 0.22,
-    frostShare: 0.48,
-    frost: 0.34,
-    edgeChips: 0.44,
-    milk: 0.18,
-    veils: 1.85,
-    phantom: 1.25,
-    phantomRate: 0.85,
-    phantomSize: 0.76,
-    phantomLayers: 4,
-    needles: 2,
-    needleColour: '#a7f3d0',
-    fractures: 0.55,
-    hueShift: 180,
-    iridescence: 0.28,
-    flash: 0.5,
-  },
-  'Stepped Bismuth Hopper': {
-    seed: 64,
-    habit: 'Orthorhombic',
-    growth: 1,
-    symmetry: 4,
-    taper: -0.22,
-    chamfer: 0.45,
-    twinShare: 0.65,
-    twinAngle: 88,
-    cavityCurve: 0.1,
-    hopper: 0.88,
-    crystals: 5,
-    fan: 48,
-    crossAt: 0.45,
-    lengthJitter: 0.32,
-    thickness: 0.16,
-    faceJitter: 0.15,
-    tipAngle: 42,
-    tipJitter: 0.18,
-    faceDominance: 0.35,
-    stoneColour: '#f472b6',
-    colourDepth: 2.9,
-    colourZoning: 0.8,
-    biColour: 0.85,
-    coreColour: '#38bdf8',
-    ior: 2.15,
-    fire: 0.095,
-    striations: 0.65,
-    striationScale: 55,
-    frostShare: 0.1,
-    frost: 0.35,
-    edgeChips: 0.42,
-    occlusion: 0.65,
-    edgeWear: 0.25,
-    milk: 0.05,
-    veils: 0.3,
-    phantom: 0.9,
-    phantomRate: 0.75,
-    phantomLayers: 3,
-    fractures: 0.85,
-    fractureGlow: 2.8,
-    hueShift: 180,
-    rimLight: 16,
-    iridescence: 1.65,
-    flash: 0.55,
-  },
-  'Ruby Druzy Spire': {
-    seed: 31,
-    habit: 'Trigonal',
-    growth: 1,
-    symmetry: 6,
-    taper: 0.18,
-    chamfer: 0.22,
-    twinShare: 0.42,
-    twinAngle: 58,
-    cavityCurve: 0.78,
-    hopper: 0.12,
-    crystals: 7,
-    fan: 62,
-    crossAt: 0.22,
-    lengthJitter: 0.42,
-    thickness: 0.09,
-    tipAngle: 66,
-    stoneColour: '#f43f5e',
-    colourDepth: 3.9,
-    colourZoning: 0.65,
-    biColour: 0.45,
-    coreColour: '#fb923c',
-    ior: 1.768,
-    fire: 0.045,
-    striations: 0.14,
-    frostShare: 0.52,
-    frost: 0.36,
-    edgeChips: 0.40,
-    milk: 0.2,
-    veils: 0.9,
-    phantom: 0.4,
-    phantomRate: 0.45,
-    phantomLayers: 2,
-    needles: 6,
-    needleWidth: 0.002,
-    needleColour: '#fde047',
-    fractures: 0.5,
-    hueShift: 180,
-    rimLight: 14,
-    iridescence: 0.35,
-    flash: 0.5,
-  },
-  'Watermelon Tourmaline': {
-    seed: 53,
-    habit: 'Trigonal',
-    growth: 1,
-    symmetry: 3,
-    taper: 0.0258,
-    chamfer: 0.3163,
-    twinShare: 0.5552,
-    twinAngle: 44.4193,
-    cavityCurve: 0,
-    hopper: 0.0897,
-    crystals: 4,
-    fan: 38.7861,
-    crossAt: 0.3539,
-    lengthJitter: 0.3013,
-    thickness: 0.1138,
-    faceJitter: 0.2566,
-    tipAngle: 46.5765,
-    stoneColour: '#11ba86',
-    colourDepth: 3.3489,
-    colourZoning: 0.5974,
-    biColour: 0.9064,
-    coreColour: '#ec4ca2',
-    ior: 1.6158,
-    fire: 0.0317,
-    striations: 0.72,
-    striationScale: 217.9037,
-    frostShare: 0.50,
-    frost: 0.36,
-    edgeChips: 0.46,
-    milk: 0.1683,
-    milkBase: 0.7408,
-    veils: 1.421,
-    phantom: 0.6026,
-    phantomRate: 0.6513,
-    phantomLayers: 3,
-    needles: 2.9214,
-    needleColour: '#faa7d0',
-    fractures: 0.4066,
-    fractureGlow: 1.4131,
-    hueShift: 180,
-    iridescence: 0.4234,
-    flash: 0.45,
-  },
-  'Tabular Aquamarine': {
-    seed: 91,
-    habit: 'Hexagonal',
-    growth: 1,
-    symmetry: 6,
-    taper: 0,
-    chamfer: 0.42,
-    twinShare: 0.3,
-    twinAngle: 48,
-    cavityCurve: 0,
-    hopper: 0.18,
-    crystals: 3,
-    fan: 36,
-    crossAt: 0.42,
-    lengthJitter: 0.28,
-    thickness: 0.165,
-    faceJitter: 0.18,
-    tipAngle: 31,
-    tipJitter: 0.12,
-    faceDominance: 0.06,
-    stoneColour: '#38bdf8',
-    colourDepth: 2.1,
-    colourZoning: 0.4,
-    biColour: 0.35,
-    coreColour: '#818cf8',
-    ior: 1.578,
-    fire: 0.03,
-    striations: 0.55,
-    striationScale: 180,
-    frostShare: 0.48,
-    frost: 0.34,
-    edgeChips: 0.40,
-    milk: 0.15,
-    veils: 0.95,
-    phantom: 0.55,
-    phantomRate: 0.6,
-    phantomLayers: 2,
-    needles: 2,
-    needleColour: '#e0f2fe',
-    fractures: 0.3,
-    hueShift: 180,
-    iridescence: 0.45,
-    flash: 0.5,
-  },
-};
-
-/**
- * Smart mineralogical randomizer: generates visually striking, physically plausible
- * crystal habits, symmetry, twinning, optical dispersion, and jewel-tone OKHSL colours.
- */
-function randomize(store) {
-  const r = () => Math.random();
-  const range = (lo, hi, step = 0.01) => {
-    const v = lo + r() * (hi - lo);
-    return Number((Math.round(v / step) * step).toFixed(4));
-  };
-  const pick = (arr) => arr[Math.floor(r() * arr.length)];
-
-  const habit = pick(HABITS);
-  const hue = r();
-  const hue2 = (hue + 0.18 + 0.48 * r()) % 1;
-  const stoneSat = range(0.78, 0.98);
-  const stoneColour = okhslToHex(hue, stoneSat, range(0.45, 0.65));
-  const coreColour = okhslToHex(hue2, range(0.76, 0.98), range(0.48, 0.68));
-  const needleColour = okhslToHex((hue + 0.12) % 1, range(0.65, 0.92), range(0.68, 0.85));
-  const studioEdge = okhslToHex((hue + 0.5) % 1, Math.max(0.45, Math.min(0.75, stoneSat * 0.82)), 0.075);
-
-  const symmetry = habit === 'Cubic / Isometric' || habit === 'Tetragonal' || habit === 'Orthorhombic' || habit === 'Monoclinic' || habit === 'Triclinic'
-    ? 4
-    : habit === 'Hexagonal'
-      ? 6
-      : pick([3, 6, 6]);
-  const iorChoices = [1.31, 1.434, 1.544, 1.578, 1.63, 1.668, 1.72, 1.768, 1.95, 2.15, 2.417];
-  const ior = pick(iorChoices);
-
-  return {
-    seed: Math.floor(r() * 100),
-    habit,
-    glimmer: range(0.85, 1.35),
-    ditherBlend: 0,
-    iridescence: r() < 0.15 ? range(0.08, 0.28) : range(0.28, 1.85),
-    flash: r() < 0.2 ? range(0.15, 0.35) : range(0.35, 0.95),
-    symmetry,
-    taper: range(-0.18, 0.24),
-    chamfer: habit === 'Hexagonal' ? range(0.24, 0.48) : range(0.06, 0.42),
-    twinShare: range(0.2, 0.72),
-    twinAngle: range(28, 86, 1),
-    cavityCurve: r() < 0.22 ? range(0.35, 0.85) : range(0, 0.18),
-    hopper: r() < 0.45 ? range(0.15, 0.85) : 0,
-    crystals: Math.min(15, Math.max(3, Math.floor(range(3, 15, 1)))),
-    fan: range(24, 68, 1),
-    crossAt: range(0.24, 0.56),
-    lengthJitter: range(0.15, 0.48),
-    thickness: habit === 'Cubic / Isometric' ? range(0.18, 0.26, 0.005) : range(0.075, 0.16, 0.005),
-    thicknessJitter: range(0.2, 0.55),
-    faceJitter: range(0.15, 0.55),
-    tipAngle: habit === 'Hexagonal' ? range(30, 46, 0.5) : range(44, 70, 0.5),
-    tipJitter: range(0.15, 0.7),
-    faceDominance: habit === 'Trigonal' ? range(0.18, 0.38) : range(0.05, 0.28),
-    stoneColour,
-    colourDepth: range(2.1, 4.4, 0.05),
-    colourZoning: range(0.3, 0.85),
-    biColour: r() < 0.68 ? range(0.28, 0.9) : 0,
-    coreColour,
-    ior,
-    fire: ior > 2.0 ? range(0.075, 0.135, 0.001) : range(0.02, 0.075, 0.001),
-    fireSamples: ior > 2.0 ? 7 : 5,
-    bounces: 6,
-    depth: 3,
-    striations: range(0.05, 0.65),
-    striationScale: range(60, 240, 1),
-    frostShare: range(0.42, 0.72),
-    frost: range(0.30, 0.50),
-    edgeChips: range(0.34, 0.56),
-    occlusion: r() < 0.28 ? range(0.35, 0.85) : 0,
-    edgeWear: range(0.18, 0.6),
-    milk: range(0.05, 0.65),
-    milkBase: range(0.45, 0.9),
-    veils: range(0.35, 1.8),
-    phantom: r() < 0.75 ? range(0.3, 1.25) : 0,
-    phantomRate: range(0.4, 0.85),
-    phantomSize: range(0.55, 0.82),
-    phantomLayers: Math.floor(range(1, 4, 1)),
-    needles: r() < 0.45 ? Math.floor(range(2, 9, 1)) : 0,
-    needleWidth: range(0.0018, 0.004, 0.0001),
-    needleColour,
-    fractures: range(0.25, 0.75),
-    fractureGlow: range(1.1, 2.6, 0.05),
-    hueShift: 180,
-    studioEdge,
-    backdropSat: range(0.48, 0.75),
-    backdropLight: range(0.08, 0.12, 0.005),
-    keyAngle: Math.floor(range(-75, 75, 1)),
-    keyHeight: Math.floor(range(20, 65, 1)),
-    rimLight: range(8, 18, 0.1),
-  };
-}
-
-    return { HABITS, MIRROR_MODES, presets, randomize, default: __default_params };
   })();
 
   // === Module: shader.js ===
@@ -8260,7 +8584,7 @@ const __default_shader = {
     let dtR = rt - glowState.rt;
     if (!(dtR >= 0)) dtR = 0.016;
     glowState.rt = rt;
-    const aG = glowState.init ? 1 - Math.exp(-Math.min(dtR, 0.5) / 1.1) : 1;
+    const aG = glowState.init ? 1 - Math.exp(-Math.min(dtR, 0.5) / 0.22) : 1;
     glowState.init = true;
     for (let c = 0; c < 3; c++) {
       const tg = lin(hslChannel(c === 0 ? 0 : c === 1 ? 8 : 4, h, P.backdropSat.value, 0.5)) * P.backdropLight.value;
@@ -8737,8 +9061,9 @@ void evalSingleRidgeBevel(
 bool applyTinyEdgeChip(int row, int k0, vec3 ro, vec3 rd, inout float tn, inout float tf, inout int kn, out float edgeSilAlpha, out vec3 outChipN) {
   edgeSilAlpha = 1.0;
   float effEdgeMacro = max(0.0, u_patinaMacro * u_edgeMacro);
+  float chipGate = clamp(u_edgeChips * 2.5, 0.0, 1.0);
   float effChips = clamp(u_edgeChips * effEdgeMacro, 0.0, 2.0);
-  float effIrreg = clamp((u_edgeIrregularity + 0.25 * u_edgeWear) * effEdgeMacro, 0.0, 2.0);
+  float effIrreg = clamp((u_edgeIrregularity + 0.25 * u_edgeWear) * effEdgeMacro * chipGate, 0.0, 2.0);
   vec4 pl0 = body(row, PA + k0);
   vec3 n0 = pl0.xyz;
   outChipN = n0;
@@ -8788,7 +9113,7 @@ bool applyTinyEdgeChip(int row, int k0, vec3 ro, vec3 rd, inout float tn, inout 
     v2 = max(k0, max(k1, k2));
     v1 = (k0 + k1 + k2) - v0 - v2;
     whaleRoll = hash(vec3(uid * 17.0 + float(v0) * 31.0, float(v1) * 23.0 + float(v2) * 13.0, 7.0));
-    whaleMult = (whaleRoll >= 0.99) ? 20.0 : ((whaleRoll >= 0.93) ? 10.0 : 1.0);
+    whaleMult = (u_hopper > 0.35) ? ((whaleRoll >= 0.99) ? 12.0 : ((whaleRoll >= 0.93) ? 6.0 : 1.0)) : 1.0;
   }
   if (whaleMult <= 1.0 && d1 >= r * 0.095 * max(0.45, max(chipSz, effIrreg))) return true;
 
@@ -8942,8 +9267,7 @@ bool traceScene(vec3 ro, vec3 rd, int skipMask, out int id, out float tHit, out 
   for (int i = 0; i < nc; i++) {
     if ((skipMask & (1 << i)) != 0 || !sphereHit(ro, rd, body(i, 0), tHit)) continue;
     if (convexHit(i, ro, rd, tn, tf, kn, kf)) {
-      float tCand = max(tn, 0.0);
-      if (tf > tCand + 1e-4 && tCand < tHit) { tHit = tCand; tfHit = tf; id = i; kHit = kn; hit = true; }
+      if (tn > 1e-4 && tf > tn + 1e-4 && tn < tHit) { tHit = tn; tfHit = tf; id = i; kHit = kn; hit = true; }
     }
   }
   return hit;
@@ -9029,10 +9353,11 @@ vec3 insideVolume(int id, vec3 ro, vec3 rd, float len, float jitter, int maxStep
       float flashPower = u_flash * (0.65 + 0.45 * u_flash);
       scat += T * coreEnvelope * singleGlow * schillerResonance * deepFlashCol * (f_ambient * 2.2 + vec3(0.38)) * flashPower * effOpticalScale * dt * 2.4;
     }
-    if (u_iridescence > 0.01 && u_rainbow * (1.0 - 0.85 * g1) > 0.001) {
+    if (u_iridescence > 0.01 && u_rainbow * (1.0 - 0.85 * g1) > 0.001 && (effMilk + effVeils) > 0.01) {
       float iridPhase = hgt * mix(1.85, 1.45, dither) + radFrac * mix(1.25, 0.95, dither) + dot(rd, axis) * mix(1.15, 0.95, dither) + hueOff + v.b * mix(0.75, 0.55, dither);
       vec3 iridWave = spectralRainbow(iridPhase);
-      float veilBand = (0.03 + 0.14 * v.g + 0.06 * v.r) * clamp(u_iridescence * 0.48, 0.0, 1.3) * u_rainbow * (1.0 - 0.85 * g1) * (1.0 - 0.32 * dither);
+      float veilGate = clamp((effMilk + effVeils) * 1.6, 0.0, 1.0);
+      float veilBand = (0.03 + 0.14 * v.g + 0.06 * v.r) * veilGate * clamp(u_iridescence * 0.48, 0.0, 1.3) * u_rainbow * (1.0 - 0.85 * g1) * (1.0 - 0.32 * dither);
       scat += T * iridWave * effLightIn * veilBand * dt * mix(2.1, 1.45, dither);
     }
     vec3 sigma = baseSigma * effOpticalScale * (1.0 + u_colourZoning * (2.0 * hgt - 1.0)) * (0.75 + 0.5 * v.b);
@@ -9041,10 +9366,10 @@ vec3 insideVolume(int id, vec3 ro, vec3 rd, float len, float jitter, int maxStep
 
   // Deep internal iridescent cleavage plane (blends glossy f50bae4 rainbow pipeline with transparent 555e23b cleavage via u_ditherBlend, and Jack Bush thin-film rainbow cracks via u_glimmer)
   float crackRainbowGate = max(u_rainbow, g1);
-  if ((u_fractures > 0.01 || u_iridescence > 0.01 || u_flash > 0.01) && crackRainbowGate > 0.001) {
+  if (u_fractures > 0.01 && crackRainbowGate > 0.001) {
     float uid = crystalUid(id);
     float bounceCleaveW = (maxSteps > 5) ? 1.0 : mix(1.0 - 0.88 * dither, 1.0, g1);
-    float effFractures = mix(clamp(u_fractures + u_iridescence * 0.22 + u_flash * 0.25, 0.0, 1.0), u_fractures, g1);
+    float effFractures = clamp(u_fractures, 0.0, 1.0);
     float fracRoll = mix(hash(vec3(uid, f_seed, 91.0)), hash(vec3(float(id), f_seed, 91.0)), g1);
     float fracW = mix(smoothstep(fracRoll - 0.14, fracRoll + 0.14, effFractures), step(fracRoll, effFractures), g1) * bounceCleaveW;
     if (fracW > 1e-4) {
@@ -9176,7 +9501,7 @@ void insidePrimaryExtras(int id, vec3 ro, vec3 rd, float len, float travelled, i
 
   // Occasional razor-thin internal & sub-surface hairline fractures (u_hairlineFractures)
   // Monotone single-valued gently curved cleavage traces near terminations & edges (zero closed-loop bullseye rings!)
-  float effHairline = clamp(u_hairlineFractures * u_patinaMacro * u_surfaceMacro, 0.0, 2.0);
+  float effHairline = clamp(u_hairlineFractures * u_patinaMacro * u_surfaceMacro * clamp(u_fractures * 2.2, 0.0, 1.0), 0.0, 2.0);
   if (effHairline > 0.005) {
     vec3 p0 = body(id, PA).xyz;
     vec3 t1 = p0 - axis * dot(p0, axis);

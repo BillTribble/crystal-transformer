@@ -1068,10 +1068,13 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
   const rawEffPrimaryCount = Math.max(1.8, floatC * (1.0 - 0.38 * twinShare));
   const nodeDt = Math.max(0, Math.min(cluster.pendingNodeDt || 0, 10));
   cluster.pendingNodeDt = 0;
+  // Single unified smoothing factor across all crystal geometry properties (presence, twinW, axis, planes, chips)
+  // so every geometry change happens in ONE single smooth continuous stage (zero 2-stage snap+chase).
+  const aUnified = nodeDt > 0 ? (1 - Math.exp(-1.45 * nodeDt)) : 0;
   if (!Number.isFinite(cluster.smoothEffPrimaryCount)) {
     cluster.smoothEffPrimaryCount = rawEffPrimaryCount;
   } else if (nodeDt > 0) {
-    cluster.smoothEffPrimaryCount += (rawEffPrimaryCount - cluster.smoothEffPrimaryCount) * (1 - Math.exp(-0.22 * nodeDt));
+    cluster.smoothEffPrimaryCount += (rawEffPrimaryCount - cluster.smoothEffPrimaryCount) * aUnified;
   }
   const effPrimaryCount = cluster.smoothEffPrimaryCount;
   let activeCount = 0;
@@ -1082,11 +1085,9 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
     const i = node.cohortIdx;
     const nodeSymmetry = symmetry;
 
-    // Continuous presence & twinW with ultra-slow 2nd-order critically-damped spring (omega = 0.20..0.24 rad/s,
-    // max velocity <= 0.065/s, taking ~15-18s — 3x longer than before) so appearing and disappearing
-    // crystals bud and shrink very gradually across preset changes.
-    const rawPresence = smooth01(Math.max(0.0, Math.min(1.0, floatC - i)));
-    const rawTwinW = i < 2 ? 0.0 : smooth01(Math.max(0.0, Math.min(1.0, (twinShare - node.twinRoll + 0.44) / 0.88)));
+    // Smooth presence window: crystals i < floatC are active; when floatC == 3, only 3 crystals exist
+    const rawPresence = i < 3 ? 1.0 : smooth01(Math.max(0.0, Math.min(1.0, floatC - i)));
+    const rawTwinW = (i < 2 || twinShare <= 0.001) ? 0.0 : smooth01(Math.max(0.0, Math.min(1.0, (twinShare - node.twinRoll * 0.65) / 0.45)));
     if (!node.smoothInit) {
       node.smoothPresence = rawPresence;
       node.velPresence = 0;
@@ -1094,30 +1095,12 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
       node.velTwinW = 0;
       node.smoothInit = true;
     } else if (nodeDt > 0) {
-      let remN = nodeDt;
-      const omegaN = 0.20 + 0.04 * (0.5 + 0.5 * (node.uLen || 0));
-      const omegaN2 = omegaN * omegaN;
-      const dampN = 2.0 * omegaN;
-      const maxVelN = 0.065;
-      while (remN > 1e-6) {
-        const ndt = Math.min(remN, 0.05);
-        remN -= ndt;
-        node.velPresence += ((rawPresence - node.smoothPresence) * omegaN2 - dampN * node.velPresence) * ndt;
-        if (node.velPresence > maxVelN) node.velPresence = maxVelN;
-        else if (node.velPresence < -maxVelN) node.velPresence = -maxVelN;
-        node.smoothPresence = Math.max(0, Math.min(1, node.smoothPresence + node.velPresence * ndt));
-
-        node.velTwinW += ((rawTwinW - node.smoothTwinW) * omegaN2 - dampN * node.velTwinW) * ndt;
-        if (node.velTwinW > maxVelN) node.velTwinW = maxVelN;
-        else if (node.velTwinW < -maxVelN) node.velTwinW = -maxVelN;
-        node.smoothTwinW = Math.max(0, Math.min(1, node.smoothTwinW + node.velTwinW * ndt));
-      }
+      node.smoothPresence += (rawPresence - node.smoothPresence) * aUnified;
+      node.smoothTwinW += (rawTwinW - node.smoothTwinW) * aUnified;
       if (rawPresence <= 1e-4 && node.smoothPresence < 1e-3) {
         node.smoothPresence = 0;
-        node.velPresence = 0;
       } else if (rawPresence >= 1 - 1e-4 && node.smoothPresence > 1 - 1e-3) {
         node.smoothPresence = 1;
-        node.velPresence = 0;
       }
     }
 
@@ -1220,10 +1203,9 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
       node.v0 = new Float32Array(sz);
       node.frameInit = true;
     } else if (nodeDt > 0) {
-      const aAxis = 1 - Math.exp(-2.8 * nodeDt);
-      node.axis0[0] += (ax[0] - node.axis0[0]) * aAxis;
-      node.axis0[1] += (ax[1] - node.axis0[1]) * aAxis;
-      node.axis0[2] += (ax[2] - node.axis0[2]) * aAxis;
+      node.axis0[0] += (ax[0] - node.axis0[0]) * aUnified;
+      node.axis0[1] += (ax[1] - node.axis0[1]) * aUnified;
+      node.axis0[2] += (ax[2] - node.axis0[2]) * aUnified;
       const al = Math.hypot(node.axis0[0], node.axis0[1], node.axis0[2]) || 1;
       node.axis0[0] /= al; node.axis0[1] /= al; node.axis0[2] /= al;
       for (let k = 0; k < 3; k++) ax[k] = node.axis0[k];
@@ -1243,7 +1225,9 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
     const rho = node.rho;
     const az = node.az0 || (i * GOLDEN + 0.55 * node.uAz);
 
-    let primBaseL = (i === 0 ? 1 : Math.max(0.18, 1 - P.lengthJitter.value * (0.4 * node.uLen + 0.6 * rho))) * lenMod;
+    const geodeCompact = 1.0 - 0.52 * cavityCurve;
+    const leaderScale = 1.0 - 0.36 * cavityCurve;
+    let primBaseL = (i === 0 ? leaderScale : Math.max(0.24, 1 - P.lengthJitter.value * (0.4 * node.uLen + 0.6 * rho))) * geodeCompact * lenMod;
     const horizComp = Math.hypot(ax[0], ax[2]);
     const vertComp = Math.abs(ax[1]);
     if (growSideways) {
@@ -1252,7 +1236,7 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
       primBaseL *= 1 + dirProgress * (0.85 * vertComp * Math.min(1.9, 1 / aspect) - 0.16 * horizComp);
     }
 
-    const primBaseR = P.thickness.value * Math.pow(primBaseL, 0.65) * Math.max(0.25, 1 + P.thicknessJitter.value * 0.55 * node.uRadSym) * radMod;
+    const primBaseR = P.thickness.value * Math.pow(primBaseL, 0.55) * Math.max(0.25, 1 + P.thicknessJitter.value * 0.55 * node.uRadSym) * radMod;
 
     let baseL = primBaseL;
     let baseR = primBaseR;
@@ -1280,9 +1264,9 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
         }
       }
       if (cavityCurve > 0.001) {
-        const bowlR = 0.52 * cavityCurve * (0.35 + 0.65 * gScale) * presence;
-        const ringR = bowlR * rho;
-        const bowlY = -bowlR * Math.cos(rho * 1.15) + bowlR * 0.45;
+        const bowlR = 0.68 * cavityCurve * (0.35 + 0.65 * gScale) * presence;
+        const ringR = bowlR * (0.18 + 0.82 * rho);
+        const bowlY = (Math.sin(i * 1.7 + node.uRootV * 2.0) * 0.22 - 0.35 * rho * rho) * bowlR;
         root[0] += Math.cos(az) * ringR;
         root[1] += bowlY;
         root[2] += Math.sin(az) * ringR;
@@ -1345,14 +1329,15 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
   }
 
   const curHabit = P.habit ? String(P.habit.value) : 'Trigonal';
-  const morphBlend = Number(cluster.morphHabitBlend) || 0;
+  const morphBlend = Math.max(0, Math.min(1, Number(cluster.morphHabitBlend) || 0));
   const hFrom = cluster.morphHabitFrom ? resolveHabitSystem(cluster.morphHabitFrom) : '';
   const hTo = cluster.morphHabitTo ? resolveHabitSystem(cluster.morphHabitTo) : '';
   const curSys = resolveHabitSystem(curHabit);
-  const repelStrength = (morphBlend > 1e-4 && morphBlend < 1 - 1e-4 && hFrom && hTo && hFrom !== hTo)
+  const hasHabitMorph = Boolean(hFrom && hTo && hFrom !== hTo);
+  const repelStrength = hasHabitMorph
     ? habitRepelWeight(hFrom) * (1 - morphBlend) + habitRepelWeight(hTo) * morphBlend
     : habitRepelWeight(curSys);
-  const cubicBlend = (morphBlend > 1e-4 && morphBlend < 1 - 1e-4 && hFrom && hTo && hFrom !== hTo)
+  const cubicBlend = hasHabitMorph
     ? (hFrom === 'Cubic / Isometric' ? 1 - morphBlend : 0) + (hTo === 'Cubic / Isometric' ? morphBlend : 0)
     : (curSys === 'Cubic / Isometric' ? 1 : 0);
 
@@ -1470,7 +1455,7 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
     const dynTipJitter = Math.max(0.06, P.tipJitter.value);
     const dynChamfer = Math.max(0, chamfer);
 
-    if (morphBlend > 1e-4 && morphBlend < 1 - 1e-4 && hFrom && hTo && hFrom !== hTo) {
+    if (hasHabitMorph) {
       computeSystemPlanes(
         hFrom, nodeSymmetry, taperLy, latScale, nodeTilt, dynChamfer, dynDom, faceJitterAmt, dynTipJitter, fs, L, r,
         tgtLx, tgtLy, tgtLz, tgtOffR, tgtOffL
@@ -1492,7 +1477,7 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
       }
     } else {
       computeSystemPlanes(
-        curHabit, nodeSymmetry, taperLy, latScale, nodeTilt, dynChamfer, dynDom, faceJitterAmt, dynTipJitter, fs, L, r,
+        hTo || curHabit, nodeSymmetry, taperLy, latScale, nodeTilt, dynChamfer, dynDom, faceJitterAmt, dynTipJitter, fs, L, r,
         tgtLx, tgtLy, tgtLz, tgtOffR, tgtOffL
       );
     }
@@ -1505,17 +1490,16 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
       node.smoothOffL = new Float32Array(tgtOffL);
       node.planesInit = true;
     } else if (nodeDt > 0) {
-      const aPlane = 1 - Math.exp(-3.0 * nodeDt);
       for (let k = 0; k < 18; k++) {
-        const nx = node.smoothLx[k] + (tgtLx[k] - node.smoothLx[k]) * aPlane;
-        const ny = node.smoothLy[k] + (tgtLy[k] - node.smoothLy[k]) * aPlane;
-        const nz = node.smoothLz[k] + (tgtLz[k] - node.smoothLz[k]) * aPlane;
+        const nx = node.smoothLx[k] + (tgtLx[k] - node.smoothLx[k]) * aUnified;
+        const ny = node.smoothLy[k] + (tgtLy[k] - node.smoothLy[k]) * aUnified;
+        const nz = node.smoothLz[k] + (tgtLz[k] - node.smoothLz[k]) * aUnified;
         const inv = 1 / (Math.hypot(nx, ny, nz) || 1);
         node.smoothLx[k] = nx * inv;
         node.smoothLy[k] = ny * inv;
         node.smoothLz[k] = nz * inv;
-        node.smoothOffR[k] += (tgtOffR[k] - node.smoothOffR[k]) * aPlane;
-        node.smoothOffL[k] += (tgtOffL[k] - node.smoothOffL[k]) * aPlane;
+        node.smoothOffR[k] += (tgtOffR[k] - node.smoothOffR[k]) * aUnified;
+        node.smoothOffL[k] += (tgtOffL[k] - node.smoothOffL[k]) * aUnified;
       }
     }
 
@@ -1548,14 +1532,9 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
       node.smoothChip2 = rawChip2;
       node.smoothChip3 = rawChip3;
     } else if (nodeDt > 0) {
-      const aChip = 1 - Math.exp(-0.22 * nodeDt);
-      const maxStepChip = 0.065 * nodeDt;
-      const d1 = rawChip1 - node.smoothChip1;
-      node.smoothChip1 += Math.max(-maxStepChip, Math.min(maxStepChip, d1 * aChip));
-      const d2 = rawChip2 - node.smoothChip2;
-      node.smoothChip2 += Math.max(-maxStepChip, Math.min(maxStepChip, d2 * aChip));
-      const d3 = rawChip3 - node.smoothChip3;
-      node.smoothChip3 += Math.max(-maxStepChip, Math.min(maxStepChip, d3 * aChip));
+      node.smoothChip1 += (rawChip1 - node.smoothChip1) * aUnified;
+      node.smoothChip2 += (rawChip2 - node.smoothChip2) * aUnified;
+      node.smoothChip3 += (rawChip3 - node.smoothChip3) * aUnified;
     }
 
     // Lock corner-nip indices to fixed faces in {0, 1, 2} so they NEVER jump!
@@ -1573,29 +1552,24 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
     const kt0 = 1;
     const kt1 = 2;
 
-    const whaleRoll1 = cornerWhaleRoll(node.uid, 18);
-    const whaleRoll2 = cornerWhaleRoll(node.uid, 19);
-    const whaleRoll3 = cornerWhaleRoll(node.uid, 20);
-    const whaleMult1 = whaleRoll1 >= 0.99 ? 20.0 : (whaleRoll1 >= 0.93 ? 10.0 : 1.0);
-    const whaleMult2 = whaleRoll2 >= 0.99 ? 20.0 : (whaleRoll2 >= 0.93 ? 10.0 : 1.0);
-    const whaleMult3 = whaleRoll3 >= 0.99 ? 20.0 : (whaleRoll3 >= 0.93 ? 10.0 : 1.0);
-
-    const nipSizeMult1 = (0.40 + 1.25 * Math.pow(((node.uid * 41 + 11) % 29) / 28, 1.35)) * whaleMult1;
-    const nipSizeMult2 = (0.40 + 1.25 * Math.pow(((node.uid * 59 + 17) % 31) / 30, 1.35)) * whaleMult2;
-    const nipSizeMult3 = (0.40 + 1.25 * Math.pow(((node.uid * 67 + 23) % 37) / 36, 1.35)) * whaleMult3;
-
     // Exact vertices of this crystal (planes 0..17) so every corner nip is a cap measured from the
     // crystal's true support in its direction: continuous, always a corner, never culls the crystal.
     const vertCount = enumerateCrystalVertices(rowIdx);
 
-    const nipDepth1 = r * (0.0045 + 0.0105 * edgeChipsVal) * chipSizeVal * nipSizeMult1 * (whaleMult1 > 1.0 ? Math.max(0.65, node.smoothChip1) : node.smoothChip1);
-    writeCornerNipPlane(rowIdx, 18, k0, k1, shHoriz1, shVert1, nipDepth1, 0.85, 1.15, vertCount, L, r);
+    if (edgeChipsVal > 0.005) {
+      const nipSizeMult1 = 0.40 + 0.85 * Math.pow(((node.uid * 41 + 11) % 29) / 28, 1.35);
+      const nipSizeMult2 = 0.40 + 0.85 * Math.pow(((node.uid * 59 + 17) % 31) / 30, 1.35);
+      const nipSizeMult3 = 0.40 + 0.85 * Math.pow(((node.uid * 67 + 23) % 37) / 36, 1.35);
 
-    const nipDepth2 = r * (0.0040 + 0.0095 * edgeChipsVal) * chipSizeVal * nipSizeMult2 * (whaleMult2 > 1.0 ? Math.max(0.65, node.smoothChip2) : node.smoothChip2);
-    writeCornerNipPlane(rowIdx, 19, k2, k3, shHoriz2, shVert2, nipDepth2, 1.12, 0.88, vertCount, L, r);
+      const nipDepth1 = r * (0.0085 * edgeChipsVal) * chipSizeVal * nipSizeMult1 * node.smoothChip1;
+      writeCornerNipPlane(rowIdx, 18, k0, k1, shHoriz1, shVert1, nipDepth1, 0.85, 1.15, vertCount, L, r);
 
-    const nipDepth3 = r * (0.0036 + 0.0088 * edgeChipsVal) * chipSizeVal * nipSizeMult3 * (whaleMult3 > 1.0 ? Math.max(0.65, node.smoothChip3) : node.smoothChip3);
-    writeCornerNipPlane(rowIdx, 20, kt0, kt1, tipHoriz, tipVert, nipDepth3, 0.90, 1.10, vertCount, L, r);
+      const nipDepth2 = r * (0.0075 * edgeChipsVal) * chipSizeVal * nipSizeMult2 * node.smoothChip2;
+      writeCornerNipPlane(rowIdx, 19, k2, k3, shHoriz2, shVert2, nipDepth2, 1.12, 0.88, vertCount, L, r);
+
+      const nipDepth3 = r * (0.0068 * edgeChipsVal) * chipSizeVal * nipSizeMult3 * node.smoothChip3;
+      writeCornerNipPlane(rowIdx, 20, kt0, kt1, tipHoriz, tipVert, nipDepth3, 0.90, 1.10, vertCount, L, r);
+    }
 
     const half = 0.5 * L;
     const nodeAlpha = Math.max(0.0, Math.min(1.0, node.alpha * smooth01(Math.min(1.0, presence / 0.55))));

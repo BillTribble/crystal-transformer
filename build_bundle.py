@@ -30,7 +30,7 @@ MODULES = [
     ),
     ("chrome", "kit/chrome.js", [], ["setupChrome"], None),
     ("loop", "kit/loop.js", [], ["createLoop"], None),
-    ("kit_params", "kit/params.js", ["const { okhslToHex } = __mod_okhsl;"], ["createModel"], None),
+    ("kit_params", "kit/params.js", ["const { hexToOkhsl, okhslToHex } = __mod_okhsl;"], ["createModel"], None),
     (
         "colour_picker",
         "kit/colour-picker.js",
@@ -59,6 +59,19 @@ MODULES = [
         ["TRACK_ROTATE_SECONDS", "ENSO_REVERB_MODES", "ENSO_DRONE_MODES", "ENSO_WASH_INSTRUMENTS", "SAMPLE_ZONES", "ENSO_TRACKS", "ENSO_TRACK_NAMES", "createEnsoSound"],
         None,
     ),
+    ("manifest", "manifest.js", [], [], "__default_manifest"),
+    (
+        "params",
+        "params.js",
+        [
+            "const { playback } = __mod_standard;",
+            "const { film } = __mod_film;",
+            "const { okhslToHex } = __mod_okhsl;",
+            "const { ENSO_TRACK_NAMES, ENSO_REVERB_MODES, ENSO_DRONE_MODES, ENSO_WASH_INSTRUMENTS } = __mod_sound;",
+        ],
+        ["HABITS", "MIRROR_MODES", "presets", "PRESET_SEMANTIC_DNA", "SEMANTIC_DRIFT_CHAINS", "computeSemanticDriftTitle", "randomize"],
+        "__default_params",
+    ),
     (
         "run",
         "kit/run.js",
@@ -70,22 +83,10 @@ MODULES = [
             "const { hexToOkhsl, okhslToHex } = __mod_okhsl;",
             "const { buildCluster, cluster, resetEvolution, stepEvolution } = __mod_cluster;",
             "const { createEnsoSound } = __mod_sound;",
+            "const { computeSemanticDriftTitle } = __mod_params;",
         ],
         ["run"],
         None,
-    ),
-    ("manifest", "manifest.js", [], [], "__default_manifest"),
-    (
-        "params",
-        "params.js",
-        [
-            "const { playback } = __mod_standard;",
-            "const { film } = __mod_film;",
-            "const { okhslToHex } = __mod_okhsl;",
-            "const { ENSO_TRACK_NAMES, ENSO_REVERB_MODES, ENSO_DRONE_MODES, ENSO_WASH_INSTRUMENTS } = __mod_sound;",
-        ],
-        ["HABITS", "MIRROR_MODES", "presets", "randomize"],
-        "__default_params",
     ),
     (
         "shader",

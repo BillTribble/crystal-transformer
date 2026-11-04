@@ -151,7 +151,7 @@ export default {
     let dtR = rt - glowState.rt;
     if (!(dtR >= 0)) dtR = 0.016;
     glowState.rt = rt;
-    const aG = glowState.init ? 1 - Math.exp(-Math.min(dtR, 0.5) / 1.1) : 1;
+    const aG = glowState.init ? 1 - Math.exp(-Math.min(dtR, 0.5) / 0.22) : 1;
     glowState.init = true;
     for (let c = 0; c < 3; c++) {
       const tg = lin(hslChannel(c === 0 ? 0 : c === 1 ? 8 : 4, h, P.backdropSat.value, 0.5)) * P.backdropLight.value;
@@ -628,8 +628,9 @@ void evalSingleRidgeBevel(
 bool applyTinyEdgeChip(int row, int k0, vec3 ro, vec3 rd, inout float tn, inout float tf, inout int kn, out float edgeSilAlpha, out vec3 outChipN) {
   edgeSilAlpha = 1.0;
   float effEdgeMacro = max(0.0, u_patinaMacro * u_edgeMacro);
+  float chipGate = clamp(u_edgeChips * 2.5, 0.0, 1.0);
   float effChips = clamp(u_edgeChips * effEdgeMacro, 0.0, 2.0);
-  float effIrreg = clamp((u_edgeIrregularity + 0.25 * u_edgeWear) * effEdgeMacro, 0.0, 2.0);
+  float effIrreg = clamp((u_edgeIrregularity + 0.25 * u_edgeWear) * effEdgeMacro * chipGate, 0.0, 2.0);
   vec4 pl0 = body(row, PA + k0);
   vec3 n0 = pl0.xyz;
   outChipN = n0;
@@ -679,7 +680,7 @@ bool applyTinyEdgeChip(int row, int k0, vec3 ro, vec3 rd, inout float tn, inout 
     v2 = max(k0, max(k1, k2));
     v1 = (k0 + k1 + k2) - v0 - v2;
     whaleRoll = hash(vec3(uid * 17.0 + float(v0) * 31.0, float(v1) * 23.0 + float(v2) * 13.0, 7.0));
-    whaleMult = (whaleRoll >= 0.99) ? 20.0 : ((whaleRoll >= 0.93) ? 10.0 : 1.0);
+    whaleMult = (u_hopper > 0.35) ? ((whaleRoll >= 0.99) ? 12.0 : ((whaleRoll >= 0.93) ? 6.0 : 1.0)) : 1.0;
   }
   if (whaleMult <= 1.0 && d1 >= r * 0.095 * max(0.45, max(chipSz, effIrreg))) return true;
 
@@ -833,8 +834,7 @@ bool traceScene(vec3 ro, vec3 rd, int skipMask, out int id, out float tHit, out 
   for (int i = 0; i < nc; i++) {
     if ((skipMask & (1 << i)) != 0 || !sphereHit(ro, rd, body(i, 0), tHit)) continue;
     if (convexHit(i, ro, rd, tn, tf, kn, kf)) {
-      float tCand = max(tn, 0.0);
-      if (tf > tCand + 1e-4 && tCand < tHit) { tHit = tCand; tfHit = tf; id = i; kHit = kn; hit = true; }
+      if (tn > 1e-4 && tf > tn + 1e-4 && tn < tHit) { tHit = tn; tfHit = tf; id = i; kHit = kn; hit = true; }
     }
   }
   return hit;
@@ -920,10 +920,11 @@ vec3 insideVolume(int id, vec3 ro, vec3 rd, float len, float jitter, int maxStep
       float flashPower = u_flash * (0.65 + 0.45 * u_flash);
       scat += T * coreEnvelope * singleGlow * schillerResonance * deepFlashCol * (f_ambient * 2.2 + vec3(0.38)) * flashPower * effOpticalScale * dt * 2.4;
     }
-    if (u_iridescence > 0.01 && u_rainbow * (1.0 - 0.85 * g1) > 0.001) {
+    if (u_iridescence > 0.01 && u_rainbow * (1.0 - 0.85 * g1) > 0.001 && (effMilk + effVeils) > 0.01) {
       float iridPhase = hgt * mix(1.85, 1.45, dither) + radFrac * mix(1.25, 0.95, dither) + dot(rd, axis) * mix(1.15, 0.95, dither) + hueOff + v.b * mix(0.75, 0.55, dither);
       vec3 iridWave = spectralRainbow(iridPhase);
-      float veilBand = (0.03 + 0.14 * v.g + 0.06 * v.r) * clamp(u_iridescence * 0.48, 0.0, 1.3) * u_rainbow * (1.0 - 0.85 * g1) * (1.0 - 0.32 * dither);
+      float veilGate = clamp((effMilk + effVeils) * 1.6, 0.0, 1.0);
+      float veilBand = (0.03 + 0.14 * v.g + 0.06 * v.r) * veilGate * clamp(u_iridescence * 0.48, 0.0, 1.3) * u_rainbow * (1.0 - 0.85 * g1) * (1.0 - 0.32 * dither);
       scat += T * iridWave * effLightIn * veilBand * dt * mix(2.1, 1.45, dither);
     }
     vec3 sigma = baseSigma * effOpticalScale * (1.0 + u_colourZoning * (2.0 * hgt - 1.0)) * (0.75 + 0.5 * v.b);
@@ -932,10 +933,10 @@ vec3 insideVolume(int id, vec3 ro, vec3 rd, float len, float jitter, int maxStep
 
   // Deep internal iridescent cleavage plane (blends glossy f50bae4 rainbow pipeline with transparent 555e23b cleavage via u_ditherBlend, and Jack Bush thin-film rainbow cracks via u_glimmer)
   float crackRainbowGate = max(u_rainbow, g1);
-  if ((u_fractures > 0.01 || u_iridescence > 0.01 || u_flash > 0.01) && crackRainbowGate > 0.001) {
+  if (u_fractures > 0.01 && crackRainbowGate > 0.001) {
     float uid = crystalUid(id);
     float bounceCleaveW = (maxSteps > 5) ? 1.0 : mix(1.0 - 0.88 * dither, 1.0, g1);
-    float effFractures = mix(clamp(u_fractures + u_iridescence * 0.22 + u_flash * 0.25, 0.0, 1.0), u_fractures, g1);
+    float effFractures = clamp(u_fractures, 0.0, 1.0);
     float fracRoll = mix(hash(vec3(uid, f_seed, 91.0)), hash(vec3(float(id), f_seed, 91.0)), g1);
     float fracW = mix(smoothstep(fracRoll - 0.14, fracRoll + 0.14, effFractures), step(fracRoll, effFractures), g1) * bounceCleaveW;
     if (fracW > 1e-4) {
@@ -1067,7 +1068,7 @@ void insidePrimaryExtras(int id, vec3 ro, vec3 rd, float len, float travelled, i
 
   // Occasional razor-thin internal & sub-surface hairline fractures (u_hairlineFractures)
   // Monotone single-valued gently curved cleavage traces near terminations & edges (zero closed-loop bullseye rings!)
-  float effHairline = clamp(u_hairlineFractures * u_patinaMacro * u_surfaceMacro, 0.0, 2.0);
+  float effHairline = clamp(u_hairlineFractures * u_patinaMacro * u_surfaceMacro * clamp(u_fractures * 2.2, 0.0, 1.0), 0.0, 2.0);
   if (effHairline > 0.005) {
     vec3 p0 = body(id, PA).xyz;
     vec3 t1 = p0 - axis * dot(p0, axis);
