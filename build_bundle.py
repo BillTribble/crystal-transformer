@@ -69,7 +69,7 @@ MODULES = [
             "const { okhslToHex } = __mod_okhsl;",
             "const { ENSO_TRACK_NAMES, ENSO_REVERB_MODES, ENSO_DRONE_MODES, ENSO_WASH_INSTRUMENTS } = __mod_sound;",
         ],
-        ["HABITS", "MIRROR_MODES", "presets", "PRESET_SEMANTIC_DNA", "SEMANTIC_DRIFT_CHAINS", "computeSemanticDriftTitle", "randomize"],
+        ["HABITS", "MIRROR_MODES", "presets", "randomize"],
         "__default_params",
     ),
     (
@@ -83,7 +83,6 @@ MODULES = [
             "const { hexToOkhsl, okhslToHex } = __mod_okhsl;",
             "const { buildCluster, cluster, resetEvolution, stepEvolution } = __mod_cluster;",
             "const { createEnsoSound } = __mod_sound;",
-            "const { computeSemanticDriftTitle } = __mod_params;",
         ],
         ["run"],
         None,
@@ -178,8 +177,8 @@ def main():
   html = index_path.read_text(encoding="utf-8")
   html = re.sub(r"<title>.*?</title>", "<title>Crystal Transformer</title>", html, count=1)
   html = re.sub(
-      r'(<span id="preset-name">).*?(</span>)',
-      r"\1Classic Quartz Prism\2",
+      r'(<span id="preset-name">).*?(</span>)(?=</button>)',
+      r'\1<span class="preset-name-outgoing">Classic Quartz Prism</span><span class="preset-name-incoming" aria-hidden="true"></span>\2',
       html,
       count=1,
   )

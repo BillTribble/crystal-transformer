@@ -74,22 +74,24 @@
     #hud-preset-name {
       color: var(--ink) !important; font-weight: 500 !important; letter-spacing: .02em;
       width: 230px; min-width: 230px; max-width: 230px; flex: 0 0 230px;
-      padding: 6px 4px; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-      display: inline-block;
+      padding: 4px 2px; text-align: center; white-space: nowrap; overflow: hidden;
+      display: inline-flex; align-items: center; justify-content: center;
     }
     #preset-name {
-      display: inline-block; width: 100%; max-width: 100%; text-align: center;
-      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: middle;
+      position: relative; display: block; width: 100%; max-width: 100%; height: 22px; line-height: 22px;
+      white-space: nowrap; overflow: hidden; vertical-align: middle;
+      -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 10%, #000 90%, transparent 100%);
+      mask-image: linear-gradient(90deg, transparent 0%, #000 10%, #000 90%, transparent 100%);
     }
-    .drift-word {
-      display: inline-block;
+    .preset-name-outgoing,
+    .preset-name-incoming {
+      position: absolute; top: 50%; left: 50%; width: max-content;
+      white-space: nowrap; pointer-events: none; will-change: transform, opacity;
+      transform: translate3d(-50%, -50%, 0);
     }
-    .drift-word-enter {
-      animation: semanticDriftIn 0.58s cubic-bezier(.22, .68, .2, 1) both;
-    }
-    @keyframes semanticDriftIn {
-      from { opacity: 0; filter: blur(4px); transform: translateY(3px); }
-      to { opacity: 1; filter: blur(0px); transform: translateY(0); }
+    .preset-name-incoming {
+      opacity: 0;
+      transform: translate3d(calc(-50% + 220px), -50%, 0);
     }
 
     /* Top-right roundel buttons */
@@ -387,7 +389,7 @@
 
   <div id="hud-preset" role="group" aria-label="Crystal presets">
     <button id="prev-preset" type="button" title="Previous preset" aria-label="Previous preset">‹</button>
-    <button id="hud-preset-name" type="button" title="Open settings & presets"><span id="preset-name">Classic Quartz Prism</span></button>
+    <button id="hud-preset-name" type="button" title="Open settings & presets"><span id="preset-name"><span class="preset-name-outgoing">Classic Quartz Prism</span><span class="preset-name-incoming" aria-hidden="true"></span></span></button>
     <button id="next-preset" type="button" title="Next preset" aria-label="Next preset">›</button>
   </div>
 
@@ -2144,35 +2146,77 @@ function buildPanel({ slug, store, onEdited, presets, onPreset, onRandomize, onS
   controls.appendChild(searchSection);
 
   let lastMenuKey = '';
-  function setHudPresetPhrase(hudEl, nextPhrase) {
-    const clean = String(nextPhrase || 'Classic Quartz Prism');
-    const prev = hudEl.dataset.driftPhrase || '';
-    if (prev === clean) return;
-    hudEl.dataset.driftPhrase = clean;
-    if (!prev) {
-      hudEl.textContent = clean;
+  function syncPresetTicker() {
+    const hudEl = document.getElementById('preset-name') || document.getElementById('hud-preset-name');
+    if (!hudEl) return;
+    const firstPresetName = presets ? Object.keys(presets)[0] : 'Classic Quartz Prism';
+    const drift = store.presetDrift;
+    const rawFrom = String((drift && drift.fromName) || store.preset || firstPresetName || 'Classic Quartz Prism');
+    const rawTo = String((drift && drift.toName) || rawFrom);
+    const rawP = drift && Number.isFinite(drift.progress) ? Math.max(0, Math.min(1, drift.progress)) : 0;
+    const arrived = rawP >= 0.9995 && rawFrom !== rawTo;
+    const fromName = arrived ? rawTo : rawFrom;
+    const toName = rawTo;
+    const active = rawP > 0.0005 && !arrived && fromName !== toName;
+    const p = active ? rawP : 0;
+
+    let outEl = hudEl.querySelector('.preset-name-outgoing');
+    let inEl = hudEl.querySelector('.preset-name-incoming');
+    if (!outEl || !inEl) {
+      hudEl.textContent = '';
+      outEl = el('span', 'preset-name-outgoing', fromName);
+      inEl = el('span', 'preset-name-incoming', active ? toName : '');
+      inEl.setAttribute('aria-hidden', 'true');
+      hudEl.append(outEl, inEl);
+    }
+
+    if (outEl.textContent !== fromName) {
+      outEl.textContent = fromName;
+      hudEl._outW = 0;
+    }
+    const desiredInText = active ? toName : '';
+    if (inEl.textContent !== desiredInText) {
+      inEl.textContent = desiredInText;
+      hudEl._inW = 0;
+    }
+
+    hudEl.dataset.fromPreset = fromName;
+    hudEl.dataset.toPreset = toName;
+    hudEl.dataset.progress = (arrived ? 1 : p).toFixed(4);
+
+    if (!active) {
+      outEl.style.transform = 'translate3d(-50%, -50%, 0)';
+      outEl.style.opacity = '1';
+      inEl.style.transform = 'translate3d(calc(-50% + 220px), -50%, 0)';
+      inEl.style.opacity = '0';
       return;
     }
-    const prevWords = prev.split(/\s+/);
-    const nextWords = clean.split(/\s+/);
-    hudEl.innerHTML = '';
-    nextWords.forEach((word, idx) => {
-      if (idx > 0) hudEl.appendChild(document.createTextNode(' '));
-      const span = document.createElement('span');
-      const stayedSame = prevWords[idx] === word || prevWords.includes(word);
-      span.className = stayedSame ? 'drift-word' : 'drift-word drift-word-enter';
-      span.textContent = word;
-      hudEl.appendChild(span);
-    });
+
+    const viewW = hudEl.clientWidth || 222;
+    const outW = hudEl._outW || (hudEl._outW = outEl.offsetWidth || Math.round(fromName.length * 6.8));
+    const inW = hudEl._inW || (hudEl._inW = inEl.offsetWidth || Math.round(toName.length * 6.8));
+
+    // Distance calculations so that:
+    // - outgoing (fromName) starts centered at 0px and drifts steadily off to the left
+    // - incoming (toName) immediately peeks in from the right edge as soon as p > 0,
+    //   maintaining a clean >= 28px gap after outgoing, and glides into the center (0px) as p -> 1.
+    const inStartLeft = Math.max(viewW * 0.5 - 16, outW * 0.5 + 28);
+    const inDistance = inStartLeft + inW * 0.5;
+    const outDistance = Math.max(inDistance + 16, viewW * 0.5 + outW * 0.5 + 10);
+
+    const xOut = -p * outDistance;
+    const xIn = (1 - p) * inDistance;
+    const opOut = Math.max(0.18, 1 - 0.55 * p);
+    const opIn = Math.min(1, 0.35 + 0.65 * p);
+
+    outEl.style.transform = `translate3d(calc(-50% + ${xOut.toFixed(2)}px), -50%, 0)`;
+    outEl.style.opacity = opOut.toFixed(3);
+    inEl.style.transform = `translate3d(calc(-50% + ${xIn.toFixed(2)}px), -50%, 0)`;
+    inEl.style.opacity = opIn.toFixed(3);
   }
 
   function rebuildPresetMenu(force = false) {
-    const hudPresetName = document.getElementById('preset-name') || document.getElementById('hud-preset-name');
-    const firstPresetName = presets ? Object.keys(presets)[0] : 'Classic Quartz Prism';
-    if (hudPresetName) {
-      const displayTitle = store.semanticDriftTitle || store.preset || firstPresetName || 'Classic Quartz Prism';
-      setHudPresetPhrase(hudPresetName, displayTitle);
-    }
+    syncPresetTicker();
     delPresetBtn.hidden = !(store.preset && store.customPresets && store.customPresets[store.preset]);
     if (!force && document.activeElement === presetMenu) return;
     const customNames = Object.keys(store.customPresets || {});
@@ -2357,6 +2401,7 @@ function buildPanel({ slug, store, onEdited, presets, onPreset, onRandomize, onS
   });
 
   const panel = {
+    syncPresetTicker,
     syncAll() {
       for (const r of rows) r.sync();
       rebuildPresetMenu();
@@ -7099,237 +7144,6 @@ const presets = {
 };
 
 /**
- * Per-preset mineralogical & poetic semantic DNA used by the Semantic Drift title transformer
- * when morphing between any two presets (or into a randomized crystal).
- */
-const PRESET_SEMANTIC_DNA = {
-  'Classic Quartz Prism': {
-    adj: ['Frost-Etched', 'Water-Clear', 'Vitreous', 'Hyaline'],
-    mineral: ['Quartz', 'Rock-Crystal', 'Silica'],
-    form: ['Prism', 'Wand', 'Spire'],
-  },
-  'Amethyst Cathedral': {
-    adj: ['Violet-Crowned', 'Lavender', 'Druzy', 'Twilight'],
-    mineral: ['Amethyst', 'Quartz-Amethyst', 'Chevron-Quartz'],
-    form: ['Cathedral', 'Geode', 'Cluster'],
-  },
-  'High-Dispersion Diamond': {
-    adj: ['Adamantine', 'Spectral', 'Ice-Clear', 'Prismatic'],
-    mineral: ['Diamond', 'Carbon', 'Brilliance'],
-    form: ['Octahedron', 'Crystal', 'Apex'],
-  },
-  'Rutilated Smoky Scepter': {
-    adj: ['Golden-Threaded', 'Cognac', 'Cairngorm', 'Needled'],
-    mineral: ['Smoky-Quartz', 'Rutile-Scepter', 'Venus-Hair'],
-    form: ['Scepter', 'Spire', 'Crown'],
-  },
-  'Phantom Emerald Twin': {
-    adj: ['Jardin-Veiled', 'Verdant', 'Zoned', 'Ghost-Layered'],
-    mineral: ['Emerald', 'Green-Beryl', 'Chivor-Beryl'],
-    form: ['Twin', 'Pinacoid', 'Column'],
-  },
-  'Ruby Druzy Spire': {
-    adj: ['Pigeon-Blood', 'Crimson', 'Silk-Lit', 'Star-Zoned'],
-    mineral: ['Ruby', 'Corundum', 'Carmine-Spire'],
-    form: ['Spire', 'Scalenohedron', 'Druzy'],
-  },
-  'Blue Celestite': {
-    adj: ['Glacial-Blue', 'Sky-Frosted', 'Ethereal', 'Halcyon'],
-    mineral: ['Celestite', 'Celestine', 'Strontian'],
-    form: ['Cluster', 'Dome', 'Blade'],
-  },
-  'Imperial Topaz': {
-    adj: ['Sunburst', 'Sherry-Gold', 'Striated', 'Amber-Crowned'],
-    mineral: ['Topaz', 'Imperial-Topaz', 'Pyrophysalite'],
-    form: ['Prism', 'Rhomb', 'Domes'],
-  },
-  'Sapphire Kyanite': {
-    adj: ['Cornflower', 'Pearly-Cleaved', 'Abyssal', 'Indigo'],
-    mineral: ['Kyanite', 'Sapphire-Disthene', 'Cyanite'],
-    form: ['Blade', 'Lath', 'Sheaf'],
-  },
-  'Watermelon Tourmaline': {
-    adj: ['Bi-Zoned', 'Rubellite-Cored', 'Mint-Rimmed', 'Polychrome'],
-    mineral: ['Tourmaline', 'Elbaite', 'Liddicoatite'],
-    form: ['Trigonal', 'Column', 'Prism'],
-  },
-  'Glimmer Diamond': {
-    adj: ['Hyper-Spectral', 'Rainbow-Fired', 'Star-Lit', 'Luminous'],
-    mineral: ['Glimmer-Diamond', 'Diamond', 'Paragon'],
-    form: ['Octahedron', 'Cluster', 'Facet'],
-  },
-  'Imperial Zircon': {
-    adj: ['Hyacinth', 'Fire-Spun', 'Birefringent', 'Cinnamon-Gold'],
-    mineral: ['Zircon', 'Jacinth', 'Jargoon'],
-    form: ['Bipyramid', 'Tetragonal', 'Point'],
-  },
-  'Tabular Aquamarine': {
-    adj: ['Seafoam', 'Pelagic', 'Etched-Beryl', 'Tide-Clear'],
-    mineral: ['Aquamarine', 'Maxixe-Beryl', 'Sea-Beryl'],
-    form: ['Tablet', 'Pinacoid', 'Hexagon'],
-  },
-  'Kunzite Spodumene': {
-    adj: ['Orchid-Lit', 'Lilac-Pleochroic', 'Silky-Striated', 'Rose-Violet'],
-    mineral: ['Kunzite', 'Spodumene', 'Triphane'],
-    form: ['Lath', 'Monoclinic', 'Blade'],
-  },
-  'Stepped Bismuth Hopper': {
-    adj: ['Iridescent', 'Oxide-Tinted', 'Labyrinthine', 'Peacock-Foil'],
-    mineral: ['Bismuth', 'Hopper-Bismuth', 'Skeletal-Alloy'],
-    form: ['Hopper', 'Terrace', 'Spiral'],
-  },
-};
-
-/**
- * Curated 4-step intermediate semantic drift bridges for all consecutive preset pairs.
- * Each chain evolves gradually from Preset A's vocabulary -> hybrid mineralogical poetry -> Preset B's vocabulary.
- */
-const SEMANTIC_DRIFT_CHAINS = {
-  'Classic Quartz Prism->Amethyst Cathedral': [
-    'Frost-Veiled Quartz Prism',
-    'Lavender-Mist Quartz Cluster',
-    'Violet-Zoned Silica Geode',
-    'Druzy Amethyst Cathedral',
-  ],
-  'Amethyst Cathedral->High-Dispersion Diamond': [
-    'Pale-Lilac Amethyst Cluster',
-    'Clearing Octahedral Geode',
-    'Prismatic Carbon Octahedron',
-    'Adamantine Dispersion Diamond',
-  ],
-  'High-Dispersion Diamond->Rutilated Smoky Scepter': [
-    'Golden-Flashed Diamond Apex',
-    'Amber-Threaded Quartz Scepter',
-    'Cognac Rutile-Spun Scepter',
-    'Golden Rutilated Scepter',
-  ],
-  'Rutilated Smoky Scepter->Phantom Emerald Twin': [
-    'Moss-Threaded Smoky Scepter',
-    'Verdant Needle-Veiled Beryl',
-    'Ghost-Zoned Emerald Pinacoid',
-    'Jardin Phantom Emerald Twin',
-  ],
-  'Phantom Emerald Twin->Ruby Druzy Spire': [
-    'Deep-Zoned Emerald Spire',
-    'Dichroic Beryl-Corundum Twin',
-    'Carmine Silk-Lit Corundum',
-    'Crimson Ruby Druzy Spire',
-  ],
-  'Ruby Druzy Spire->Blue Celestite': [
-    'Rose-Frost Corundum Druzy',
-    'Violet-Mist Geode Cluster',
-    'Halcyon Strontian Cluster',
-    'Glacial Blue Celestite',
-  ],
-  'Blue Celestite->Imperial Topaz': [
-    'Dawn-Tinted Celestite Dome',
-    'Champagne Orthorhombic Prism',
-    'Sherry-Gold Striated Topaz',
-    'Sunburst Imperial Topaz',
-  ],
-  'Imperial Topaz->Sapphire Kyanite': [
-    'Twilight-Edged Topaz Blade',
-    'Dichroic Indigo-Gold Lath',
-    'Pearly-Cleaved Disthene Blade',
-    'Cornflower Sapphire Kyanite',
-  ],
-  'Sapphire Kyanite->Watermelon Tourmaline': [
-    'Violet-Rimmed Kyanite Lath',
-    'Bi-Zoned Rubellite Blade',
-    'Pink-Cored Elbaite Tourmaline',
-    'Mint-Rimmed Watermelon Tourmaline',
-  ],
-  'Watermelon Tourmaline->Glimmer Diamond': [
-    'Rose-Clear Tourmaline Prism',
-    'Spectral-Fired Crystal Cluster',
-    'Rainbow-Split Carbon Octahedron',
-    'Prismatic Glimmer Diamond',
-  ],
-  'Glimmer Diamond->Imperial Zircon': [
-    'Golden-Fired Diamond Bipyramid',
-    'Amber-Refracting Zircon Point',
-    'Hyacinth Tetragonal Zircon',
-    'Fiery Imperial Zircon',
-  ],
-  'Imperial Zircon->Tabular Aquamarine': [
-    'Sunlit Beryl-Zircon Prism',
-    'Tide-Cleared Hexagonal Beryl',
-    'Seafoam Pinacoid Aquamarine',
-    'Etched Tabular Aquamarine',
-  ],
-  'Tabular Aquamarine->Kunzite Spodumene': [
-    'Lilac-Tinted Aquamarine Tablet',
-    'Pleochroic Rose-Cyan Lath',
-    'Silky-Striated Lilac Spodumene',
-    'Orchid Kunzite Spodumene',
-  ],
-  'Kunzite Spodumene->Stepped Bismuth Hopper': [
-    'Iridescent Lilac-Teal Lath',
-    'Oxide-Tinted Skeletal Terrace',
-    'Peacock-Foil Hopper Spiral',
-    'Labyrinthine Bismuth Hopper',
-  ],
-  'Stepped Bismuth Hopper->Classic Quartz Prism': [
-    'Silver-Cleared Hopper Terrace',
-    'Frost-Etched Silica Spire',
-    'Vitreous Rock-Crystal Wand',
-    'Water-Clear Quartz Prism',
-  ],
-};
-
-/**
- * Computes the current display phrase for `#preset-name` with a calm steady-state window
- * when "IN" a preset (`holdRemaining > 0` or `progress < 0.14` / `progress >= 0.88`),
- * and a gradual 4-stage creative semantic drift across `progress` in `[0.14, 0.88)`.
- */
-function computeSemanticDriftTitle(fromName, toName, progress = 0, holdRemaining = 0) {
-  const cleanFrom = String(fromName || 'Classic Quartz Prism');
-  const cleanTo = String(toName || cleanFrom);
-  if (!cleanTo || cleanFrom === cleanTo || holdRemaining > 0 || progress < 0.14) {
-    return cleanFrom;
-  }
-  if (progress >= 0.88) {
-    return cleanTo;
-  }
-
-  // Map progress in [0.14, 0.88) -> 4 discrete semantic drift stages (0, 1, 2, 3)
-  const u = Math.max(0, Math.min(0.9999, (progress - 0.14) / (0.88 - 0.14)));
-  const stage = Math.floor(u * 4);
-
-  const forwardKey = `${cleanFrom}->${cleanTo}`;
-  if (SEMANTIC_DRIFT_CHAINS[forwardKey]) {
-    return SEMANTIC_DRIFT_CHAINS[forwardKey][stage];
-  }
-  const reverseKey = `${cleanTo}->${cleanFrom}`;
-  if (SEMANTIC_DRIFT_CHAINS[reverseKey]) {
-    return SEMANTIC_DRIFT_CHAINS[reverseKey][3 - stage];
-  }
-
-  // Compositional fallback for arbitrary preset jumps or Randomized crystals
-  const dnaA = PRESET_SEMANTIC_DNA[cleanFrom] || {
-    adj: ['Vitreous', 'Crystalline'],
-    mineral: [cleanFrom.split(' ')[0] || 'Crystal'],
-    form: [cleanFrom.split(' ').slice(-1)[0] || 'Prism'],
-  };
-  const dnaB = PRESET_SEMANTIC_DNA[cleanTo] || {
-    adj: ['Prismatic', 'Luminous'],
-    mineral: [cleanTo.startsWith('Random') ? 'Alchemical-Gem' : (cleanTo.split(' ')[0] || 'Crystal')],
-    form: [cleanTo.startsWith('Random') ? 'Cluster' : (cleanTo.split(' ').slice(-1)[0] || 'Spire')],
-  };
-
-  if (stage === 0) {
-    return `${dnaA.adj[0]} ${dnaA.mineral[0]} ${dnaA.form[1] || dnaA.form[0]}`;
-  }
-  if (stage === 1) {
-    return `${dnaB.adj[1] || dnaB.adj[0]} ${dnaA.mineral[1] || dnaA.mineral[0]} ${dnaB.form[0]}`;
-  }
-  if (stage === 2) {
-    return `${dnaA.adj[1] || dnaA.adj[0]} ${dnaB.mineral[1] || dnaB.mineral[0]} ${dnaA.form[0]}`;
-  }
-  return `${dnaB.adj[0]} ${dnaB.mineral[0]} ${dnaB.form[0]}`;
-}
-
-/**
  * Smart mineralogical randomizer: generates visually striking, physically plausible
  * crystal habits, symmetry, twinning, optical dispersion, and jewel-tone OKHSL colours.
  */
@@ -7421,7 +7235,7 @@ function randomize(store) {
   };
 }
 
-    return { HABITS, MIRROR_MODES, presets, PRESET_SEMANTIC_DNA, SEMANTIC_DRIFT_CHAINS, computeSemanticDriftTitle, randomize, default: __default_params };
+    return { HABITS, MIRROR_MODES, presets, randomize, default: __default_params };
   })();
 
   // === Module: kit/run.js ===
@@ -7433,9 +7247,7 @@ function randomize(store) {
   const { hexToOkhsl, okhslToHex } = __mod_okhsl;
   const { buildCluster, cluster, resetEvolution, stepEvolution } = __mod_cluster;
   const { createEnsoSound } = __mod_sound;
-  const { computeSemanticDriftTitle } = __mod_params;
 // Boots the crystal ray-tracer: params -> saved overrides -> pane -> interactive orbit/zoom -> loop.
-
 
 
 
@@ -7592,7 +7404,21 @@ function run(slug, { manifest, params, presets, randomize, sketch }) {
     toOkhsl: Object.create(null),
   };
 
-  function prepareMorphStage(fromName, nextStageIdx, holdSeconds = 8.0) {
+  let panel = null;
+
+  function setPresetDrift(fromName, toName, progress = 0) {
+    const cleanFrom = String(fromName || store.preset || standardPresetNames[0] || 'Classic Quartz Prism');
+    const cleanTo = String(toName || cleanFrom);
+    const p = Number.isFinite(progress) ? Math.max(0, Math.min(1, progress)) : 0;
+    store.presetDrift = {
+      fromName: cleanFrom,
+      toName: cleanTo,
+      progress: cleanFrom === cleanTo ? 0 : p,
+    };
+    panel?.syncPresetTicker?.();
+  }
+
+  function prepareMorphStage(fromName, nextStageIdx, holdSeconds = 2.0) {
     morphState.fromPreset = fromName || store.preset || standardPresetNames[0] || 'Classic Quartz Prism';
     morphState.stageIndex = nextStageIdx;
     morphState.elapsed = 0;
@@ -7602,7 +7428,6 @@ function run(slug, { manifest, params, presets, randomize, sketch }) {
     cluster.morphHabitFrom = null;
     cluster.morphHabitTo = null;
     cluster.morphHabitBlend = 0;
-    store.semanticDriftTitle = morphState.fromPreset;
     morphState.fromMap = Object.create(null);
     morphState.toMap = Object.create(null);
     morphState.fromOkhsl = Object.create(null);
@@ -7617,6 +7442,9 @@ function run(slug, { manifest, params, presets, randomize, sketch }) {
       morphState.diceRolls++;
       targetRaw = randomize ? randomize(store) : {};
       morphState.toPreset = 'Random Dice #' + morphState.diceRolls;
+    }
+    if (!store.gliding) {
+      setPresetDrift(morphState.fromPreset, morphState.toPreset, 0);
     }
 
     for (const p of store.params) {
@@ -7640,7 +7468,7 @@ function run(slug, { manifest, params, presets, randomize, sketch }) {
     }
   }
 
-  function resetMorphFromPreset(presetName, holdSeconds = 8.0) {
+  function resetMorphFromPreset(presetName, holdSeconds = 2.0) {
     const idx = standardPresetNames.indexOf(presetName);
     const nextIdx = idx >= 0 ? (idx + 1) % standardPresetNames.length : 0;
     morphState.diceRolls = 0;
@@ -7669,16 +7497,16 @@ function run(slug, { manifest, params, presets, randomize, sketch }) {
     if (!P.morphPresets?.value || dt <= 0) return false;
     if (P.evolve?.value && cluster.phase === 'growing') return false;
     let rem = Math.min(dt, 600);
-    if (morphState.holdRemaining > 0) {
-      const holdTake = Math.min(rem, morphState.holdRemaining);
-      morphState.holdRemaining -= holdTake;
-      rem -= holdTake;
-      store.semanticDriftTitle = morphState.fromPreset;
-      if (rem <= 1e-6) return false;
-    }
     let moved = false;
 
     while (rem > 1e-6) {
+      if (morphState.holdRemaining > 0) {
+        const holdTake = Math.min(rem, morphState.holdRemaining);
+        morphState.holdRemaining -= holdTake;
+        rem -= holdTake;
+        setPresetDrift(morphState.fromPreset, morphState.toPreset, 0);
+        if (rem <= 1e-6) break;
+      }
       if (!morphState.fromLive) captureLiveFrom();
       const duration = Math.max(5, Math.min(600, Number(P.morphTime?.value) || 30));
       const needed = Math.max(0, duration - morphState.elapsed);
@@ -7692,12 +7520,7 @@ function run(slug, { manifest, params, presets, randomize, sketch }) {
       cluster.morphHabitFrom = morphState.fromMap.habit || P.habit?.value;
       cluster.morphHabitTo = morphState.toMap.habit || P.habit?.value;
       cluster.morphHabitBlend = k;
-      store.semanticDriftTitle = computeSemanticDriftTitle(
-        morphState.fromPreset,
-        morphState.toPreset,
-        morphState.progress,
-        morphState.holdRemaining
-      );
+      setPresetDrift(morphState.fromPreset, morphState.toPreset, morphState.progress);
 
       for (const p of store.params) {
         if (NON_MORPH_KEYS.has(p.key) || p.key === 'bloom' || p.noPreset || p.randomize === false) continue;
@@ -7744,8 +7567,7 @@ function run(slug, { manifest, params, presets, randomize, sketch }) {
 
       if (morphState.elapsed >= duration - 1e-5) {
         store.setPresetName(morphState.toPreset);
-        store.semanticDriftTitle = morphState.toPreset;
-        prepareMorphStage(morphState.toPreset, (morphState.stageIndex + 1) % standardPresetNames.length, 8.0);
+        prepareMorphStage(morphState.toPreset, (morphState.stageIndex + 1) % standardPresetNames.length, 2.0);
       }
     }
     return moved;
@@ -7753,7 +7575,7 @@ function run(slug, { manifest, params, presets, randomize, sketch }) {
 
   // Initialize initial seed-to-full-size evolution & preset morph pipeline
   resetEvolution(P, { startFromSeed: !capture && !sp.has('growth') && !!P.evolve?.value });
-  resetMorphFromPreset(store.preset || standardPresetNames[0] || 'Classic Quartz Prism');
+  resetMorphFromPreset(store.preset || standardPresetNames[0] || 'Classic Quartz Prism', 2.0);
 
   let occlusionDriftTime = 0;
   let occlusionManualHold = 0;
@@ -7766,8 +7588,11 @@ function run(slug, { manifest, params, presets, randomize, sketch }) {
     saveOnLanding = true;
     const fromSnap = {};
     for (const p of store.params) fromSnap[p.key] = p.value;
+    const prevName = store.preset || morphState.fromPreset || standardPresetNames[0] || 'Classic Quartz Prism';
+    store.setPresetName(prevName);
     const targetValues = store.randomize(randomize, dur);
-    prepareMorphStage('Randomized', standardPresetNames.length, 4.0);
+    prepareMorphStage('Randomized', standardPresetNames.length, 2.5);
+    setPresetDrift(prevName, 'Randomized', dur > 0 ? 0.001 : 0);
     syncPageColour();
     panel.syncAll();
     panel.refreshStatus();
@@ -7798,8 +7623,6 @@ function run(slug, { manifest, params, presets, randomize, sketch }) {
   const soundIconOn = document.getElementById('sound-icon-on');
   const soundIconOff = document.getElementById('sound-icon-off');
   const unmuteCenterBtn = document.getElementById('unmute-center-btn');
-
-  let panel = null;
 
   function syncParamsFromTrack(track, { syncPanel = true } = {}) {
     if (!track) return;
@@ -7907,17 +7730,24 @@ function run(slug, { manifest, params, presets, randomize, sketch }) {
     const s = seconds !== undefined ? seconds : (instance?.presetSeconds?.(all[name]) ?? presetSeconds);
     saveOnLanding = save;
     const own = !!instance?.morph;
+    if (!store.preset) {
+      store.setPresetName(morphState.fromPreset || standardPresetNames[0] || 'Classic Quartz Prism');
+    }
     store.applyPreset(name, s, !own && s > 0, Math.min(s, 1.25));
     if (own && s > 0) instance.morph(s, store.preset);
-    resetMorphFromPreset(store.preset, 8.0);
+    resetMorphFromPreset(store.preset, 2.0);
     if (s <= 0) {
-      store.semanticDriftTitle = store.preset || name;
+      setPresetDrift(store.preset || name, morphState.toPreset, 0);
       cluster.snapToTarget?.(P);
     } else {
       cluster.morphHabitFrom = store.glideHabitFrom;
       cluster.morphHabitTo = store.glideHabitTo;
       cluster.morphHabitBlend = 0;
-      store.semanticDriftTitle = store.glideFromPreset || store.preset || name;
+      setPresetDrift(
+        store.glideFromPreset || store.preset || name,
+        store.glideToPreset || store.preset || name,
+        0.001
+      );
     }
     syncPageColour();
     syncHudButtons();
@@ -8242,18 +8072,13 @@ function run(slug, { manifest, params, presets, randomize, sketch }) {
       cluster.morphHabitFrom = store.glideHabitFrom;
       cluster.morphHabitTo = store.glideHabitTo;
       cluster.morphHabitBlend = store.glideHabitBlend;
-      store.semanticDriftTitle = computeSemanticDriftTitle(
-        store.glideFromPreset,
-        store.glideToPreset,
-        store.glideProgress,
-        0
-      );
+      setPresetDrift(store.glideFromPreset, store.glideToPreset, store.glideProgress);
     } else if (state === 'done') {
       cluster.morphHabitFrom = null;
       cluster.morphHabitTo = null;
       cluster.morphHabitBlend = 0;
-      store.semanticDriftTitle = store.preset || store.glideToPreset;
-      resetMorphFromPreset(store.preset || store.glideToPreset, 8.0);
+      resetMorphFromPreset(store.preset || store.glideToPreset, 2.0);
+      setPresetDrift(store.preset || store.glideToPreset, morphState.toPreset, 0);
     }
 
     // 3. Secondary Evolve: gradual parameter morphing across standard presets -> random dice
@@ -8416,7 +8241,7 @@ function run(slug, { manifest, params, presets, randomize, sketch }) {
     },
     computeComplementaryBg,
     computeDeviceDpr,
-    computeSemanticDriftTitle,
+    setPresetDrift,
     preset: (name, seconds = 0) => applyPreset(name, seconds),
     randomize: (seconds = 10.0) => doRandomize(seconds),
     growMore: () => growMore(),

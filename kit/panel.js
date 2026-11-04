@@ -221,35 +221,77 @@ export function buildPanel({ slug, store, onEdited, presets, onPreset, onRandomi
   controls.appendChild(searchSection);
 
   let lastMenuKey = '';
-  function setHudPresetPhrase(hudEl, nextPhrase) {
-    const clean = String(nextPhrase || 'Classic Quartz Prism');
-    const prev = hudEl.dataset.driftPhrase || '';
-    if (prev === clean) return;
-    hudEl.dataset.driftPhrase = clean;
-    if (!prev) {
-      hudEl.textContent = clean;
+  function syncPresetTicker() {
+    const hudEl = document.getElementById('preset-name') || document.getElementById('hud-preset-name');
+    if (!hudEl) return;
+    const firstPresetName = presets ? Object.keys(presets)[0] : 'Classic Quartz Prism';
+    const drift = store.presetDrift;
+    const rawFrom = String((drift && drift.fromName) || store.preset || firstPresetName || 'Classic Quartz Prism');
+    const rawTo = String((drift && drift.toName) || rawFrom);
+    const rawP = drift && Number.isFinite(drift.progress) ? Math.max(0, Math.min(1, drift.progress)) : 0;
+    const arrived = rawP >= 0.9995 && rawFrom !== rawTo;
+    const fromName = arrived ? rawTo : rawFrom;
+    const toName = rawTo;
+    const active = rawP > 0.0005 && !arrived && fromName !== toName;
+    const p = active ? rawP : 0;
+
+    let outEl = hudEl.querySelector('.preset-name-outgoing');
+    let inEl = hudEl.querySelector('.preset-name-incoming');
+    if (!outEl || !inEl) {
+      hudEl.textContent = '';
+      outEl = el('span', 'preset-name-outgoing', fromName);
+      inEl = el('span', 'preset-name-incoming', active ? toName : '');
+      inEl.setAttribute('aria-hidden', 'true');
+      hudEl.append(outEl, inEl);
+    }
+
+    if (outEl.textContent !== fromName) {
+      outEl.textContent = fromName;
+      hudEl._outW = 0;
+    }
+    const desiredInText = active ? toName : '';
+    if (inEl.textContent !== desiredInText) {
+      inEl.textContent = desiredInText;
+      hudEl._inW = 0;
+    }
+
+    hudEl.dataset.fromPreset = fromName;
+    hudEl.dataset.toPreset = toName;
+    hudEl.dataset.progress = (arrived ? 1 : p).toFixed(4);
+
+    if (!active) {
+      outEl.style.transform = 'translate3d(-50%, -50%, 0)';
+      outEl.style.opacity = '1';
+      inEl.style.transform = 'translate3d(calc(-50% + 220px), -50%, 0)';
+      inEl.style.opacity = '0';
       return;
     }
-    const prevWords = prev.split(/\s+/);
-    const nextWords = clean.split(/\s+/);
-    hudEl.innerHTML = '';
-    nextWords.forEach((word, idx) => {
-      if (idx > 0) hudEl.appendChild(document.createTextNode(' '));
-      const span = document.createElement('span');
-      const stayedSame = prevWords[idx] === word || prevWords.includes(word);
-      span.className = stayedSame ? 'drift-word' : 'drift-word drift-word-enter';
-      span.textContent = word;
-      hudEl.appendChild(span);
-    });
+
+    const viewW = hudEl.clientWidth || 222;
+    const outW = hudEl._outW || (hudEl._outW = outEl.offsetWidth || Math.round(fromName.length * 6.8));
+    const inW = hudEl._inW || (hudEl._inW = inEl.offsetWidth || Math.round(toName.length * 6.8));
+
+    // Distance calculations so that:
+    // - outgoing (fromName) starts centered at 0px and drifts steadily off to the left
+    // - incoming (toName) immediately peeks in from the right edge as soon as p > 0,
+    //   maintaining a clean >= 28px gap after outgoing, and glides into the center (0px) as p -> 1.
+    const inStartLeft = Math.max(viewW * 0.5 - 16, outW * 0.5 + 28);
+    const inDistance = inStartLeft + inW * 0.5;
+    const outDistance = Math.max(inDistance + 16, viewW * 0.5 + outW * 0.5 + 10);
+
+    const xOut = -p * outDistance;
+    const xIn = (1 - p) * inDistance;
+    const opOut = Math.max(0.18, 1 - 0.55 * p);
+    const opIn = Math.min(1, 0.35 + 0.65 * p);
+
+    outEl.style.transform = `translate3d(calc(-50% + ${xOut.toFixed(2)}px), -50%, 0)`;
+    outEl.style.opacity = opOut.toFixed(3);
+    inEl.style.transform = `translate3d(calc(-50% + ${xIn.toFixed(2)}px), -50%, 0)`;
+    inEl.style.opacity = opIn.toFixed(3);
   }
 
   function rebuildPresetMenu(force = false) {
-    const hudPresetName = document.getElementById('preset-name') || document.getElementById('hud-preset-name');
-    const firstPresetName = presets ? Object.keys(presets)[0] : 'Classic Quartz Prism';
-    if (hudPresetName) {
-      const displayTitle = store.semanticDriftTitle || store.preset || firstPresetName || 'Classic Quartz Prism';
-      setHudPresetPhrase(hudPresetName, displayTitle);
-    }
+    syncPresetTicker();
     delPresetBtn.hidden = !(store.preset && store.customPresets && store.customPresets[store.preset]);
     if (!force && document.activeElement === presetMenu) return;
     const customNames = Object.keys(store.customPresets || {});
@@ -434,6 +476,7 @@ export function buildPanel({ slug, store, onEdited, presets, onPreset, onRandomi
   });
 
   const panel = {
+    syncPresetTicker,
     syncAll() {
       for (const r of rows) r.sync();
       rebuildPresetMenu();
