@@ -20,7 +20,7 @@ const NON_MORPH_KEYS = new Set([
   'graduallyShift', 'complementaryBg', 'hueShift', 'studioEdge',
   'mirrorMode', 'mirrorScale', 'mirrorStrength', 'mirrorDepthFade', 'mirrorLiquid', 'mirrorChecker', 'mirrorComplement', 'occlusionStyle', 'occlusionType', 'occlusion',
   'seed', 'filmFps', 'fireSamples', 'bounces', 'depth', 'rainbow', 'rainbowGlow', 'bloom', 'faceGlare', 'chipSize', 'edgeGranularity',
-  'patinaMacro', 'edgeMacro', 'surfaceMacro', 'edgeIrregularity', 'patina', 'hairlineFractures',
+  'rawAmount', 'patinaMacro', 'edgeMacro', 'surfaceMacro', 'edgeIrregularity', 'patina', 'hairlineFractures',
   ...SOUND_PARAM_KEYS,
 ]);
 
@@ -30,7 +30,21 @@ export function computeDeviceDpr() {
   return dpr;
 }
 
-export function computeComplementaryBg(stoneHex) {
+export function computeComplementaryBg(stoneHex, colourDepth) {
+  const rgb = parseHexUnit(stoneHex || '#eef4ff');
+  const mx = Math.max(rgb[0], rgb[1], rgb[2]);
+  const mn = Math.min(rgb[0], rgb[1], rgb[2]);
+  const rgbSat = mx > 1e-5 ? (mx - mn) / mx : 0;
+  const isNeutral = rgbSat < 0.22 || (Number.isFinite(Number(colourDepth)) && Number(colourDepth) < 0.45);
+  if (isNeutral) {
+    return {
+      stoneH: 0.60,
+      compH: 0.60,
+      compDeg: 216.0,
+      stoneDeg: 216.0,
+      hex: '#0b1018',
+    };
+  }
   const hsl = hexToOkhsl(String(stoneHex || '#a77fe0'));
   const stoneH = Number.isFinite(hsl.h) ? hsl.h : 0.75;
   const compH = (stoneH + 0.5) % 1.0;
@@ -110,7 +124,7 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
   const pageParam = manifest.pageColour ? P[manifest.pageColour] : null;
   function syncPageColour() {
     if (P.graduallyShift?.value !== false && P.stoneColour && P.studioEdge) {
-      const comp = computeComplementaryBg(P.stoneColour.value);
+      const comp = computeComplementaryBg(P.stoneColour.value, P.colourDepth?.value);
       if (P.hueShift) {
         P.hueShift.value = 180;
         P.hueShift.base = 180;

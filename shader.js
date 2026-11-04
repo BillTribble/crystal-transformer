@@ -137,13 +137,16 @@ export default {
     const s = P.stoneColour.rgb;
     const sc = P.coreColour ? P.coreColour.rgb : s;
     const mx = Math.max(s[0], s[1], s[2]), mn = Math.min(s[0], s[1], s[2]), d = mx - mn;
-    let h = 0.75;
-    if (d > 1e-5) {
+    const stoneSat = mx > 1e-5 ? d / mx : 0;
+    const isNeutralStone = stoneSat < 0.22 || (P.colourDepth && P.colourDepth.value < 0.45);
+    let h = 0.60;
+    if (!isNeutralStone && d > 1e-5) {
       h = mx === s[0] ? ((s[1] - s[2]) / d) % 6 : mx === s[1] ? (s[2] - s[0]) / d + 2 : (s[0] - s[1]) / d + 4;
       h = ((h / 6) % 1 + 1) % 1;
+      const shiftDeg = (P.graduallyShift && P.graduallyShift.value === false) ? P.hueShift.value : 180;
+      h = (((h + shiftDeg / 360) % 1) + 1) % 1;
     }
-    const shiftDeg = (P.graduallyShift && P.graduallyShift.value === false) ? P.hueShift.value : 180;
-    h = (((h + shiftDeg / 360) % 1) + 1) % 1;
+    const effBackdropSat = isNeutralStone ? Math.min(P.backdropSat.value, 0.24) : P.backdropSat.value;
     const hComp = (h + 0.5) % 1;
     // Ease the backdrop glow colours over ~1 s of real time. The stone hue is numerically unstable
     // for near-white/grey stones (e.g. High-Dispersion Diamond, where 1-step RGB changes swap the
@@ -154,8 +157,8 @@ export default {
     const aG = glowState.init ? 1 - Math.exp(-Math.min(dtR, 0.5) / 1.1) : 1;
     glowState.init = true;
     for (let c = 0; c < 3; c++) {
-      const tg = lin(hslChannel(c === 0 ? 0 : c === 1 ? 8 : 4, h, P.backdropSat.value, 0.5)) * P.backdropLight.value;
-      const tc = lin(hslChannel(c === 0 ? 0 : c === 1 ? 8 : 4, hComp, Math.max(0.58, P.backdropSat.value), 0.52)) * Math.max(0.11, P.backdropLight.value * 1.35);
+      const tg = lin(hslChannel(c === 0 ? 0 : c === 1 ? 8 : 4, h, effBackdropSat, 0.5)) * P.backdropLight.value;
+      const tc = lin(hslChannel(c === 0 ? 0 : c === 1 ? 8 : 4, hComp, Math.max(0.58, effBackdropSat), 0.52)) * Math.max(0.11, P.backdropLight.value * 1.35);
       glowState.glow[c] += (tg - glowState.glow[c]) * aG;
       glowState.comp[c] += (tc - glowState.comp[c]) * aG;
       f.f_glow[c] = glowState.glow[c];
@@ -961,8 +964,11 @@ vec3 insideVolume(int id, vec3 ro, vec3 rd, float len, float jitter, int maxStep
   float g1 = clamp(glimmer, 0.0, 1.0);
   float effOpticalScale = mix(opticalScale, 1.0, g1);
   float effAbsorbDt = mix(absorbDt, dt, g1);
-  float effMilk = u_milk * (1.0 - 0.45 * dither);
-  float effVeils = u_veils * (1.0 - 0.35 * dither);
+  float rawAmt = clamp(u_rawAmount, 0.0, 2.0);
+  float raw01 = clamp(rawAmt, 0.0, 1.0);
+  float rawScale = mix(0.08, 1.0, raw01) * mix(1.0, 1.85, max(0.0, rawAmt - 1.0));
+  float effMilk = u_milk * (1.0 - 0.25 * dither) * rawScale;
+  float effVeils = u_veils * (1.0 - 0.20 * dither) * rawScale;
   bool needInclTex = (effMilk > 0.01 || effVeils > 0.01 || u_iridescence > 0.01 || u_colourZoning > 0.01 || g1 > 0.01);
   for (int s = 0; s < n; s++) {
     vec3 pp = ro + rd * (dt * (float(s) + jitter));
@@ -970,7 +976,8 @@ vec3 insideVolume(int id, vec3 ro, vec3 rd, float len, float jitter, int maxStep
     float axial = dot(rel, axis);
     float hgt = clamp(abs(axial - 0.14 * L) / max(0.86 * L, 1e-3), 0.0, 1.0);
     float radFrac = clamp(length(rel - axis * axial) / max(r, 1e-3), 0.0, 1.0);
-    float coreMix = u_biColour * clamp((1.0 - radFrac * 0.85) * 0.65 + (1.0 - hgt) * 0.55, 0.0, 1.0);
+    float baseZone = raw01 * (1.0 - smoothstep(0.08, mix(0.54, 0.74, max(0.0, rawAmt - 1.0)), hgt));
+    float coreMix = clamp(u_biColour * ((1.0 - radFrac * 0.75) * mix(0.22, 0.42, raw01) + baseZone * mix(0.78, 1.0, max(0.0, rawAmt - 1.0))), 0.0, 1.0);
     vec3 baseSigma = mix(f_sigma, f_sigmaCore, coreMix);
     vec3 gemBodyCol = exp(-baseSigma * 0.38);
     vec3 tintedLightIn = lightIn * mix(vec3(1.0), normalize(gemBodyCol + vec3(0.04)) * 1.28, clamp(length(baseSigma) * 0.24, 0.0, 0.88));
@@ -978,13 +985,16 @@ vec3 insideVolume(int id, vec3 ro, vec3 rd, float len, float jitter, int maxStep
     vec4 v = needInclTex ? texture(u_incl, pp * u_inclusionScale + off) : vec4(0.0, 0.0, 0.5, 0.0);
     float a = 0.0;
     if (effMilk > 0.01 || effVeils > 0.01) {
-      float milk = effMilk * v.r * mix(1.0, 2.2 * pow(1.0 - hgt, 2.0), u_milkBase);
-      float veil = effVeils * v.g;
+      float rootCloud = mix(1.0, (0.25 + 3.2 * pow(1.0 - hgt, 1.85)) * (0.45 + 0.95 * v.g), u_milkBase);
+      float wisp = pow(max(v.r, 0.0), 1.25) * (0.45 + 0.75 * v.b);
+      float milk = effMilk * mix(v.r, wisp, u_milkBase * baseZone) * rootCloud;
+      float veil = effVeils * pow(max(v.g, 0.0), 1.15) * (0.65 + 0.65 * v.b);
       float dens = (milk + veil) * mix(5.2, 6.0, g1);
       a = 1.0 - exp(-dens * dt);
       float bloomSparkle = u_bloom > 0.0 ? (1.0 + u_bloom * 1.6 * pow(v.a, 8.0)) : 1.0;
       vec3 vSparkCol = mix(vec3(1.0), spectralRainbow(v.a * 7.3 + hgt * 2.1 + dot(rd, axis) * 1.7 + hueOff), 0.55 * g1) * (1.0 + 3.5 * glimmer * pow(v.a, 8.0));
-      scat += T * a * effLightIn * (1.0 + mix(2.8, 3.2, g1) * veil * pow(v.a, 6.0) * bloomSparkle * vSparkCol);
+      vec3 milkTint = mix(effLightIn, lightIn * vec3(0.96, 0.93, 1.0) * mix(1.0, 1.22, raw01), clamp(baseZone * u_milkBase * 0.75, 0.0, 0.85));
+      scat += T * a * milkTint * (1.0 + mix(2.8, 3.2, g1) * veil * pow(v.a, 6.0) * bloomSparkle * vSparkCol);
     }
     if (schillerResonance > 1e-3) {
       vec3 radialVec = (rel - axis * axial) - flashCenterOffset;
@@ -1004,7 +1014,11 @@ vec3 insideVolume(int id, vec3 ro, vec3 rd, float len, float jitter, int maxStep
       float veilBand = (0.03 + 0.14 * v.g + 0.06 * v.r) * clamp(u_iridescence * 0.48, 0.0, 1.3) * u_rainbow * (1.0 - 0.85 * g1) * (1.0 - 0.32 * dither);
       scat += T * iridWave * effLightIn * veilBand * dt * mix(2.1, 1.45, dither);
     }
-    vec3 sigma = baseSigma * effOpticalScale * (1.0 + u_colourZoning * (2.0 * hgt - 1.0)) * (0.75 + 0.5 * v.b);
+    float chevronBand = 1.0 + 0.28 * rawAmt * u_colourZoning * sin((hgt * 14.0 - radFrac * 5.0) * PI);
+    float cleanTipZone = 1.0 + 0.35 * u_colourZoning * (2.0 * hgt - 1.0);
+    float rawTipZone = mix(1.0, 0.14 + 1.85 * pow(smoothstep(0.14, 0.90, hgt), mix(1.35, 1.75, max(0.0, rawAmt - 1.0))), u_colourZoning);
+    float tipZone = mix(cleanTipZone, rawTipZone, raw01);
+    vec3 sigma = baseSigma * effOpticalScale * tipZone * chevronBand * (0.72 + 0.56 * v.b);
     T *= (1.0 - a) * exp(-sigma * effAbsorbDt);
   }
 
@@ -1064,7 +1078,8 @@ void insidePrimaryExtras(int id, vec3 ro, vec3 rd, float len, float travelled, i
   vec3 off = vec3(rnd * 17.3, rnd * 31.1, rnd * 7.7);
   vec3 lightIn = f_ambient * u_inclusionLight;
   float dither = clamp(u_ditherBlend, 0.0, 1.0);
-  float effPhantom = u_phantom * pow(1.0 - dither, 1.5);
+  float rawAmt = clamp(u_rawAmount, 0.0, 2.0);
+  float effPhantom = u_phantom * (1.0 - 0.35 * dither) * mix(0.12, 1.0, clamp(rawAmt, 0.0, 1.0)) * mix(1.0, 1.65, max(0.0, rawAmt - 1.0));
 
   // Multi-generation nested phantoms (evaluated once on primary ray outside bounce loop)
   float phRateRoll = hash(vec3(uid, f_seed, 97.0));
@@ -1222,6 +1237,8 @@ vec3 faceNormal(int id, int k, vec3 n, vec3 p, float rough, float footprint, flo
   float dither = clamp(u_ditherBlend, 0.0, 1.0);
   float glimmer = clamp(u_glimmer, 0.0, 2.0);
   float g1 = clamp(glimmer, 0.0, 1.0);
+  float rawAmt = clamp(u_rawAmount, 0.0, 2.0);
+  float rawSurfScale = mix(0.15, 1.0, clamp(rawAmt, 0.0, 1.0)) * mix(1.0, 1.6, max(0.0, rawAmt - 1.0));
   if (k < 8 && u_striations > 0.0) {
     float axialY = dot(p - body(id, 3).xyz, ax.xyz);
     float fFine = u_striationScale * 0.30;
@@ -1231,7 +1248,7 @@ vec3 faceNormal(int id, int k, vec3 n, vec3 p, float rough, float footprint, flo
     float amp = texture(u_incl, vec3(axialY * 1.8, uid * 0.37, 0.5)).b;
     float ridge = aaCoarse * 0.68 * sin(TAU * axialY * fCoarse + 1.5 * sin(axialY * 11.0))
                 + aaFine * 0.32 * sin(TAU * axialY * fFine);
-    n = normalize(n + ax.xyz * (u_striations * (1.0 - 0.55 * dither) * mix(0.026, 0.074, g1) * amp * ridge));
+    n = normalize(n + ax.xyz * (u_striations * rawSurfScale * (1.0 - 0.55 * dither) * mix(0.026, 0.074, g1) * amp * ridge));
   }
   float effHopper = u_hopper * pow(1.0 - dither, 1.5);
   if (effHopper > 0.0) {
@@ -1894,8 +1911,10 @@ void main() {
     float footprint = travelled * f_pixAngle;
     float dither = clamp(u_ditherBlend, 0.0, 1.0);
     float ditherFrost = smoothstep(0.0, 0.85, dither);
-    float effFrostShare = mix(u_frostShare, max(u_frostShare, 0.58), ditherFrost);
-    float effFrost = mix(u_frost, max(u_frost, 0.38), ditherFrost);
+    float rawAmt = clamp(u_rawAmount, 0.0, 2.0);
+    float rawFrostScale = mix(0.22, 1.0, clamp(rawAmt, 0.0, 1.0)) * mix(1.0, 1.45, max(0.0, rawAmt - 1.0));
+    float effFrostShare = clamp(mix(u_frostShare, max(u_frostShare, 0.58), ditherFrost) * rawFrostScale, 0.0, 1.0);
+    float effFrost = clamp(mix(u_frost, max(u_frost, 0.38), ditherFrost) * rawFrostScale, 0.0, 1.0);
     int kFrostId = (k < CP) ? k : ((k >= CP + 10000) ? ((k - (CP + 10000)) / 4) : ((k >= CP + 5000) ? ((k - (CP + 5000)) / 2) : k));
     float frostRoll = hash(vec3(uid, float(kFrostId), f_seed + 0.5));
     float frostW = smoothstep(frostRoll - 0.15, frostRoll + 0.15, effFrostShare);
