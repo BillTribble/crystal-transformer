@@ -537,8 +537,8 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
         else if (st === 'Subtle') targetOcclusion = 0.38;
         else if (st === 'Off') targetOcclusion = 0.0;
         panel.syncAll();
-      } else if (changedKey === 'occlusion') {
-        occlusionManualHold = 30.0;
+      } else if (changedKey === 'occlusion' || changedKey === 'occlusionType') {
+        occlusionManualHold = 180.0;
         smoothOcclusion = Number(P.occlusion?.value) || 0;
         targetOcclusion = smoothOcclusion;
       } else if (changedKey) {

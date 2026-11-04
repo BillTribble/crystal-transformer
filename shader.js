@@ -151,7 +151,7 @@ export default {
     let dtR = rt - glowState.rt;
     if (!(dtR >= 0)) dtR = 0.016;
     glowState.rt = rt;
-    const aG = glowState.init ? 1 - Math.exp(-Math.min(dtR, 0.5) / 0.22) : 1;
+    const aG = glowState.init ? 1 - Math.exp(-Math.min(dtR, 0.5) / 1.1) : 1;
     glowState.init = true;
     for (let c = 0; c < 3; c++) {
       const tg = lin(hslChannel(c === 0 ? 0 : c === 1 ? 8 : 4, h, P.backdropSat.value, 0.5)) * P.backdropLight.value;
@@ -306,83 +306,99 @@ float occOpacityFor(int row) {
   return smoothstep(0.0, 0.25, (x - delay) / (1.0 - delay));
 }
 
-// 1a. Massive Abstract Ovoid Occlusion Voids (u_occlusionType == 0): fixed-radius 3D displacing spheres/wedges
-float evalOvoidOcclusionVoid(int row, vec3 ro, vec3 rd, float tEntry, out vec3 outWallN, out float outRim) {
-  outWallN = vec3(0.0, 1.0, 0.0);
-  outRim = 0.0;
-  if (u_occlusion <= 0.001) return 0.0;
-  vec3 ax = body(row, 1).xyz;
-  vec3 rt = body(row, 3).xyz;
-  float Lh = max(body(row, 1).w, 0.02);
-  float rh = max(body(row, 2).w, 0.01);
-  vec3 sideC = body(row, PA).xyz - ax * dot(body(row, PA).xyz, ax);
-  int nextRow = occPartnerRow(row, 0);
-  float g = occGrowthFor(row);
-  float bestCut = 0.0;
-  for (int m = 0; m < 2; m++) {
-    vec4 rawEc = body(nextRow, m);
-    // Each void is a bubble seeded just under this crystal's surface (on the side facing the
-    // partner crystal) that grows with the occlusion level and shrinks back to that seed. It opens
-    // as a small hole that steadily widens, instead of appearing late and already huge (when it
-    // grew from the partner's centre deep inside the cluster, whole crystals vanished in ~3 s).
-    vec3 axPt = rt + ax * (Lh * (m == 0 ? 0.55 : 0.8));
-    vec3 toC = rawEc.xyz - axPt;
-    vec3 perpT = toC - ax * dot(toC, ax);
-    vec3 outDir = normalize(perpT + sideC * max(0.0, rh - length(perpT)) + vec3(1e-6));
-    float rad = rawEc.w * 0.92 * g;
-    vec4 ec = vec4(axPt + outDir * (rh * 0.85 + 0.35 * rad), rad);
-    if (ec.w <= 1e-4) continue;
-    vec3 oc = ro - ec.xyz;
-    float b = dot(oc, rd);
-    float h = b * b - dot(oc, oc) + ec.w * ec.w;
-    if (h <= 0.0) continue;
-    float s = sqrt(h);
-    float tc0 = -b - s, tc1 = -b + s;
-    // Radial direction from this crystal's axis line to the void centre. When the centre sits on
-    // (or crosses) the axis line this vector is ~0 and normalizing it flips the wedge planes from
-    // frame to frame (whole chunks popped), so blend smoothly toward the crystal's own side axis.
-    vec3 perpC = ec.xyz - rt - ax * dot(ec.xyz - rt, ax);
-    vec3 radDir = normalize(perpC + sideC * max(0.0, ec.w * 0.35 - length(perpC)) + vec3(1e-6));
-    vec3 nUp = normalize(ax + radDir * 0.42);
-    vec3 nDn = normalize(-ax + radDir * 0.48);
-    float dUp = ec.w * 0.62 - dot(nUp, oc);
-    float dnUp = dot(nUp, rd);
-    if (abs(dnUp) > 1e-6) {
-      float tUp = dUp / dnUp;
-      if (dnUp < 0.0) tc0 = max(tc0, tUp); else tc1 = min(tc1, tUp);
-    } else if (dUp < 0.0) continue;
-    float dDn = ec.w * 0.66 - dot(nDn, oc);
-    float dnDn = dot(nDn, rd);
-    if (abs(dnDn) > 1e-6) {
-      float tDn = dDn / dnDn;
-      if (dnDn < 0.0) tc0 = max(tc0, tDn); else tc1 = min(tc1, tDn);
-    } else if (dDn < 0.0) continue;
-    if (tc1 > tc0 && tc1 > tEntry) {
-      float frontSoft = 1.0 - smoothstep(tEntry - ec.w * 0.06, tEntry + ec.w * 0.28, tc0);
-      float span = max(0.0, tc1 - max(tc0, tEntry));
-      float depthSoft = smoothstep(0.0, max(ec.w * 0.36, 1e-3), span);
-      float cut = frontSoft * depthSoft;
-      if (cut > bestCut) {
-        bestCut = cut;
-        vec3 pHit = ro + rd * max(tc0, tEntry);
-        vec3 relC = pHit - ec.xyz;
-        outWallN = -normalize(relC + 1e-5);
-        outRim = clamp(cut * (1.0 - cut) * 4.0, 0.0, 1.0);
-      }
-    }
-  }
-  return clamp(bestCut, 0.0, 1.0);
-}
-
 vec3 rotateAroundAxis(vec3 v, vec3 k, float cosA, float sinA) {
   return v * cosA + cross(k, v) * sinA + k * dot(k, v) * (1.0 - cosA);
 }
 
-// 1b. Invisible Crystal Occlusions (u_occlusionType == 1): invisible crystals of the exact same shape & form (facet planes 0..17) as the current batch occluding visible crystals
-float evalInvisibleCrystalVoid(int row, vec3 ro, vec3 rd, float tEntry, out vec3 outWallN, out float outRim) {
-  outWallN = vec3(0.0, 1.0, 0.0);
-  outRim = 0.0;
-  if (u_occlusion <= 0.001) return 0.0;
+// 1a. 3D CSG Ovoid + Wedge Void Interval (u_occlusionType == 0):
+//     Computes ray interval [tc0, tc1], entry/exit 3D cavity wall normals, and interior crease distance exitSeam.
+bool evalOvoidVoidInterval(int row, int m, vec3 ro, vec3 rd, out float tc0, out float tc1, out vec3 enterN, out vec3 exitN, out float exitSeam) {
+  tc0 = -1e9; tc1 = 1e9;
+  enterN = vec3(0.0, 1.0, 0.0);
+  exitN = vec3(0.0, 1.0, 0.0);
+  exitSeam = 1e9;
+  if (u_occlusion <= 0.002) return false;
+  float g = occGrowthFor(row) * smoothstep(0.55, 0.95, clamp(body(row, 2).x, 0.0, 1.0));
+  if (g <= 1e-3) return false;
+
+  vec3 ax = body(row, 1).xyz;
+  vec3 rt = body(row, 3).xyz;
+  float Lh = max(body(row, 1).w, 0.08);
+  float rh = max(body(row, 2).w, 0.02);
+  vec3 p0 = body(row, PA).xyz;
+  vec3 side1 = p0 - ax * dot(p0, ax);
+  float sLen = length(side1);
+  side1 = sLen > 1e-4 ? (side1 / sLen) : normalize(cross(ax, vec3(0.577, 0.577, 0.577)));
+  vec3 side2 = cross(ax, side1);
+
+  float uid = max(1.0, body(row, 2).z);
+  float azV = uid * 2.399963 + float(m) * 2.65;
+  vec3 outDir = side1 * cos(azV) + side2 * sin(azV);
+  float hFrac = (m == 0) ? 0.42 : 0.72;
+  vec3 axPt = rt + ax * (Lh * hFrac);
+  float rad = rh * (1.32 + 0.24 * float(m)) * g;
+  vec4 ec = vec4(axPt + outDir * (rh * 1.04), rad);
+  if (ec.w <= 1e-4) return false;
+
+  vec3 oc = ro - ec.xyz;
+  float b = dot(oc, rd);
+  float h = b * b - dot(oc, oc) + ec.w * ec.w;
+  if (h <= 0.0) return false;
+  float s = sqrt(h);
+  tc0 = -b - s;
+  tc1 = -b + s;
+  int enterSurf = 0;
+  int exitSurf = 0;
+
+  vec3 nUp = normalize(ax + outDir * 0.44);
+  vec3 nDn = normalize(-ax + outDir * 0.48);
+  float dUp = ec.w * 0.66 - dot(nUp, oc);
+  float dnUp = dot(nUp, rd);
+  if (abs(dnUp) > 1e-6) {
+    float tUp = dUp / dnUp;
+    if (dnUp < 0.0) {
+      if (tUp > tc0) { tc0 = tUp; enterSurf = 1; }
+    } else {
+      if (tUp < tc1) { tc1 = tUp; exitSurf = 1; }
+    }
+  } else if (dUp < 0.0) return false;
+
+  float dDn = ec.w * 0.68 - dot(nDn, oc);
+  float dnDn = dot(nDn, rd);
+  if (abs(dnDn) > 1e-6) {
+    float tDn = dDn / dnDn;
+    if (dnDn < 0.0) {
+      if (tDn > tc0) { tc0 = tDn; enterSurf = 2; }
+    } else {
+      if (tDn < tc1) { tc1 = tDn; exitSurf = 2; }
+    }
+  } else if (dDn < 0.0) return false;
+
+  if (tc1 <= tc0) return false;
+
+  vec3 rel0 = (ro + rd * tc0) - ec.xyz;
+  enterN = (enterSurf == 1) ? nUp : ((enterSurf == 2) ? nDn : normalize(rel0 + 1e-6));
+  vec3 rel1 = (ro + rd * tc1) - ec.xyz;
+  exitN = (exitSurf == 1) ? nUp : ((exitSurf == 2) ? nDn : normalize(rel1 + 1e-6));
+
+  float dSph = max(0.0, ec.w - length(rel1));
+  float dU = max(0.0, ec.w * 0.66 - dot(nUp, rel1));
+  float dD = max(0.0, ec.w * 0.68 - dot(nDn, rel1));
+  exitSeam = (exitSurf == 0) ? min(dU, dD) : ((exitSurf == 1) ? min(dSph, dD) : min(dSph, dU));
+  return true;
+}
+
+// 1b. 3D CSG Invisible Crystal Void Interval (u_occlusionType == 1):
+//     Carves a 3D faceted crystal cavity of the exact 18-plane crystallographic habit of partner tRow.
+bool evalCrystalVoidInterval(int row, int m, vec3 ro, vec3 rd, out float tc0, out float tc1, out vec3 enterN, out vec3 exitN, out float exitSeam) {
+  tc0 = -1e9; tc1 = 1e9;
+  enterN = vec3(0.0, 1.0, 0.0);
+  exitN = vec3(0.0, 1.0, 0.0);
+  exitSeam = 1e9;
+  if (u_occlusion <= 0.002) return false;
+  float g = occGrowthFor(row) * smoothstep(0.55, 0.95, clamp(body(row, 2).x, 0.0, 1.0));
+  if (g <= 1e-3) return false;
+
   vec3 axRow = body(row, 1).xyz;
   float LRow = max(body(row, 1).w, 0.08);
   float rRow = max(body(row, 2).w, 0.02);
@@ -393,77 +409,114 @@ float evalInvisibleCrystalVoid(int row, vec3 ro, vec3 rd, float tEntry, out vec3
   side1 = sLen > 1e-4 ? (side1 / sLen) : normalize(cross(axRow, vec3(0.577, 0.577, 0.577)));
   vec3 side2 = cross(axRow, side1);
 
-  float bestCut = 0.0;
+  int tRow = occPartnerRow(row, m);
+  vec3 axTpl = body(tRow, 1).xyz;
+  float LTpl = max(body(tRow, 1).w, 0.08);
+  float rTpl = max(body(tRow, 2).w, 0.02);
+  vec3 rtTpl = body(tRow, 3).xyz;
+  vec3 cTpl = rtTpl + axTpl * (LTpl * 0.48);
 
-  for (int m = 0; m < 2; m++) {
-    int tRow = occPartnerRow(row, m);
-    vec3 axTpl = body(tRow, 1).xyz;
-    float LTpl = max(body(tRow, 1).w, 0.08);
-    float rTpl = max(body(tRow, 2).w, 0.02);
-    vec3 rtTpl = body(tRow, 3).xyz;
-    vec3 cTpl = rtTpl + axTpl * (LTpl * 0.48);
+  float uid = max(1.0, body(row, 2).z);
+  float azV = uid * 2.399963 + float(m) * 2.45 + 0.55;
+  vec3 outDir = side1 * cos(azV) + side2 * sin(azV);
+  vec3 tanDir = -side1 * sin(azV) + side2 * cos(azV);
+  float hFrac = (m == 0) ? 0.40 : 0.70;
+  vec3 cAnchor = rtRow + axRow * (LRow * hFrac) + outDir * (rRow * 0.94);
+  vec3 rotAxis = normalize(tanDir + axRow * ((m == 0) ? 0.28 : -0.24));
+  float ang = (m == 0) ? 1.12 : -1.02;
+  float cosA = cos(ang), sinA = sin(ang);
+  float invScale = clamp((rTpl / max(rRow, 0.02)) * 0.76, 0.48, 1.28) / max(g, 0.02);
 
-    float hFrac = (m == 0) ? 0.44 : 0.72;
-    // While small, seed the void just under the crystal's surface so its hole is visible from the
-    // start and widens steadily; ease back to the original interior anchor as it reaches full size.
-    vec3 cAnchor = rtRow + axRow * (LRow * hFrac) + ((m == 0) ? side1 : side2) * (rRow * mix(0.92, 0.22, occGrowthFor(row)));
-    vec3 rotAxis = (m == 0) ? normalize(side2 + axRow * 0.25) : normalize(side1 - axRow * 0.22);
-    float ang = (m == 0) ? 1.08 : -0.96;
-    float cosA = cos(ang), sinA = sin(ang);
-    float invScale = clamp((rTpl / max(rRow, 0.02)) * 0.80, 0.55, 1.35) / max(occGrowthFor(row), 0.02);
+  vec3 roTpl = cTpl + rotateAroundAxis((ro - cAnchor) * invScale, rotAxis, cosA, sinA);
+  vec3 rdTpl = rotateAroundAxis(rd * invScale, rotAxis, cosA, sinA);
 
-    vec3 roTpl = cTpl + rotateAroundAxis((ro - cAnchor) * invScale, rotAxis, cosA, sinA);
-    vec3 rdTpl = rotateAroundAxis(rd * invScale, rotAxis, cosA, sinA);
-
-    float tc0 = -1e9, tc1 = 1e9;
-    vec3 hitN = vec3(0.0, 1.0, 0.0);
-    for (int k = 0; k < 18; k++) {
-      vec4 pl = body(tRow, PA + k);
-      float dn = dot(pl.xyz, rdTpl);
-      float dist = pl.w - dot(pl.xyz, roTpl);
-      if (abs(dn) < 1e-8) {
-        if (dist < 0.0) { tc0 = 1e9; break; }
-        continue;
-      }
-      float tPl = dist / dn;
-      if (dn < 0.0) {
-        if (tPl > tc0) { tc0 = tPl; hitN = pl.xyz; }
-      } else if (tPl < tc1) {
-        tc1 = tPl;
-      }
-      if (tc0 > tc1) break;
+  vec3 enterPlN = vec3(0.0, 1.0, 0.0);
+  vec3 exitPlN = vec3(0.0, 1.0, 0.0);
+  int kExit = 0;
+  for (int k = 0; k < 18; k++) {
+    vec4 pl = body(tRow, PA + k);
+    float dn = dot(pl.xyz, rdTpl);
+    float dist = pl.w - dot(pl.xyz, roTpl);
+    if (abs(dn) < 1e-8) {
+      if (dist < 0.0) return false;
+      continue;
     }
-
-    if (tc1 > tc0 && tc1 > tEntry) {
-      float feather = rRow * 0.06;
-      float frontSoft = 1.0 - smoothstep(tEntry - feather * 0.4, tEntry + feather * 1.4, tc0);
-      float span = max(0.0, tc1 - max(tc0, tEntry));
-      float depthSoft = smoothstep(0.0, max(rRow * 0.14, 1e-3), span);
-      float cut = frontSoft * depthSoft;
-      if (cut > bestCut) {
-        bestCut = cut;
-        vec3 worldWallN = rotateAroundAxis(hitN, rotAxis, cosA, -sinA);
-        outWallN = -normalize(worldWallN + 1e-5);
-        outRim = clamp(cut * (1.0 - cut) * 4.0, 0.0, 1.0);
-      }
+    float tPl = dist / dn;
+    if (dn < 0.0) {
+      if (tPl > tc0) { tc0 = tPl; enterPlN = pl.xyz; }
+    } else if (tPl < tc1) {
+      tc1 = tPl; exitPlN = pl.xyz; kExit = k;
     }
+    if (tc0 > tc1) return false;
   }
-  return clamp(bestCut, 0.0, 1.0);
+  if (tc1 <= tc0) return false;
+
+  enterN = normalize(rotateAroundAxis(enterPlN, rotAxis, cosA, -sinA) + 1e-6);
+  exitN = normalize(rotateAroundAxis(exitPlN, rotAxis, cosA, -sinA) + 1e-6);
+
+  vec3 pTplExit = roTpl + rdTpl * tc1;
+  float dMinSeam = 1e9;
+  for (int k = 0; k < 18; k++) {
+    if (k == kExit) continue;
+    vec4 pl = body(tRow, PA + k);
+    float cosAng = dot(pl.xyz, exitPlN);
+    if (cosAng > 0.995) continue;
+    float sinAng = sqrt(max(1e-3, 1.0 - cosAng * cosAng));
+    float dPl = max(0.0, pl.w - dot(pl.xyz, pTplExit)) / (sinAng * invScale);
+    if (dPl < dMinSeam) dMinSeam = dPl;
+  }
+  exitSeam = dMinSeam;
+  return true;
 }
 
-// Unified Occlusion Void Evaluator (blends Ovoids at u_occlusionType=0 and Invisible Crystals at u_occlusionType=1)
-float evalMassiveOcclusionVoid(int row, vec3 ro, vec3 rd, float tEntry, out vec3 outWallN, out float outRim) {
-  outWallN = vec3(0.0, 1.0, 0.0);
-  outRim = 0.0;
-  if (u_occlusion <= 0.002) return 0.0;
+bool evalSingleVoidInterval(int row, int m, vec3 ro, vec3 rd, out float tc0, out float tc1, out vec3 enterN, out vec3 exitN, out float exitSeam) {
   float kType = clamp(u_occlusionType, 0.0, 1.0);
-  vec3 nOvoid = vec3(0.0, 1.0, 0.0), nCryst = vec3(0.0, 1.0, 0.0);
-  float rOvoid = 0.0, rCryst = 0.0;
-  float cOvoid = (kType < 0.99) ? evalOvoidOcclusionVoid(row, ro, rd, tEntry, nOvoid, rOvoid) : 0.0;
-  float cCryst = (kType > 0.01) ? evalInvisibleCrystalVoid(row, ro, rd, tEntry, nCryst, rCryst) : 0.0;
-  outWallN = normalize(mix(nOvoid, nCryst, kType) + vec3(1e-5));
-  outRim = mix(rOvoid, rCryst, kType);
-  return mix(cOvoid, cCryst, kType);
+  bool useCrystal = (kType >= 0.85) || (kType > 0.15 && m == 0);
+  if (useCrystal) {
+    return evalCrystalVoidInterval(row, m, ro, rd, tc0, tc1, enterN, exitN, exitSeam);
+  }
+  return evalOvoidVoidInterval(row, m, ro, rd, tc0, tc1, enterN, exitN, exitSeam);
+}
+
+// Unified 3D CSG Occlusion Void Carve:
+// Subtracts 3D ovoid/crystal void volumes [tc0, tc1] from crystal interval [tn, tf], advancing tn to tc1
+// when a cavity is carved into the front face (with true 3D interior wall normal outVoidN and crisp 3D
+// border distance outVoidBorder) or returning false when the void slices completely through the silhouette.
+bool applyOcclusionVoidCSG(int row, vec3 ro, vec3 rd, inout float tn, inout float tf, inout int kn, out vec3 outVoidN, out float outVoidBorder, out float outVoidSeam) {
+  outVoidN = (kn < CP) ? body(row, PA + kn).xyz : vec3(0.0, 1.0, 0.0);
+  outVoidBorder = 1e9;
+  outVoidSeam = 1e9;
+  if (u_occlusion <= 0.002) return true;
+  float rRow = max(body(row, 2).w, 0.02);
+  float tnOrig = max(tn, 0.0);
+  float tfOrig = tf;
+
+  for (int m = 0; m < 2; m++) {
+    float tc0, tc1, exitSeam;
+    vec3 enterN, exitN;
+    if (!evalSingleVoidInterval(row, m, ro, rd, tc0, tc1, enterN, exitN, exitSeam)) continue;
+
+    float tStart = max(tn, 0.0);
+    if (tc0 <= tStart + rRow * 0.06 && tc1 > tStart) {
+      if (tc1 >= tf - 1e-4) return false;
+      float dFront = max(0.0, tc1 - tnOrig);
+      float dBack = max(0.0, tf - tc1);
+      float dLip = (tc0 > tnOrig - rRow * 0.08) ? max(0.0, tnOrig + rRow * 0.06 - tc0) : 1e9;
+      tn = tc1;
+      kn = CP + m + 1;
+      outVoidN = -exitN;
+      outVoidBorder = min(dFront, min(dBack, dLip));
+      outVoidSeam = exitSeam;
+    } else if (tc0 > tStart && tc0 < tf && tc1 >= tf - rRow * 0.06) {
+      float dBackCut = max(0.0, tfOrig - tc0);
+      float dThru = max(0.0, tc0 - tStart);
+      tf = tc0;
+      if (tf <= max(tn, 0.0) + 1e-4) return false;
+      outVoidBorder = min(outVoidBorder, min(dBackCut, dThru));
+      outVoidSeam = min(outVoidSeam, exitSeam);
+    }
+  }
+  return tf > max(tn, 0.0) + 1e-4;
 }
 
 float n3(vec3 p) {
@@ -628,9 +681,8 @@ void evalSingleRidgeBevel(
 bool applyTinyEdgeChip(int row, int k0, vec3 ro, vec3 rd, inout float tn, inout float tf, inout int kn, out float edgeSilAlpha, out vec3 outChipN) {
   edgeSilAlpha = 1.0;
   float effEdgeMacro = max(0.0, u_patinaMacro * u_edgeMacro);
-  float chipGate = clamp(u_edgeChips * 2.5, 0.0, 1.0);
   float effChips = clamp(u_edgeChips * effEdgeMacro, 0.0, 2.0);
-  float effIrreg = clamp((u_edgeIrregularity + 0.25 * u_edgeWear) * effEdgeMacro * chipGate, 0.0, 2.0);
+  float effIrreg = clamp((u_edgeIrregularity + 0.25 * u_edgeWear) * effEdgeMacro, 0.0, 2.0);
   vec4 pl0 = body(row, PA + k0);
   vec3 n0 = pl0.xyz;
   outChipN = n0;
@@ -652,7 +704,7 @@ bool applyTinyEdgeChip(int row, int k0, vec3 ro, vec3 rd, inout float tn, inout 
   vec4 pl1 = vec4(0.0), pl2 = vec4(0.0);
   float maxValidOff = L * 1.35 + r * 2.2;
 
-  for (int k = 0; k < 16; k++) {
+  for (int k = 0; k < 18; k++) {
     if (k == k0) continue;
     vec4 pl = body(row, PA + k);
     if (pl.w - dot(pl.xyz, rt) > maxValidOff) continue;
@@ -680,7 +732,7 @@ bool applyTinyEdgeChip(int row, int k0, vec3 ro, vec3 rd, inout float tn, inout 
     v2 = max(k0, max(k1, k2));
     v1 = (k0 + k1 + k2) - v0 - v2;
     whaleRoll = hash(vec3(uid * 17.0 + float(v0) * 31.0, float(v1) * 23.0 + float(v2) * 13.0, 7.0));
-    whaleMult = (u_hopper > 0.35) ? ((whaleRoll >= 0.99) ? 12.0 : ((whaleRoll >= 0.93) ? 6.0 : 1.0)) : 1.0;
+    whaleMult = (whaleRoll >= 0.99) ? 20.0 : ((whaleRoll >= 0.93) ? 10.0 : 1.0);
   }
   if (whaleMult <= 1.0 && d1 >= r * 0.095 * max(0.45, max(chipSz, effIrreg))) return true;
 
@@ -814,27 +866,53 @@ bool convexHit(int row, vec3 ro, vec3 rd, out float tn, out float tf, out int kn
   return tf > max(tn, 0.0);
 }
 
-float exitCrystal(int row, vec3 ro, vec3 rd, out int kf) {
+float exitCrystal(int row, vec3 ro, vec3 rd, out int kf, out vec3 outExitN) {
   float tf = 1e9; kf = 0;
+  outExitN = body(row, PA).xyz;
   for (int k = 0; k < CP; k++) {
     vec4 pl = body(row, PA + k);
     float dn = dot(pl.xyz, rd);
     if (dn > 1e-8) {
       float t = (pl.w - dot(pl.xyz, ro)) / dn;
-      if (t < tf) { tf = t; kf = k; }
+      if (t < tf) { tf = t; kf = k; outExitN = pl.xyz; }
+    }
+  }
+  if (u_occlusion > 0.002) {
+    for (int m = 0; m < 2; m++) {
+      float tc0, tc1, exitSeam;
+      vec3 enterN, exitN;
+      if (!evalSingleVoidInterval(row, m, ro, rd, tc0, tc1, enterN, exitN, exitSeam)) continue;
+      if (tc0 > 1e-4 && tc0 < tf) {
+        tf = tc0;
+        kf = CP + m + 1;
+        outExitN = -enterN;
+      }
     }
   }
   return max(tf, 0.0);
 }
 
-bool traceScene(vec3 ro, vec3 rd, int skipMask, out int id, out float tHit, out float tfHit, out int kHit) {
+bool traceScene(vec3 ro, vec3 rd, int skipMask, out int id, out float tHit, out float tfHit, out int kHit, out vec3 outVoidN, out float outVoidBorder, out float outVoidSeam) {
   bool hit = false; id = 0; kHit = 0; tHit = 1e9; tfHit = 1e9;
+  outVoidN = vec3(0.0, 1.0, 0.0);
+  outVoidBorder = 1e9;
+  outVoidSeam = 1e9;
   float tn, tf; int kn, kf;
   int nc = clamp(int(f_crystals + 0.5), 0, MAX_CRYSTALS);
   for (int i = 0; i < nc; i++) {
     if ((skipMask & (1 << i)) != 0 || !sphereHit(ro, rd, body(i, 0), tHit)) continue;
     if (convexHit(i, ro, rd, tn, tf, kn, kf)) {
-      if (tn > 1e-4 && tf > tn + 1e-4 && tn < tHit) { tHit = tn; tfHit = tf; id = i; kHit = kn; hit = true; }
+      vec3 candVoidN = vec3(0.0, 1.0, 0.0);
+      float candBorder = 1e9, candSeam = 1e9;
+      if (u_occlusion > 0.002) {
+        if (!applyOcclusionVoidCSG(i, ro, rd, tn, tf, kn, candVoidN, candBorder, candSeam)) continue;
+      }
+      float tCand = max(tn, 0.0);
+      if (tf > tCand + 1e-4 && tCand < tHit) {
+        tHit = tCand; tfHit = tf; id = i; kHit = kn;
+        outVoidN = candVoidN; outVoidBorder = candBorder; outVoidSeam = candSeam;
+        hit = true;
+      }
     }
   }
   return hit;
@@ -890,7 +968,7 @@ vec3 insideVolume(int id, vec3 ro, vec3 rd, float len, float jitter, int maxStep
     vec3 pp = ro + rd * (dt * (float(s) + jitter));
     vec3 rel = pp - root;
     float axial = dot(rel, axis);
-    float hgt = clamp(axial / max(L, 1e-3), 0.0, 1.0);
+    float hgt = clamp(abs(axial - 0.14 * L) / max(0.86 * L, 1e-3), 0.0, 1.0);
     float radFrac = clamp(length(rel - axis * axial) / max(r, 1e-3), 0.0, 1.0);
     float coreMix = u_biColour * clamp((1.0 - radFrac * 0.85) * 0.65 + (1.0 - hgt) * 0.55, 0.0, 1.0);
     vec3 baseSigma = mix(f_sigma, f_sigmaCore, coreMix);
@@ -920,11 +998,10 @@ vec3 insideVolume(int id, vec3 ro, vec3 rd, float len, float jitter, int maxStep
       float flashPower = u_flash * (0.65 + 0.45 * u_flash);
       scat += T * coreEnvelope * singleGlow * schillerResonance * deepFlashCol * (f_ambient * 2.2 + vec3(0.38)) * flashPower * effOpticalScale * dt * 2.4;
     }
-    if (u_iridescence > 0.01 && u_rainbow * (1.0 - 0.85 * g1) > 0.001 && (effMilk + effVeils) > 0.01) {
+    if (u_iridescence > 0.01 && u_rainbow * (1.0 - 0.85 * g1) > 0.001) {
       float iridPhase = hgt * mix(1.85, 1.45, dither) + radFrac * mix(1.25, 0.95, dither) + dot(rd, axis) * mix(1.15, 0.95, dither) + hueOff + v.b * mix(0.75, 0.55, dither);
       vec3 iridWave = spectralRainbow(iridPhase);
-      float veilGate = clamp((effMilk + effVeils) * 1.6, 0.0, 1.0);
-      float veilBand = (0.03 + 0.14 * v.g + 0.06 * v.r) * veilGate * clamp(u_iridescence * 0.48, 0.0, 1.3) * u_rainbow * (1.0 - 0.85 * g1) * (1.0 - 0.32 * dither);
+      float veilBand = (0.03 + 0.14 * v.g + 0.06 * v.r) * clamp(u_iridescence * 0.48, 0.0, 1.3) * u_rainbow * (1.0 - 0.85 * g1) * (1.0 - 0.32 * dither);
       scat += T * iridWave * effLightIn * veilBand * dt * mix(2.1, 1.45, dither);
     }
     vec3 sigma = baseSigma * effOpticalScale * (1.0 + u_colourZoning * (2.0 * hgt - 1.0)) * (0.75 + 0.5 * v.b);
@@ -933,10 +1010,10 @@ vec3 insideVolume(int id, vec3 ro, vec3 rd, float len, float jitter, int maxStep
 
   // Deep internal iridescent cleavage plane (blends glossy f50bae4 rainbow pipeline with transparent 555e23b cleavage via u_ditherBlend, and Jack Bush thin-film rainbow cracks via u_glimmer)
   float crackRainbowGate = max(u_rainbow, g1);
-  if (u_fractures > 0.01 && crackRainbowGate > 0.001) {
+  if ((u_fractures > 0.01 || u_iridescence > 0.01 || u_flash > 0.01) && crackRainbowGate > 0.001) {
     float uid = crystalUid(id);
     float bounceCleaveW = (maxSteps > 5) ? 1.0 : mix(1.0 - 0.88 * dither, 1.0, g1);
-    float effFractures = clamp(u_fractures, 0.0, 1.0);
+    float effFractures = mix(clamp(u_fractures + u_iridescence * 0.22 + u_flash * 0.25, 0.0, 1.0), u_fractures, g1);
     float fracRoll = mix(hash(vec3(uid, f_seed, 91.0)), hash(vec3(float(id), f_seed, 91.0)), g1);
     float fracW = mix(smoothstep(fracRoll - 0.14, fracRoll + 0.14, effFractures), step(fracRoll, effFractures), g1) * bounceCleaveW;
     if (fracW > 1e-4) {
@@ -1068,7 +1145,7 @@ void insidePrimaryExtras(int id, vec3 ro, vec3 rd, float len, float travelled, i
 
   // Occasional razor-thin internal & sub-surface hairline fractures (u_hairlineFractures)
   // Monotone single-valued gently curved cleavage traces near terminations & edges (zero closed-loop bullseye rings!)
-  float effHairline = clamp(u_hairlineFractures * u_patinaMacro * u_surfaceMacro * clamp(u_fractures * 2.2, 0.0, 1.0), 0.0, 2.0);
+  float effHairline = clamp(u_hairlineFractures * u_patinaMacro * u_surfaceMacro, 0.0, 2.0);
   if (effHairline > 0.005) {
     vec3 p0 = body(id, PA).xyz;
     vec3 t1 = p0 - axis * dot(p0, axis);
@@ -1324,9 +1401,10 @@ float edgeDist(int id, int k, vec3 p, out vec3 adjN, out int outKLo, out int out
     float sHi = max(0.0, plHi.w - dot(plHi.xyz, p)) / sinAng;
     return abs(sLo - sHi) * 0.5;
   }
-  if (k == CP || k == CP + 1) {
-    int nextRow = occPartnerRow(id, k - CP);
-    vec4 rawEc = body(nextRow, k - CP);
+  if (k >= CP && k < CP + 5000) {
+    int m = clamp(k - CP - 1, 0, 1);
+    int nextRow = occPartnerRow(id, m);
+    vec4 rawEc = body(nextRow, m);
     vec4 ec = vec4(rawEc.xyz, rawEc.w * u_occlusion);
     adjN = normalize(ec.xyz - p + vec3(1e-5));
     return max(0.0, ec.w - length(p - ec.xyz));
@@ -1499,7 +1577,8 @@ vec3 crystalBloomGlint(int id, int k, vec3 p, vec3 rd, vec3 nSmooth, float dEdge
 vec3 shadeBehindRay(vec3 roIn, vec3 rdIn, int skipIn, float travIn, float jitter, out float firstHitMask) {
   firstHitMask = 0.0;
   int bId, bK; float bT, bTf;
-  if (!traceScene(roIn, rdIn, skipIn, bId, bT, bTf, bK)) {
+  vec3 bVoidN; float bVoidBorder, bVoidSeam;
+  if (!traceScene(roIn, rdIn, skipIn, bId, bT, bTf, bK, bVoidN, bVoidBorder, bVoidSeam)) {
     return refractedEnv(rdIn, 0.0, 0.0);
   }
   vec3 bP = roIn + rdIn * bT;
@@ -1518,7 +1597,7 @@ vec3 shadeBehindRay(vec3 roIn, vec3 rdIn, int skipIn, float travIn, float jitter
   float bUid = crystalUid(bId);
   float bFrostRoll = hash(vec3(bUid, float(bK), f_seed + 0.5));
   float bRough = effFrost * smoothstep(bFrostRoll - 0.15, bFrostRoll + 0.15, effFrostShare);
-  vec3 bRawN = (bK < CP) ? body(bId, PA + bK).xyz : normalize(bP - body(bId, 0).xyz);
+  vec3 bRawN = (bK < CP) ? body(bId, PA + bK).xyz : bVoidN;
   vec3 bN = faceNormal(bId, bK < CP ? bK : 18, bRawN, bP, bRough, travB * f_pixAngle, 1.0);
   float bF = fresnel(-dot(rdIn, bN), 1.0 / u_ior);
   vec3 bEntryRefl = facetIridescence(bId, bK, bP, rdIn, bN, 1.0, softFacetRefl(env(reflect(rdIn, bN), bRough)));
@@ -1528,7 +1607,8 @@ vec3 shadeBehindRay(vec3 roIn, vec3 rdIn, int skipIn, float travIn, float jitter
   vec3 bRefrIn = refract(rdIn, bN, 1.0 / u_ior);
   vec3 rdB = dot(bRefrIn, bRefrIn) > 1e-6 ? normalize(bRefrIn) : rdIn;
   int bKf;
-  float bLen = exitCrystal(bId, bP, rdB, bKf);
+  vec3 bExitRawN;
+  float bLen = exitCrystal(bId, bP, rdB, bKf, bExitRawN);
   vec3 bTrans;
   vec3 bInScat = insideVolume(bId, bP, rdB, bLen, jitter, clamp(int(u_inclusionSteps + 0.5), 2, 4), bTrans);
   colB += thrB * bInScat;
@@ -1537,7 +1617,7 @@ vec3 shadeBehindRay(vec3 roIn, vec3 rdIn, int skipIn, float travIn, float jitter
   bP += rdB * bLen;
   float bExitRoll = hash(vec3(bUid, float(bKf), f_seed + 0.5));
   float bFr = effFrost * smoothstep(bExitRoll - 0.15, bExitRoll + 0.15, effFrostShare);
-  vec3 bNf = faceNormal(bId, bKf, body(bId, PA + bKf).xyz, bP, bFr, travB * f_pixAngle, 1.0);
+  vec3 bNf = faceNormal(bId, bKf < CP ? bKf : 18, bExitRawN, bP, bFr, travB * f_pixAngle, 1.0);
   float bFo = fresnel(dot(rdB, bNf), u_ior);
   vec3 bExitRefl = facetIridescence(bId, bKf, bP, rdB, -bNf, 1.0, softFacetRefl(env(reflect(rdB, -bNf), bFr)));
   colB += thrB * (bFo * bExitRefl * 0.42 * (0.15 + 0.85 * glare));
@@ -1776,7 +1856,9 @@ void main() {
   for (int hop = 0; hop < maxHops; hop++) {
     if (hopCost >= float(depth) || dot(thr, thr) < 1e-6) break;
     int id, k; float t, tfHit;
-    if (!traceScene(ro, rd, skipMask, id, t, tfHit, k)) break;
+    vec3 voidWallN = vec3(0.0, 1.0, 0.0);
+    float voidBorder = 1e9, voidSeam = 1e9;
+    if (!traceScene(ro, rd, skipMask, id, t, tfHit, k, voidWallN, voidBorder, voidSeam)) break;
 
     float effEdgeMacro = max(0.0, u_patinaMacro * u_edgeMacro);
     float edgeSilAlpha = 1.0;
@@ -1796,14 +1878,6 @@ void main() {
     skipMask |= (1 << id);
 
     float rawAlpha = clamp(body(id, 2).x, 0.0, 1.0) * edgeSilAlpha;
-    vec3 voidWallN = vec3(0.0, 1.0, 0.0);
-    float voidRim = 0.0;
-    if (!primaryEvaluated && u_occlusion > 0.001) {
-      float occBlend = occOpacityFor(id) * smoothstep(0.6, 1.0, rawAlpha);
-      float voidCut = evalMassiveOcclusionVoid(id, ro, rd, t, voidWallN, voidRim);
-      rawAlpha *= (1.0 - min(0.995, occBlend * voidCut));
-      voidRim *= occBlend;
-    }
     primaryEvaluated = true;
 
     float budgetWeight = clamp(float(depth) - hopCost, 0.0, 1.0);
@@ -1831,7 +1905,13 @@ void main() {
     bool isOcclusionVoid = (k >= CP && k < CP + 5000);
     bool isEdgeIncursion = isTinyEdgeChip || isCornerVertexChip || isOcclusionVoid;
     bool isCornerNip = (k >= 18 && k < CP);
-    vec3 rawFaceN = (isTinyEdgeChip || isCornerVertexChip) ? chipFacetN : body(id, PA + k).xyz;
+    vec3 rawFaceN = isOcclusionVoid
+      ? voidWallN
+      : ((isTinyEdgeChip || isCornerVertexChip) ? chipFacetN : body(id, PA + k).xyz);
+    if (isOcclusionVoid) {
+      // Keep 3D void cavity walls smooth & clear (zero noisy texture, pure 3D geometric delineation)
+      rough *= 0.20;
+    }
 
     vec3 adjN = rawFaceN;
     int ridgeKLo = -1, ridgeKHi = -1;
@@ -1851,10 +1931,6 @@ void main() {
       rough = max(rough, 0.025 * clamp(u_edgeWear * effEdgeMacro, 0.0, 1.0));
     }
     vec3 n = faceNormal(id, isEdgeIncursion ? 18 : k, rawFaceN, p, rough, footprint, dEdge);
-    if (voidRim > 0.001) {
-      n = normalize(mix(n, voidWallN, voidRim * 0.65));
-      rough = max(rough, 0.18 * voidRim);
-    }
     if (hop == 0 && (isTinyEdgeChip || isCornerVertexChip || isCornerNip)) {
       vec3 axis = body(id, 1).xyz, root = body(id, 3).xyz;
       float L = max(body(id, 1).w, 0.12);
@@ -1873,7 +1949,7 @@ void main() {
 
     vec3 nRefl = n;
     float patinaGlint = 0.0, patinaRough = 0.0;
-    if (hop == 0) {
+    if (hop == 0 && !isOcclusionVoid) {
       evalSurfacePatina(id, k, p, n, footprint, dEdge, nRefl, patinaGlint, patinaRough);
       // Keep internal refraction 100% pure & clear by only applying a tiny fraction (6%) of surface scratch normal to n
       n = normalize(mix(n, nRefl, 0.06 * (1.0 - 0.85 * dither)));
@@ -1883,7 +1959,7 @@ void main() {
     vec3 hopCol = vec3(0.0);
     vec3 hopThr = vec3(1.0);
     bool isChippedFacet = isTinyEdgeChip || isCornerVertexChip || isCornerNip;
-    float effGlare = (isOcclusionVoid ? (glare * 0.45) : (isChippedFacet ? (glare * 0.65) : glare)) * (1.0 - 0.30 * dither);
+    float effGlare = (isOcclusionVoid ? min(1.0, glare * 1.15 + 0.12) : (isChippedFacet ? (glare * 0.65) : glare)) * (1.0 - 0.30 * dither);
     float cosEntry = mix(max(0.32, -dot(rd, nRefl)), clamp(-dot(rd, nRefl), 0.0, 1.0), g1);
     float F = fresnel(cosEntry, 1.0 / effIor);
     vec3 rawEntryRefl = softFacetRefl(env(reflect(rd, nRefl), reflRough));
@@ -1899,6 +1975,29 @@ void main() {
     hopCol += iridescentFilm(id, k, p, rd, nRefl, dEdge);
     hopThr *= mix(1.0 - F * (0.3 + 0.7 * effGlare), (1.0 - F) * (1.0 - 0.6 * jbChip), g1);
 
+    // Clear 3D physical delineation of voided spaces: crisp 3D border rim where the void cuts the
+    // crystal face + distinct 3D interior cavity wall shading & interior facet seams (zero noisy texture)
+    if (u_occlusion > 0.002 && voidBorder < 1e4) {
+      float rVoid = max(body(id, 2).w, 0.02);
+      float borderW = max(rVoid * 0.032, footprint * 2.4);
+      float borderRim = exp(-voidBorder / borderW);
+      float seamW = max(rVoid * 0.022, footprint * 1.8);
+      float seamRim = isOcclusionVoid ? exp(-voidSeam / seamW) : 0.0;
+      float edge3D = clamp(borderRim * 1.20 + seamRim * 0.85, 0.0, 1.35);
+      vec3 gemTint = mix(exp(-f_sigma * 0.22), vec3(0.96, 0.98, 1.0), 0.74);
+      vec3 keyDir = normalize(vec3(f_lights[0], f_lights[1], f_lights[2]));
+      float diffWall = clamp(dot(f_toWorld * nRefl, keyDir) * 0.5 + 0.5, 0.0, 1.0);
+      vec3 rimCol = gemTint * (0.55 * f_ambient + 0.55 * entryRefl + vec3(0.32));
+      hopCol += edge3D * (isOcclusionVoid ? 0.52 : 0.34) * rimCol;
+      if (isOcclusionVoid) {
+        float cavRecess = 1.0 - exp(-voidBorder / max(rVoid * 0.12, 1e-3));
+        float grazeWall = pow(clamp(1.0 - abs(dot(rd, nRefl)), 0.0, 1.0), 2.0);
+        vec3 wallLight = gemTint * (0.38 + 0.62 * diffWall) * (0.45 * f_ambient + 0.45 * entryRefl + vec3(0.20));
+        hopCol += hopThr * (0.22 + 0.18 * grazeWall) * cavRecess * wallLight;
+        hopThr *= (1.0 - 0.26 * cavRecess - 0.20 * borderRim);
+      }
+    }
+
     vec3 rdC = rd;
     vec3 refrIn = refract(rdC, n, 1.0 / effIor);
     rdC = dot(refrIn, refrIn) > 1e-6 ? normalize(refrIn) : rdC;
@@ -1910,7 +2009,8 @@ void main() {
     vec3 nf = n;
     vec3 o = rdC;
 
-    float len0 = exitCrystal(id, roC, rdC, kf);
+    vec3 rawExitN0;
+    float len0 = exitCrystal(id, roC, rdC, kf, rawExitN0);
     vec3 trans0;
     int steps0 = (hop == 0) ? clamp(int(u_inclusionSteps + 0.5), 2, 16) : clamp(int(u_inclusionSteps + 0.5), 2, 6);
     vec3 inScat0 = insideVolume(id, roC, rdC, len0, jitter, steps0, trans0);
@@ -1932,7 +2032,7 @@ void main() {
       float jbExChip = jbExEdge * smoothstep(1.0 - 0.45 * u_edgeWear, 1.05 - 0.45 * u_edgeWear, jbExNz) * g1;
       fr = max(fr, jbExChip * 0.55);
     }
-    nf = faceNormal(id, kf, body(id, PA + kf).xyz, p, fr, travC * f_pixAngle, 1.0);
+    nf = faceNormal(id, kf < CP ? kf : 18, rawExitN0, p, kf < CP ? fr : fr * 0.2, travC * f_pixAngle, 1.0);
     if (g1 > 0.01 && kf == 16 && dot(body(id, PA + 16).xyz, body(id, 1).xyz) < -0.92) {
       hopThr *= (1.0 - 0.88 * g1);
     }
@@ -1947,7 +2047,8 @@ void main() {
       pathDisp = reflect(pathDisp, -nf);
       rdC = reflect(rdC, -nf);
       roC = p;
-      float len = exitCrystal(id, roC, rdC, kf);
+      vec3 rawExitNB;
+      float len = exitCrystal(id, roC, rdC, kf, rawExitNB);
       vec3 trans;
       vec3 inScat = insideVolume(id, roC, rdC, len, jitter, clamp(int(u_inclusionSteps + 0.5), 2, 6), trans);
       hopCol += hopThr * inScat;
@@ -1965,7 +2066,7 @@ void main() {
         float jbExChipB = jbExEdgeB * smoothstep(1.0 - 0.45 * u_edgeWear, 1.05 - 0.45 * u_edgeWear, jbExNzB) * g1;
         fr = max(fr, jbExChipB * 0.55);
       }
-      nf = faceNormal(id, kf, body(id, PA + kf).xyz, p, fr, travC * f_pixAngle, 1.0);
+      nf = faceNormal(id, kf < CP ? kf : 18, rawExitNB, p, kf < CP ? fr : fr * 0.2, travC * f_pixAngle, 1.0);
       if (g1 > 0.01 && kf == 16 && dot(body(id, PA + 16).xyz, body(id, 1).xyz) < -0.92) {
         hopThr *= (1.0 - 0.88 * g1);
       }

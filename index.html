@@ -1223,15 +1223,6 @@ const LEGACY_HABIT_MAP = {
   'Isometric': 'Cubic / Isometric',
 };
 
-const LEGACY_PRESET_NAME_MAP = {
-  'Glacial Ice': 'Blue Celestite',
-  'Glacial Ice Dendrite': 'Blue Celestite',
-  'Imperial Zircon (Tetragonal)': 'Imperial Zircon',
-  'Imperial Topaz (Orthorhombic)': 'Imperial Topaz',
-  'Kunzite Spodumene (Monoclinic)': 'Kunzite Spodumene',
-  'Sapphire Kyanite (Triclinic)': 'Sapphire Kyanite',
-};
-
 function coerce(p, v) {
   if (p.type === 'bool') return v === 'false' ? false : v === '0' ? false : !!v;
   if (p.type === 'color') return typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v) ? v.toLowerCase() : p.value;
@@ -1306,11 +1297,6 @@ function createModel(schema, storageKey, presets = {}) {
 
   let glides = [];
   let glideT = 0, glideLen = 0;
-  let glideFromPreset = Object.keys(presets || {})[0] || 'Classic Quartz Prism';
-  let glideToPreset = glideFromPreset;
-  let glideHabitFrom = null;
-  let glideHabitTo = null;
-  let glideHabitBlend = 0;
 
   // Load user-saved custom presets from localStorage
   let customPresets = {};
@@ -1427,13 +1413,10 @@ function createModel(schema, storageKey, presets = {}) {
         } catch { /* storage unavailable */ }
       }, 250);
     },
-    applyValues(values, seconds = 0.6, presetName = '', glideNumbers = true, colorSeconds = null) {
+    applyValues(values, seconds = 0.6, presetName = '', glideNumbers = true) {
       if (!values) return;
       store.setBypass(false);
-      const prevPreset = preset || Object.keys(presets || {})[0] || 'Classic Quartz Prism';
       preset = presetName;
-      glideFromPreset = prevPreset;
-      glideToPreset = presetName || prevPreset;
       const resolveTarget = (p) => {
         if (p.key === 'bloom' || p.noPreset || p.randomize === false) return p.value;
         if (values[p.key] !== undefined) return values[p.key];
@@ -1449,26 +1432,11 @@ function createModel(schema, storageKey, presets = {}) {
         p.base = coerce(p, resolveTarget(p));
       }
       glides = [];
-      glideHabitFrom = byKey.habit ? String(byKey.habit.value) : 'Trigonal';
-      glideHabitTo = byKey.habit ? coerce(byKey.habit, resolveTarget(byKey.habit)) : glideHabitFrom;
-      glideHabitBlend = (seconds > 0 && glideNumbers) ? 0 : 1;
-
-      // When manually skipping through presets, allow colors to transition faster (~1.25s) while geometry
-      // completes a smooth single-stage glide over `seconds` (post-015529, post-015539).
-      const fastColorDur = colorSeconds !== null
-        ? Math.max(1e-3, colorSeconds)
-        : Math.max(1e-3, Math.min(seconds, 1.25));
-
       for (const p of params) {
         if (p.key === 'renderScale' || p.key === 'targetFps' || p.key === 'maxFps' || p.key === 'maxDpr' || p.key === 'bloom' || p.noPreset) continue;
         if (STICKY_USER_KEYS.has(p.key) && values[p.key] === undefined) continue;
         if (p.key === 'seed' && seconds > 0 && glideNumbers) continue;
         const to = coerce(p, resolveTarget(p));
-        if (p.key === 'habit' && seconds > 0 && glideNumbers) {
-          // Do NOT snap habit at t=0; blend habit planes & repulsion continuously in 1 stage via glideHabitBlend!
-          glides.push({ p, isHabit: true, from: glideHabitFrom, to });
-          continue;
-        }
         if (seconds <= 0 || p.type === 'select' || p.type === 'bool' || p.key === 'seed' || (p.type !== 'color' && !glideNumbers)) {
           assign(p, to);
           continue;
@@ -1476,23 +1444,19 @@ function createModel(schema, storageKey, presets = {}) {
         if (p.type === 'color') {
           const a = [0, 0, 0], b = [0, 0, 0];
           hexToRgb(String(p.value), a); hexToRgb(String(to), b);
-          const h0 = hexToOkhsl(String(p.value));
-          const h1 = hexToOkhsl(String(to));
-          glides.push({ p, from: 0, to: 1, rgbFrom: a, rgbTo: b, okhslFrom: h0, okhslTo: h1, dur: fastColorDur });
+          glides.push({ p, from: 0, to: 1, rgbFrom: a, rgbTo: b });
         } else if (Number(p.value) !== Number(to)) {
-          glides.push({ p, from: Number(p.value), to: Number(to), dur: seconds });
+          glides.push({ p, from: Number(p.value), to: Number(to) });
         }
       }
       glideT = 0;
       glideLen = Math.max(seconds, 1e-3);
     },
-    applyPreset(name, seconds = 0.65, glideNumbers = true, colorSeconds = null) {
-      const resolvedName = (LEGACY_PRESET_NAME_MAP[name] && presets?.[LEGACY_PRESET_NAME_MAP[name]])
-        ? LEGACY_PRESET_NAME_MAP[name]
-        : name;
+    applyPreset(name, seconds = 0.65, glideNumbers = true) {
+      const resolvedName = (name === 'Glacial Ice Dendrite' && presets?.['Glacial Ice']) ? 'Glacial Ice' : name;
       const values = customPresets[resolvedName] || presets?.[resolvedName];
       if (!values) return;
-      store.applyValues(values, seconds, resolvedName, glideNumbers, colorSeconds);
+      store.applyValues(values, seconds, resolvedName, glideNumbers);
     },
     randomize(customRandomizer, seconds = 10.0) {
       const next = typeof customRandomizer === 'function' ? { ...customRandomizer(store) } : {};
@@ -1504,18 +1468,13 @@ function createModel(schema, storageKey, presets = {}) {
           delete next[p.key];
         }
       }
-      store.applyValues(next, seconds, 'Randomized', seconds > 0, Math.min(seconds, 2.2));
+      store.applyValues(next, seconds, 'Randomized', seconds > 0);
       return next;
     },
     get gliding() { return glides.length > 0; },
     get glideElapsed() { return glideT; },
     get glideDuration() { return glideLen; },
     get glideProgress() { return glideLen > 0 ? Math.min(1, glideT / glideLen) : 0; },
-    get glideFromPreset() { return glideFromPreset; },
-    get glideToPreset() { return glideToPreset; },
-    get glideHabitFrom() { return glideHabitFrom; },
-    get glideHabitTo() { return glideHabitTo; },
-    get glideHabitBlend() { return glideHabitBlend; },
     saveCustomPreset(name) {
       const clean = String(name || '').trim();
       if (!clean) return null;
@@ -1610,41 +1569,20 @@ function createModel(schema, storageKey, presets = {}) {
       glideT = Math.min(glideLen, glideT + dt);
       const done = glideT >= glideLen;
       const k = easeInOut(glideT / glideLen);
-      glideHabitBlend = done ? 1 : k;
       for (const g of glides) {
-        if (g.isHabit) {
-          if (done) assign(g.p, g.to);
-          continue;
-        }
-        const gDur = g.dur || glideLen;
-        const gk = done || glideT >= gDur ? 1 : easeInOut(glideT / gDur);
         if (g.rgbFrom && g.rgbTo) {
-          const h0 = g.okhslFrom, h1 = g.okhslTo;
-          if (done || glideT >= gDur) {
-            const b = g.rgbTo;
-            assign(g.p, rgbToHex(b[0], b[1], b[2]));
-          } else if (h0 && h1 && Number.isFinite(h0.h) && Number.isFinite(h1.h) && h0.s > 0.12 && h1.s > 0.12) {
-            const dh = ((h1.h - h0.h + 1.5) % 1) - 0.5;
-            const h = (h0.h + dh * gk + 1) % 1;
-            const s = h0.s + (h1.s - h0.s) * gk;
-            const l = h0.l + (h1.l - h0.l) * gk;
-            assignSmooth(g.p, okhslToHex(h, s, l));
-          } else {
-            const a = g.rgbFrom, b = g.rgbTo;
-            const r = a[0] + (b[0] - a[0]) * gk, gr = a[1] + (b[1] - a[1]) * gk, bl = a[2] + (b[2] - a[2]) * gk;
-            assignSmooth(g.p, null, [r / 255, gr / 255, bl / 255]);
-          }
-        } else if (done || glideT >= gDur) {
+          const a = g.rgbFrom, b = g.rgbTo;
+          const r = a[0] + (b[0] - a[0]) * k, gr = a[1] + (b[1] - a[1]) * k, bl = a[2] + (b[2] - a[2]) * k;
+          if (done) assign(g.p, rgbToHex(r, gr, bl));
+          else assignSmooth(g.p, null, [r / 255, gr / 255, bl / 255]);
+        } else if (done) {
           assign(g.p, g.to);
         } else {
-          assignSmooth(g.p, g.from + (g.to - g.from) * gk);
+          assignSmooth(g.p, g.from + (g.to - g.from) * k);
         }
       }
       if (!done) return 'moving';
       glides = [];
-      glideHabitFrom = null;
-      glideHabitTo = null;
-      glideHabitBlend = 0;
       return 'done';
     },
     clearSaved() {
@@ -1658,9 +1596,6 @@ function createModel(schema, storageKey, presets = {}) {
     try {
       const saved = JSON.parse(localStorage.getItem(storageKey) || 'null');
       if (saved && typeof saved === 'object' && saved.values) {
-        if (typeof saved.preset === 'string' && LEGACY_PRESET_NAME_MAP[saved.preset]) {
-          saved.preset = LEGACY_PRESET_NAME_MAP[saved.preset];
-        }
         for (const k in saved.values) if (byKey[k]) assign(byKey[k], saved.values[k]);
         for (const k in saved.bases || {}) if (byKey[k]) byKey[k].base = coerce(byKey[k], saved.bases[k]);
         for (const k in saved.ranges || {}) {
@@ -1671,31 +1606,87 @@ function createModel(schema, storageKey, presets = {}) {
       }
       if (saved && saved.values) {
         let migrated = saved.sig !== sig;
-        if (migrated) {
-          const activePresetName = preset || Object.keys(presets || {})[0] || 'Classic Quartz Prism';
-          const pTarget = presets?.[activePresetName];
-          if (pTarget) {
-            for (const rk of [
-              'habit', 'crystals', 'fan', 'crossAt', 'lengthJitter', 'thickness', 'tipAngle', 'cavityCurve',
-              'hopper', 'phantom', 'phantomRate', 'phantomLayers', 'milk', 'milkBase', 'veils',
-              'frostShare', 'frost', 'striations', 'striationScale', 'edgeChips', 'edgeWear',
-              'stoneColour', 'colourDepth', 'colourZoning', 'biColour', 'coreColour',
-              'fire', 'fractures', 'fractureGlow', 'ditherBlend', 'glimmer', 'iridescence', 'flash',
-            ]) {
-              if (pTarget[rk] !== undefined && byKey[rk]) {
-                assign(byKey[rk], pTarget[rk]);
-                byKey[rk].base = byKey[rk].value;
-                delete saved.values[rk];
-                if (saved.bases) delete saved.bases[rk];
-              }
-            }
-          }
-          for (const mk of ['edgeMacro', 'surfaceMacro', 'edgeIrregularity', 'patina', 'hairlineFractures', 'chipSize', 'edgeGranularity']) {
-            if (byKey[mk]) {
-              assign(byKey[mk], byKey[mk].default);
-              byKey[mk].base = byKey[mk].default;
-              delete saved.values[mk];
-              if (saved.bases) delete saved.bases[mk];
+        if ((saved.values.rainbow === 1 || Number(saved.values.rainbow) === 1) && byKey.rainbow) {
+          assign(byKey.rainbow, 0.1);
+          byKey.rainbow.base = 0.1;
+          delete saved.values.rainbow;
+          if (saved.bases) delete saved.bases.rainbow;
+          migrated = true;
+        }
+        if ((saved.values.rainbowGlow === 0.5 || Number(saved.values.rainbowGlow) === 0.5 || saved.values.rainbowGlow === 1 || Number(saved.values.rainbowGlow) === 1) && byKey.rainbowGlow) {
+          assign(byKey.rainbowGlow, 1.3);
+          byKey.rainbowGlow.base = 1.3;
+          delete saved.values.rainbowGlow;
+          if (saved.bases) delete saved.bases.rainbowGlow;
+          migrated = true;
+        }
+        if ((saved.values.edgeMacro === 1 || Number(saved.values.edgeMacro) === 1) && byKey.edgeMacro) {
+          assign(byKey.edgeMacro, 0.38);
+          byKey.edgeMacro.base = 0.38;
+          delete saved.values.edgeMacro;
+          if (saved.bases) delete saved.bases.edgeMacro;
+          migrated = true;
+        }
+        if ((saved.values.surfaceMacro === 1 || Number(saved.values.surfaceMacro) === 1) && byKey.surfaceMacro) {
+          assign(byKey.surfaceMacro, 1.05);
+          byKey.surfaceMacro.base = 1.05;
+          delete saved.values.surfaceMacro;
+          if (saved.bases) delete saved.bases.surfaceMacro;
+          migrated = true;
+        }
+        if ((saved.values.chipSize === 0.55 || saved.values.chipSize === 1.5 || Number(saved.values.chipSize) === 0.55 || Number(saved.values.chipSize) === 1.5) && byKey.chipSize) {
+          assign(byKey.chipSize, 3);
+          byKey.chipSize.base = 3;
+          delete saved.values.chipSize;
+          if (saved.bases) delete saved.bases.chipSize;
+          migrated = true;
+        }
+        if ((saved.values.edgeGranularity === 1.65 || saved.values.edgeGranularity === 1.4 || Number(saved.values.edgeGranularity) === 1.65 || Number(saved.values.edgeGranularity) === 1.4) && byKey.edgeGranularity) {
+          assign(byKey.edgeGranularity, 3);
+          byKey.edgeGranularity.base = 3;
+          delete saved.values.edgeGranularity;
+          if (saved.bases) delete saved.bases.edgeGranularity;
+          migrated = true;
+        }
+        if ((saved.values.maxDpr === 1 || Number(saved.values.maxDpr) === 1) && byKey.maxDpr) {
+          assign(byKey.maxDpr, 1.5);
+          byKey.maxDpr.base = 1.5;
+          delete saved.values.maxDpr;
+          if (saved.bases) delete saved.bases.maxDpr;
+          migrated = true;
+        }
+        if ((saved.values.targetFps === 60 || Number(saved.values.targetFps) === 60) && byKey.targetFps) {
+          assign(byKey.targetFps, 30);
+          byKey.targetFps.base = 30;
+          delete saved.values.targetFps;
+          if (saved.bases) delete saved.bases.targetFps;
+          migrated = true;
+        }
+        if ([0.04, 0.12, 0.14, 0.22, 0.25].includes(Number(saved.values.growSpeed)) && byKey.growSpeed) {
+          assign(byKey.growSpeed, 0.07);
+          byKey.growSpeed.base = 0.07;
+          delete saved.values.growSpeed;
+          if (saved.bases) delete saved.bases.growSpeed;
+          migrated = true;
+        }
+        if ((saved.values.iridescence === 0.38 || saved.values.iridescence === 0.22 || saved.values.iridescence === 0.29 || saved.values.iridescence === 0.46 || saved.values.iridescence === 0.14 || saved.values.iridescence === 0.42) && byKey.iridescence) {
+          const pDef = presets?.[preset]?.iridescence ?? 0.35;
+          assign(byKey.iridescence, pDef);
+          byKey.iridescence.base = pDef;
+          migrated = true;
+        }
+        if ((saved.values.ditherBlend === 0.52 || Number(saved.values.ditherBlend) === 0.52) && byKey.ditherBlend) {
+          assign(byKey.ditherBlend, 0);
+          byKey.ditherBlend.base = 0;
+          delete saved.values.ditherBlend;
+          if (saved.bases) delete saved.bases.ditherBlend;
+          migrated = true;
+        }
+        if (preset && presets?.[preset]) {
+          for (const rk of ['habit', 'fire', 'fractures', 'fractureGlow', 'phantom', 'phantomRate', 'phantomLayers', 'frostShare', 'frost', 'ditherBlend', 'glimmer']) {
+            if (presets[preset][rk] !== undefined && byKey[rk]) {
+              assign(byKey[rk], presets[preset][rk]);
+              byKey[rk].base = presets[preset][rk];
             }
           }
         }
@@ -2809,8 +2800,6 @@ function primaryCountFor(n, habit, twinShare) {
 function habitRepelWeight(habit) {
   const sys = resolveHabitSystem(habit);
   if (sys === 'Cubic / Isometric') return 1.0;
-  if (sys === 'Tetragonal' || sys === 'Orthorhombic') return 0.62;
-  if (sys === 'Monoclinic' || sys === 'Triclinic') return 0.50;
   return 0.0;
 }
 
@@ -2840,12 +2829,14 @@ function setLocalPlane(outLx, outLy, outLz, outOffR, outOffL, k, lx, ly, lz, off
  *   7. Triclinic (a != b != c, alpha != beta != gamma != 90°: non-90° skewed bladed prism + doubly-oblique asymmetric wedge)
  */
 function computeSystemPlanes(
-  habit, symVal, taperLy, latScale, nodeTilt, chamfer, dom, faceJitterAmt, tipJitterAmt, fs, L, r,
+  habit, symVal, taperLy, latScale, nodeTilt, chamfer, dom, faceJitterAmt, tipJitterAmt, fs, L, r, isDoubleTerm,
   outLx, outLy, outLz, outOffR, outOffL
 ) {
   const sys = resolveHabitSystem(habit);
   const fVar = (k, scale = 0.35) => Math.max(0.55, Math.min(1.45, 1 + faceJitterAmt * scale * fs[k]));
   const tVar = (k, scale = 0.28) => tipJitterAmt * scale * fs[8 + k];
+  const botExt = isDoubleTerm ? 0.42 : 0.02;
+  if (isDoubleTerm) taperLy *= 0.22;
 
   if (sys === 'Cubic / Isometric') {
     // Equant isometric polyhedron (a = b = c, alpha = beta = gamma = 90°) centered at y = 0.52 * L
@@ -2891,7 +2882,7 @@ function computeSystemPlanes(
   }
 
   if (sys === 'Hexagonal') {
-    // 6-fold hexagonal prism {10-10} + prominent flat {0001} basal pinacoid + 6 equal {10-11} bipyramid bevels
+    // 6-fold hexagonal prism {10-10} + {10-11} bipyramid bevels + pointed 6-sided bottom termination when double-terminating
     const hexTaper = taperLy * 0.45;
     const hexLat = Math.sqrt(Math.max(0.1, 1 - hexTaper * hexTaper));
     for (let k = 0; k < 6; k++) {
@@ -2903,45 +2894,54 @@ function computeSystemPlanes(
         radR, 0.5 * hexTaper
       );
     }
-    // Dihexagonal {11-20} accessory bevels at 30° and 210°
-    for (let m = 0; m < 2; m++) {
-      const k = 6 + m;
-      const a = (m * Math.PI) + Math.PI / 6;
-      setLocalPlane(
-        outLx, outLy, outLz, outOffR, outOffL, k,
-        hexLat * Math.cos(a), hexTaper, hexLat * Math.sin(a),
-        (1.20 - 0.12 * chamfer) * fVar(k, 0.15), 0.5 * hexTaper
-      );
-    }
     const bipTilt = Math.max(30 * DEG, Math.min(58 * DEG, nodeTilt * 0.78));
     const cosB = Math.cos(bipTilt), sinB = Math.sin(bipTilt);
     const tableH = Math.max(0.68, 0.84 - 0.22 * chamfer);
     for (let j = 0; j < 6; j++) {
       const a = (j * TAU) / 6;
-      const offR = (0.34 - 0.16 * chamfer) * sinB + tVar(j, 0.16);
+      const offR = (isDoubleTerm ? (0.14 - 0.08 * chamfer) : (0.34 - 0.16 * chamfer)) * sinB + tVar(j, 0.16);
       setLocalPlane(
         outLx, outLy, outLz, outOffR, outOffL, 8 + j,
         sinB * Math.cos(a), cosB, sinB * Math.sin(a),
         offR, tableH * cosB
       );
     }
-    const bip2Tilt = Math.min(68 * DEG, bipTilt + 9 * DEG);
-    const cosB2 = Math.cos(bip2Tilt), sinB2 = Math.sin(bip2Tilt);
-    for (let m = 0; m < 2; m++) {
-      const a = (m * Math.PI) + Math.PI / 6;
-      setLocalPlane(
-        outLx, outLy, outLz, outOffR, outOffL, 14 + m,
-        sinB2 * Math.cos(a), cosB2, sinB2 * Math.sin(a),
-        0.48 * sinB2, tableH * cosB2
-      );
+    if (isDoubleTerm) {
+      const botSlots = [6, 7, 14, 15, 16, 17];
+      for (let j = 0; j < 6; j++) {
+        const a = (j * TAU) / 6;
+        const offR = 0.06 * sinB + tVar(j, 0.14);
+        setLocalPlane(
+          outLx, outLy, outLz, outOffR, outOffL, botSlots[j],
+          sinB * Math.cos(a), -cosB, sinB * Math.sin(a),
+          offR, botExt * cosB
+        );
+      }
+    } else {
+      for (let m = 0; m < 2; m++) {
+        const k = 6 + m;
+        const a = (m * Math.PI) + Math.PI / 6;
+        setLocalPlane(
+          outLx, outLy, outLz, outOffR, outOffL, k,
+          hexLat * Math.cos(a), hexTaper, hexLat * Math.sin(a),
+          (1.20 - 0.12 * chamfer) * fVar(k, 0.15), 0.5 * hexTaper
+        );
+      }
+      for (let m = 0; m < 3; m++) {
+        const a = (m * TAU) / 3 + Math.PI / 6;
+        setLocalPlane(
+          outLx, outLy, outLz, outOffR, outOffL, 14 + m,
+          sinB * Math.cos(a), -cosB, sinB * Math.sin(a),
+          0.08 * sinB, botExt * cosB
+        );
+      }
+      setLocalPlane(outLx, outLy, outLz, outOffR, outOffL, 17, 0, 1, 0, 0, tableH);
     }
-    setLocalPlane(outLx, outLy, outLz, outOffR, outOffL, 16, 0, -1, 0, 0.04, 0);
-    setLocalPlane(outLx, outLy, outLz, outOffR, outOffL, 17, 0, 1, 0, 0, tableH);
     return;
   }
 
   if (sys === 'Tetragonal') {
-    // 4-fold c-axis symmetry (a = b != c, alpha = beta = gamma = 90°): square {100} prism + {110} corner chamfers + {101}/{211} bipyramid
+    // 4-fold c-axis symmetry (a = b != c, alpha = beta = gamma = 90°): square {100} prism + {110} corner chamfers + top & bottom {101} bipyramids
     const cornerChamfer = 1.14 - 0.22 * chamfer;
     for (let k = 0; k < 8; k++) {
       const a = (k * TAU) / 8; // 0, 45, 90, 135, 180, 225, 270, 315 deg
@@ -2957,26 +2957,35 @@ function computeSystemPlanes(
     const c101 = Math.cos(t101), s101 = Math.sin(t101);
     const t211 = Math.min(78 * DEG, t101 + 12 * DEG);
     const c211 = Math.cos(t211), s211 = Math.sin(t211);
-    for (let j = 0; j < 8; j++) {
+    const topAzIndices = [0, 2, 4, 6, 1, 5];
+    for (let idx = 0; idx < 6; idx++) {
+      const j = topAzIndices[idx];
       const a = (j * TAU) / 8;
       const isSecondOrder = (j & 1) === 1;
       const ct = isSecondOrder ? c211 : c101;
       const st = isSecondOrder ? s211 : s101;
       const offR = (isSecondOrder ? (0.30 - 0.16 * chamfer) : 0.06) + tVar(j, 0.18);
       setLocalPlane(
-        outLx, outLy, outLz, outOffR, outOffL, 8 + j,
+        outLx, outLy, outLz, outOffR, outOffL, 8 + idx,
         st * Math.cos(a), ct, st * Math.sin(a),
         offR, ct
       );
     }
-    setLocalPlane(outLx, outLy, outLz, outOffR, outOffL, 16, 0, -1, 0, 0.05, 0);
-    setLocalPlane(outLx, outLy, outLz, outOffR, outOffL, 17, 0, 1, 0, 0, Math.max(0.76, 1.08 - 0.42 * chamfer));
+    // 4-sided pointed bottom {10-1} bipyramid termination facets in slots 14..17
+    for (let m = 0; m < 4; m++) {
+      const a = (m * TAU) / 4;
+      setLocalPlane(
+        outLx, outLy, outLz, outOffR, outOffL, 14 + m,
+        s101 * Math.cos(a), -c101, s101 * Math.sin(a),
+        0.06 + tVar(m, 0.14), botExt * c101
+      );
+    }
     return;
   }
 
   if (sys === 'Orthorhombic') {
     // 3 mutually perpendicular unequal axes (a != b != c, alpha = beta = gamma = 90°):
-    // Short a-axis (0.68 r) along sx, wide b-axis (1.36 r) along sz, rhombic prism {110} + macrodomes {101} & brachydomes {011}
+    // Short a-axis (0.68 r) along sx, wide b-axis (1.36 r) along sz, rhombic prism {110} + top & bottom macrodomes/brachydomes
     const orthoAz = [0, 31 * DEG, 90 * DEG, 149 * DEG, 180 * DEG, 211 * DEG, 270 * DEG, 329 * DEG];
     const orthoRadii = [0.70, 0.82, 1.34, 0.82, 0.70, 0.82, 1.34, 0.82];
     for (let k = 0; k < 8; k++) {
@@ -2990,7 +2999,9 @@ function computeSystemPlanes(
     const tMacro = Math.min(76 * DEG, nodeTilt + 10 * DEG); // Steep macrodome {101} at 0°, 180°
     const tBrachy = Math.max(28 * DEG, nodeTilt - 16 * DEG); // Shallow chisel brachydome {011} at 90°, 270°
     const tBip = nodeTilt; // Rhombic bipyramid {111} at corners
-    for (let j = 0; j < 8; j++) {
+    const topIdx = [0, 2, 4, 6, 1, 5];
+    for (let idx = 0; idx < 6; idx++) {
+      const j = topIdx[idx];
       const a = orthoAz[j];
       let tj = tBip;
       let baseOffR = 0.18 - 0.12 * chamfer;
@@ -3003,19 +3014,30 @@ function computeSystemPlanes(
       }
       const ct = Math.cos(tj), st = Math.sin(tj);
       setLocalPlane(
-        outLx, outLy, outLz, outOffR, outOffL, 8 + j,
+        outLx, outLy, outLz, outOffR, outOffL, 8 + idx,
         st * Math.cos(a), ct, st * Math.sin(a),
         baseOffR + tVar(j, 0.18), ct
       );
     }
-    setLocalPlane(outLx, outLy, outLz, outOffR, outOffL, 16, 0, -1, 0, 0.04, 0);
-    setLocalPlane(outLx, outLy, outLz, outOffR, outOffL, 17, 0, 1, 0, 0, Math.max(0.74, 0.98 - 0.34 * chamfer));
+    // 4-sided pointed bottom rhombic dome/bipyramid termination in slots 14..17
+    for (let m = 0; m < 4; m++) {
+      const j = m * 2;
+      const a = orthoAz[j];
+      const tj = (j === 0 || j === 4) ? tMacro : tBrachy;
+      const ct = Math.cos(tj), st = Math.sin(tj);
+      const baseOffR = (j === 0 || j === 4) ? 0.05 : 0.14;
+      setLocalPlane(
+        outLx, outLy, outLz, outOffR, outOffL, 14 + m,
+        st * Math.cos(a), -ct, st * Math.sin(a),
+        baseOffR + tVar(m, 0.14), botExt * ct
+      );
+    }
     return;
   }
 
   if (sys === 'Monoclinic') {
     // 1 oblique inclined clino-axis (a != b != c, alpha = gamma = 90°, beta ≈ 116° != 90°):
-    // Flattened lath prism + obliquely slanted {001} termination & forward-sheared clinodomes {011}
+    // Flattened lath prism + obliquely slanted top & bottom clinodome terminations
     const monoAz = [0, 38 * DEG, 90 * DEG, 142 * DEG, 180 * DEG, 218 * DEG, 270 * DEG, 322 * DEG];
     const monoRadii = [0.60, 0.82, 1.38, 0.82, 0.60, 0.82, 1.38, 0.82];
     for (let k = 0; k < 8; k++) {
@@ -3027,7 +3049,9 @@ function computeSystemPlanes(
       );
     }
     const betaShear = 0.44; // sin(26°) monoclinic inclination along +sx (clino-axis a)
-    for (let j = 0; j < 8; j++) {
+    const topIdx = [0, 2, 4, 6, 1, 5];
+    for (let idx = 0; idx < 6; idx++) {
+      const j = topIdx[idx];
       const a = monoAz[j];
       const isBack = Math.cos(a) < -0.15;
       const tj = isBack ? Math.max(26 * DEG, nodeTilt - 18 * DEG) : Math.min(72 * DEG, nodeTilt + 6 * DEG);
@@ -3039,22 +3063,34 @@ function computeSystemPlanes(
       const normLy = ly * inv;
       const offR = (isBack ? 0.28 : 0.12) + tVar(j, 0.20);
       setLocalPlane(
-        outLx, outLy, outLz, outOffR, outOffL, 8 + j,
+        outLx, outLy, outLz, outOffR, outOffL, 8 + idx,
         lx * inv, normLy, lz * inv,
         offR, 0.90 * normLy
       );
     }
-    // Lower & upper basal pinacoids {00-1} and {001} slanted at beta = 116° in the sx-ax plane (lz = 0 since alpha = gamma = 90°)
-    const sinBeta = Math.sin(26 * DEG), cosBeta = Math.cos(26 * DEG);
-    setLocalPlane(outLx, outLy, outLz, outOffR, outOffL, 16, -sinBeta * 0.75, -cosBeta, 0, 0.28, 0);
-    const monoTopH = Math.max(0.68, 0.84 - 0.18 * chamfer);
-    setLocalPlane(outLx, outLy, outLz, outOffR, outOffL, 17, sinBeta, cosBeta, 0, 0.08, monoTopH * cosBeta);
+    for (let m = 0; m < 4; m++) {
+      const j = m * 2;
+      const a = monoAz[j];
+      const isFront = Math.cos(a) > 0.15;
+      const tj = isFront ? Math.max(26 * DEG, nodeTilt - 16 * DEG) : Math.min(70 * DEG, nodeTilt + 4 * DEG);
+      const ct = Math.cos(tj), st = Math.sin(tj);
+      const lx = st * Math.cos(a) - betaShear * ct;
+      const ly = -ct;
+      const lz = st * Math.sin(a);
+      const inv = 1 / (Math.hypot(lx, ly, lz) || 1);
+      const normAbsLy = Math.abs(ly * inv);
+      setLocalPlane(
+        outLx, outLy, outLz, outOffR, outOffL, 14 + m,
+        lx * inv, ly * inv, lz * inv,
+        0.12 + tVar(m, 0.16), botExt * normAbsLy
+      );
+    }
     return;
   }
 
   if (sys === 'Triclinic') {
     // All 3 axes and all 3 interaxial angles unequal & non-90° (a != b != c, alpha ≈ 72°, beta ≈ 108°, gamma ≈ 70°):
-    // Skewed non-orthogonal parallelogram bladed prism + doubly-inclined asymmetric wedge termination
+    // Skewed non-orthogonal parallelogram bladed prism + doubly-inclined asymmetric top & bottom wedge terminations
     const tricAz = [0, 34 * DEG, 70 * DEG, 128 * DEG, 180 * DEG, 214 * DEG, 250 * DEG, 308 * DEG];
     const tricRadii = [0.52, 0.78, 1.42, 1.06, 0.52, 0.78, 1.42, 1.06];
     const tricLySkew = [0.09, 0.08, 0.12, -0.07, -0.09, -0.08, -0.12, 0.07];
@@ -3069,11 +3105,12 @@ function computeSystemPlanes(
       );
     }
     const tricTiltOffsets = [8, -2, -14, 12, -18, -6, 6, -10];
-    for (let j = 0; j < 8; j++) {
+    const topIdx = [0, 2, 4, 6, 1, 5];
+    for (let idx = 0; idx < 6; idx++) {
+      const j = topIdx[idx];
       const a = tricAz[j];
       const tj = Math.max(26 * DEG, Math.min(74 * DEG, nodeTilt + tricTiltOffsets[j] * DEG));
       const ct = Math.cos(tj), st = Math.sin(tj);
-      // Doubly-oblique shear in both +sx (beta != 90°) and +sz (alpha != 90°)
       const lx = st * Math.cos(a) + 0.30 * ct;
       const ly = ct;
       const lz = st * Math.sin(a) + 0.26 * ct;
@@ -3081,15 +3118,27 @@ function computeSystemPlanes(
       const normLy = ly * inv;
       const offR = 0.14 + 0.06 * (j % 3) + tVar(j, 0.22);
       setLocalPlane(
-        outLx, outLy, outLz, outOffR, outOffL, 8 + j,
+        outLx, outLy, outLz, outOffR, outOffL, 8 + idx,
         lx * inv, normLy, lz * inv,
         offR, 0.88 * normLy
       );
     }
-    // Doubly-inclined basal pinacoids {00-1} and {001} (non-zero lx AND non-zero lz)
-    setLocalPlane(outLx, outLy, outLz, outOffR, outOffL, 16, -0.34, -0.88, -0.33, 0.32, 0);
-    const tricTopH = Math.max(0.66, 0.82 - 0.18 * chamfer);
-    setLocalPlane(outLx, outLy, outLz, outOffR, outOffL, 17, 0.38, 0.84, 0.39, 0.10, tricTopH * 0.84);
+    for (let m = 0; m < 4; m++) {
+      const j = m * 2;
+      const a = tricAz[j];
+      const tj = Math.max(28 * DEG, Math.min(72 * DEG, nodeTilt + tricTiltOffsets[j] * DEG));
+      const ct = Math.cos(tj), st = Math.sin(tj);
+      const lx = st * Math.cos(a) - 0.30 * ct;
+      const ly = -ct;
+      const lz = st * Math.sin(a) - 0.26 * ct;
+      const inv = 1 / (Math.hypot(lx, ly, lz) || 1);
+      const normAbsLy = Math.abs(ly * inv);
+      setLocalPlane(
+        outLx, outLy, outLz, outOffR, outOffL, 14 + m,
+        lx * inv, ly * inv, lz * inv,
+        0.14 + tVar(m, 0.16), botExt * normAbsLy
+      );
+    }
     return;
   }
 
@@ -3108,18 +3157,7 @@ function computeSystemPlanes(
       baseR * fVar(k, 0.35), 0.5 * taperLy
     );
   }
-  // Accessory ditrigonal rounding bevels in slots 6..7 (at 90° and 270°)
-  for (let m = 0; m < 2; m++) {
-    const k = 6 + m;
-    const a = (m * Math.PI) + 0.5 * Math.PI;
-    const ditrigR = (1.10 * triRound + 1.28 * (1 - triRound)) * fVar(k, 0.20);
-    setLocalPlane(
-      outLx, outLy, outLz, outOffR, outOffL, k,
-      latScale * Math.cos(a), taperLy, latScale * Math.sin(a),
-      ditrigR, 0.5 * taperLy
-    );
-  }
-  // 3-fold Rhombohedral termination: major r{10-11} (even j = 0,2,4) alternating with minor z{01-11} (odd j = 1,3,5)
+  // 3-fold Rhombohedral top termination: major r{10-11} (even j = 0,2,4) alternating with minor z{01-11} (odd j = 1,3,5)
   const effDom = Math.max(0.14, dom);
   const rTilt = nodeTilt;
   const zTilt = Math.min(82 * DEG, nodeTilt + (4 + 12 * effDom) * DEG);
@@ -3137,21 +3175,45 @@ function computeSystemPlanes(
       offR, ct
     );
   }
-  // Steep trigonal trapezohedron {51-61} shoulder facets in slots 14..15
-  const trapTilt = Math.min(82 * DEG, nodeTilt + 14 * DEG);
-  const cosT = Math.cos(trapTilt), sinT = Math.sin(trapTilt);
-  for (let m = 0; m < 2; m++) {
-    const a = (m * Math.PI) + 32 * DEG;
-    setLocalPlane(
-      outLx, outLy, outLz, outOffR, outOffL, 14 + m,
-      sinT * Math.cos(a), cosT, sinT * Math.sin(a),
-      (0.58 - 0.22 * chamfer) + tVar(6 + m, 0.20), cosT
-    );
+  if (isDoubleTerm) {
+    // Full 6-faceted pointed rhombohedral bottom termination in slots [6, 7, 14, 15, 16, 17]
+    const botSlots = [6, 7, 14, 15, 16, 17];
+    for (let j = 0; j < 6; j++) {
+      const a = (j * TAU) / 6;
+      const isMinorRhombo = (j & 1) === 0;
+      const ct = isMinorRhombo ? cosZ : cosR;
+      const st = isMinorRhombo ? sinZ : sinR;
+      const offR = (isMinorRhombo ? (0.24 + 0.38 * effDom + 0.14 * triRound) : (0.04 - 0.14 * effDom)) + tVar(j, 0.24);
+      setLocalPlane(
+        outLx, outLy, outLz, outOffR, outOffL, botSlots[j],
+        st * Math.cos(a), -ct, st * Math.sin(a),
+        offR, botExt * ct
+      );
+    }
+  } else {
+    // Accessory ditrigonal rounding bevels in slots 6..7 (at 90° and 270°)
+    for (let m = 0; m < 2; m++) {
+      const k = 6 + m;
+      const a = (m * Math.PI) + 0.5 * Math.PI;
+      const ditrigR = (1.10 * triRound + 1.28 * (1 - triRound)) * fVar(k, 0.20);
+      setLocalPlane(
+        outLx, outLy, outLz, outOffR, outOffL, k,
+        latScale * Math.cos(a), taperLy, latScale * Math.sin(a),
+        ditrigR, 0.5 * taperLy
+      );
+    }
+    // 3 natural rhombohedral bottom facets at 60°, 180°, 300° in slots 14..16 (never a flat horizontal cut)
+    for (let m = 0; m < 3; m++) {
+      const a = (m * TAU) / 3 + Math.PI / 3;
+      setLocalPlane(
+        outLx, outLy, outLz, outOffR, outOffL, 14 + m,
+        sinR * Math.cos(a), -cosR, sinR * Math.sin(a),
+        0.06 + tVar(m, 0.18), botExt * cosR
+      );
+    }
+    const tableFrac = Math.max(0.76, 1.14 - 0.50 * Math.max(0, chamfer));
+    setLocalPlane(outLx, outLy, outLz, outOffR, outOffL, 17, 0, 1, 0, 0, tableFrac);
   }
-  const rootOffR = Math.max(0.02, effDom * 0.25 + Math.abs(tipJitterAmt * 0.15 * fs[16]));
-  setLocalPlane(outLx, outLy, outLz, outOffR, outOffL, 16, 0, -1, 0, rootOffR, 0);
-  const tableFrac = Math.max(0.72, 1.14 - 0.54 * Math.max(0, chamfer));
-  setLocalPlane(outLx, outLy, outLz, outOffR, outOffL, 17, 0, 1, 0, 0, tableFrac);
 }
 
 // Pre-allocated scratch buffers for target and morph-blended local crystal planes (0..17)
@@ -3567,8 +3629,20 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
   const halfFrustumY = halfFrustumMin * (vh / minDim);
 
   const growth = P.growth ? Math.max(0.03, Math.min(4.5, Number(P.growth.value))) : 1;
-  const dirProgress = 1.22 * Math.tanh(Math.max(0, growth - 0.75) * 0.72);
+  const dirProgress = 1.22 * Math.tanh(Math.max(0, growth - 1.0) * 0.72);
   const overScale = 1 + 0.48 * Math.tanh(Math.max(0, growth - 1.0) * 0.72);
+
+  const curHabit = P.habit ? String(P.habit.value) : 'Trigonal';
+  const morphBlend = Number(cluster.morphHabitBlend) || 0;
+  const hFrom = cluster.morphHabitFrom ? resolveHabitSystem(cluster.morphHabitFrom) : '';
+  const hTo = cluster.morphHabitTo ? resolveHabitSystem(cluster.morphHabitTo) : '';
+  const curSys = resolveHabitSystem(curHabit);
+  const repelStrength = (morphBlend > 1e-4 && morphBlend < 1 - 1e-4 && hFrom && hTo && hFrom !== hTo)
+    ? habitRepelWeight(hFrom) * (1 - morphBlend) + habitRepelWeight(hTo) * morphBlend
+    : habitRepelWeight(curSys);
+  const cubicBlend = (morphBlend > 1e-4 && morphBlend < 1 - 1e-4 && hFrom && hTo && hFrom !== hTo)
+    ? (hFrom === 'Cubic / Isometric' ? 1 - morphBlend : 0) + (hTo === 'Cubic / Isometric' ? morphBlend : 0)
+    : (curSys === 'Cubic / Isometric' ? 1 : 0);
 
   // Continuous float symmetry (3.0..8.0) for smooth 'opening-out' polygon transformation
   const symmetry = P.symmetry ? Math.max(3, Math.min(8, Number(P.symmetry.value))) : 6;
@@ -3587,13 +3661,10 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
   const rawEffPrimaryCount = Math.max(1.8, floatC * (1.0 - 0.38 * twinShare));
   const nodeDt = Math.max(0, Math.min(cluster.pendingNodeDt || 0, 10));
   cluster.pendingNodeDt = 0;
-  // Single unified smoothing factor across all crystal geometry properties (presence, twinW, axis, planes, chips)
-  // so every geometry change happens in ONE single smooth continuous stage (zero 2-stage snap+chase).
-  const aUnified = nodeDt > 0 ? (1 - Math.exp(-1.45 * nodeDt)) : 0;
   if (!Number.isFinite(cluster.smoothEffPrimaryCount)) {
     cluster.smoothEffPrimaryCount = rawEffPrimaryCount;
   } else if (nodeDt > 0) {
-    cluster.smoothEffPrimaryCount += (rawEffPrimaryCount - cluster.smoothEffPrimaryCount) * aUnified;
+    cluster.smoothEffPrimaryCount += (rawEffPrimaryCount - cluster.smoothEffPrimaryCount) * (1 - Math.exp(-0.22 * nodeDt));
   }
   const effPrimaryCount = cluster.smoothEffPrimaryCount;
   let activeCount = 0;
@@ -3604,9 +3675,11 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
     const i = node.cohortIdx;
     const nodeSymmetry = symmetry;
 
-    // Smooth presence window: crystals i < floatC are active; when floatC == 3, only 3 crystals exist
-    const rawPresence = i < 3 ? 1.0 : smooth01(Math.max(0.0, Math.min(1.0, floatC - i)));
-    const rawTwinW = (i < 2 || twinShare <= 0.001) ? 0.0 : smooth01(Math.max(0.0, Math.min(1.0, (twinShare - node.twinRoll * 0.65) / 0.45)));
+    // Continuous presence & twinW with ultra-slow 2nd-order critically-damped spring (omega = 0.20..0.24 rad/s,
+    // max velocity <= 0.065/s, taking ~15-18s — 3x longer than before) so appearing and disappearing
+    // crystals bud and shrink very gradually across preset changes.
+    const rawPresence = smooth01(Math.max(0.0, Math.min(1.0, floatC - i)));
+    const rawTwinW = i < 2 ? 0.0 : smooth01(Math.max(0.0, Math.min(1.0, (twinShare - node.twinRoll + 0.44) / 0.88)));
     if (!node.smoothInit) {
       node.smoothPresence = rawPresence;
       node.velPresence = 0;
@@ -3614,12 +3687,30 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
       node.velTwinW = 0;
       node.smoothInit = true;
     } else if (nodeDt > 0) {
-      node.smoothPresence += (rawPresence - node.smoothPresence) * aUnified;
-      node.smoothTwinW += (rawTwinW - node.smoothTwinW) * aUnified;
+      let remN = nodeDt;
+      const omegaN = 0.20 + 0.04 * (0.5 + 0.5 * (node.uLen || 0));
+      const omegaN2 = omegaN * omegaN;
+      const dampN = 2.0 * omegaN;
+      const maxVelN = 0.065;
+      while (remN > 1e-6) {
+        const ndt = Math.min(remN, 0.05);
+        remN -= ndt;
+        node.velPresence += ((rawPresence - node.smoothPresence) * omegaN2 - dampN * node.velPresence) * ndt;
+        if (node.velPresence > maxVelN) node.velPresence = maxVelN;
+        else if (node.velPresence < -maxVelN) node.velPresence = -maxVelN;
+        node.smoothPresence = Math.max(0, Math.min(1, node.smoothPresence + node.velPresence * ndt));
+
+        node.velTwinW += ((rawTwinW - node.smoothTwinW) * omegaN2 - dampN * node.velTwinW) * ndt;
+        if (node.velTwinW > maxVelN) node.velTwinW = maxVelN;
+        else if (node.velTwinW < -maxVelN) node.velTwinW = -maxVelN;
+        node.smoothTwinW = Math.max(0, Math.min(1, node.smoothTwinW + node.velTwinW * ndt));
+      }
       if (rawPresence <= 1e-4 && node.smoothPresence < 1e-3) {
         node.smoothPresence = 0;
+        node.velPresence = 0;
       } else if (rawPresence >= 1 - 1e-4 && node.smoothPresence > 1 - 1e-3) {
         node.smoothPresence = 1;
+        node.velPresence = 0;
       }
     }
 
@@ -3657,11 +3748,12 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
     // Compute target crystal unit axis (independent of evoPhase so crystals never wobble on their own axis),
     // and smoothly damp node.axis0 toward the target axis when fan, cavityCurve, twinAngle, or habit changes.
     const initPrimaryCount = Math.max(1.8, floatC * (1.0 - 0.38 * twinShare));
-    const rho0 = i === 0 ? 0.12 * node.uRho : Math.min(1.0, Math.sqrt((i + 0.5 * node.uRho) / initPrimaryCount));
+    const rho0 = i === 0
+      ? 0.26 + 0.10 * node.uRho
+      : Math.min(1.0, Math.pow((i + 0.35 * node.uRho) / Math.max(1.4, initPrimaryCount - 0.4), 0.52));
     node.rho = rho0;
-    const az0 = i * GOLDEN + 0.55 * node.uAz;
-    let lean0 = fan * Math.min(1, rho0 + 0.28 * node.uLean * (i > 0 ? 1 : 0.25));
-    if (i === 0) lean0 = Math.max(0.02, lean0);
+    const az0 = i * GOLDEN + 0.38 * node.uAz;
+    let lean0 = fan * Math.min(1.05, (i === 0 ? 0.30 : 0.72 + 0.32 * rho0) + 0.16 * node.uLean);
 
     if (growSideways) {
       if (i > 0) {
@@ -3673,17 +3765,12 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
     }
 
     const leanAz0 = az0 + 0.35 * node.uLeanAz;
-    primAx[0] = Math.sin(lean0) * Math.cos(leanAz0);
-    primAx[1] = Math.cos(lean0);
-    primAx[2] = Math.sin(lean0) * Math.sin(leanAz0);
-
-    if (cavityCurve > 0.001) {
-      const inTilt = cavityCurve * 0.45 * rho0;
-      primAx[0] = primAx[0] * (1 - inTilt) - Math.cos(az0) * inTilt * 0.5;
-      primAx[2] = primAx[2] * (1 - inTilt) - Math.sin(az0) * inTilt * 0.5;
-      const al0 = Math.hypot(primAx[0], primAx[1], primAx[2]) || 1;
-      primAx[0] /= al0; primAx[1] /= al0; primAx[2] /= al0;
-    }
+    const effLean = cavityCurve > 0.001 && i > 0
+      ? Math.min(82 * DEG, lean0 + cavityCurve * 14 * DEG * rho0)
+      : lean0;
+    primAx[0] = Math.sin(effLean) * Math.cos(leanAz0);
+    primAx[1] = Math.cos(effLean);
+    primAx[2] = Math.sin(effLean) * Math.sin(leanAz0);
 
     if (!node.frameInit) {
       const isTwinNode = i >= 2 && rawTwinW >= 0.5;
@@ -3692,7 +3779,7 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
       node.az0 = az0;
     }
 
-    if (!node.lockedTwinRole) {
+    if (!node.lockedTwinRole || twinShare < 0.05) {
       ax[0] = primAx[0]; ax[1] = primAx[1]; ax[2] = primAx[2];
     } else {
       const pNode = cluster.nodes[node.parentIdx >= 0 ? node.parentIdx : 0];
@@ -3722,9 +3809,10 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
       node.v0 = new Float32Array(sz);
       node.frameInit = true;
     } else if (nodeDt > 0) {
-      node.axis0[0] += (ax[0] - node.axis0[0]) * aUnified;
-      node.axis0[1] += (ax[1] - node.axis0[1]) * aUnified;
-      node.axis0[2] += (ax[2] - node.axis0[2]) * aUnified;
+      const aAxis = 1 - Math.exp(-2.8 * nodeDt);
+      node.axis0[0] += (ax[0] - node.axis0[0]) * aAxis;
+      node.axis0[1] += (ax[1] - node.axis0[1]) * aAxis;
+      node.axis0[2] += (ax[2] - node.axis0[2]) * aAxis;
       const al = Math.hypot(node.axis0[0], node.axis0[1], node.axis0[2]) || 1;
       node.axis0[0] /= al; node.axis0[1] /= al; node.axis0[2] /= al;
       for (let k = 0; k < 3; k++) ax[k] = node.axis0[k];
@@ -3742,11 +3830,11 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
     }
     const tw = node.rot0;
     const rho = node.rho;
-    const az = node.az0 || (i * GOLDEN + 0.55 * node.uAz);
+    const az = node.az0 || (i * GOLDEN + 0.38 * node.uAz);
+    const isDoubleTerm = true;
+    node.isDoubleTerm = isDoubleTerm;
 
-    const geodeCompact = 1.0 - 0.52 * cavityCurve;
-    const leaderScale = 1.0 - 0.36 * cavityCurve;
-    let primBaseL = (i === 0 ? leaderScale : Math.max(0.24, 1 - P.lengthJitter.value * (0.4 * node.uLen + 0.6 * rho))) * geodeCompact * lenMod;
+    let primBaseL = (i === 0 ? 0.76 : Math.max(0.28, 0.80 - P.lengthJitter.value * (0.28 * node.uLen + 0.34 * rho))) * lenMod;
     const horizComp = Math.hypot(ax[0], ax[2]);
     const vertComp = Math.abs(ax[1]);
     if (growSideways) {
@@ -3755,37 +3843,47 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
       primBaseL *= 1 + dirProgress * (0.85 * vertComp * Math.min(1.9, 1 / aspect) - 0.16 * horizComp);
     }
 
-    const primBaseR = P.thickness.value * Math.pow(primBaseL, 0.55) * Math.max(0.25, 1 + P.thicknessJitter.value * 0.55 * node.uRadSym) * radMod;
+    const primBaseR = P.thickness.value * Math.pow(primBaseL, 0.65) * Math.max(0.25, 1 + P.thicknessJitter.value * 0.55 * node.uRadSym) * radMod;
 
     let baseL = primBaseL;
     let baseR = primBaseR;
 
-    if (!node.lockedTwinRole) {
+    if (!node.lockedTwinRole || twinShare < 0.05) {
       const curPrimL = primBaseL * gScale * presence;
       const curPrimR = primBaseR * Math.pow(gScale, 0.78) * presence;
-      const back = P.crossAt.value * curPrimL;
-      const u = node.uRootU * curPrimR * 1.05, v = node.uRootV * curPrimR * 1.05;
+      // Non-diamond crystals cross through a shared root nexus (0, 0, 0) so their longer top points
+      // (+0.86 * L) and shorter bottom points (-0.56 * L) extend out past the root in asymmetric 'X' / '*' shapes.
+      const baseCrossFrac = isDoubleTerm
+        ? Math.max(0.10, Math.min(0.22, P.crossAt.value * 0.45 + 0.07))
+        : Math.max(0.16, Math.min(0.32, P.crossAt.value));
+      const back = (cubicBlend * P.crossAt.value + (1 - cubicBlend) * baseCrossFrac) * curPrimL;
+      const uvSpread = 0.16 + 0.89 * cubicBlend;
+      const u = node.uRootU * curPrimR * uvSpread, v = node.uRootV * curPrimR * uvSpread;
       for (let k = 0; k < 3; k++) {
         root[k] = -ax[k] * back + sx[k] * u + sz[k] * v + node.driftOffset[k];
       }
       if (dirProgress > 0.01 && i > 0) {
+        const spreadScale = 0.12 + 0.88 * cubicBlend;
         if (growSideways) {
-          const latDist = dirProgress * halfFrustumX * 0.96 * rho * localGrowth * presence;
+          const latDist = Math.min(curPrimR * 0.45 + cubicBlend * halfFrustumX, dirProgress * halfFrustumX * 0.96 * rho * localGrowth * presence * spreadScale);
           root[0] += Math.cos(az) * latDist;
           root[2] += Math.sin(az) * latDist;
-          root[1] *= (1 - 0.42 * dirProgress);
+          root[1] *= (1 - 0.42 * dirProgress * spreadScale);
         } else {
           const tier = ((i % 2 === 1) ? 1 : -0.88) * Math.pow(rho, 0.78);
-          const vertDist = dirProgress * halfFrustumY * 0.98 * tier * localGrowth * presence;
+          const vertDist = Math.min(curPrimR * 0.45 + cubicBlend * halfFrustumY, Math.abs(dirProgress * halfFrustumY * 0.98 * tier * localGrowth * presence * spreadScale)) * Math.sign(tier);
           root[1] += vertDist;
-          root[0] *= (1 - 0.42 * dirProgress);
-          root[2] *= (1 - 0.42 * dirProgress);
+          root[0] *= (1 - 0.42 * dirProgress * spreadScale);
+          root[2] *= (1 - 0.42 * dirProgress * spreadScale);
         }
       }
       if (cavityCurve > 0.001) {
-        const bowlR = 0.68 * cavityCurve * (0.35 + 0.65 * gScale) * presence;
-        const ringR = bowlR * (0.18 + 0.82 * rho);
-        const bowlY = (Math.sin(i * 1.7 + node.uRootV * 2.0) * 0.22 - 0.35 * rho * rho) * bowlR;
+        // Keep base offset tightly bounded by curPrimR * 0.42 on non-diamond clusters so crystals
+        // always grow out of a shared clumped base nexus rather than floating in separate mid-air orbits.
+        const maxClumpBowlR = curPrimR * 0.42 + cubicBlend * 0.52 * cavityCurve * (0.35 + 0.65 * gScale) * presence;
+        const bowlR = Math.min(maxClumpBowlR, 0.12 * cavityCurve * (0.35 + 0.65 * gScale) * presence);
+        const ringR = bowlR * rho;
+        const bowlY = (-bowlR * Math.cos(rho * 1.15) + bowlR * 0.45) * 0.35;
         root[0] += Math.cos(az) * ringR;
         root[1] += bowlY;
         root[2] += Math.sin(az) * ringR;
@@ -3807,13 +3905,15 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
       const pFullL = node.savedParentFullL;
       const pR = node.savedParentR;
       const br = node.branchRadial0 || sx;
-      const attachFrac = Math.max(0.14, Math.min(0.78, 0.24 + 0.44 * node.uAttach));
-      const attachDist = pL * attachFrac;
-      for (let k = 0; k < 3; k++) {
-        root[k] = pRoot[k] + pAxis[k] * attachDist + br[k] * (pR * 0.35) + node.driftOffset[k];
-      }
-      baseL = pFullL * (0.44 + 0.32 * node.uBranchLen) * (1 + 0.32 * dirProgress) * lenMod;
+      baseL = pFullL * (0.48 + 0.34 * node.uBranchLen) * (1 + 0.32 * dirProgress) * lenMod;
       baseR = Math.max(0.035, P.thickness.value * 0.85) * (0.68 + 0.28 * node.uBranchRad) * radMod;
+      const curTwinL = baseL * gScale * presence;
+      const attachFrac = Math.max(0.06, Math.min(0.22, 0.08 + 0.14 * node.uAttach));
+      const attachDist = pL * attachFrac;
+      const twinBack = (isDoubleTerm ? 0.14 : 0.16) * curTwinL * (1 - cubicBlend);
+      for (let k = 0; k < 3; k++) {
+        root[k] = pRoot[k] + pAxis[k] * attachDist + br[k] * (pR * 0.10) - ax[k] * twinBack + node.driftOffset[k];
+      }
     }
 
     // Pull emerging/shrinking crystals smoothly into the heart of the cluster core (0, 0, 0)
@@ -3846,19 +3946,6 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
     initRootZ[activeCount] = root[2];
     activeNodes[activeCount++] = node;
   }
-
-  const curHabit = P.habit ? String(P.habit.value) : 'Trigonal';
-  const morphBlend = Math.max(0, Math.min(1, Number(cluster.morphHabitBlend) || 0));
-  const hFrom = cluster.morphHabitFrom ? resolveHabitSystem(cluster.morphHabitFrom) : '';
-  const hTo = cluster.morphHabitTo ? resolveHabitSystem(cluster.morphHabitTo) : '';
-  const curSys = resolveHabitSystem(curHabit);
-  const hasHabitMorph = Boolean(hFrom && hTo && hFrom !== hTo);
-  const repelStrength = hasHabitMorph
-    ? habitRepelWeight(hFrom) * (1 - morphBlend) + habitRepelWeight(hTo) * morphBlend
-    : habitRepelWeight(curSys);
-  const cubicBlend = hasHabitMorph
-    ? (hFrom === 'Cubic / Isometric' ? 1 - morphBlend : 0) + (hTo === 'Cubic / Isometric' ? morphBlend : 0)
-    : (curSys === 'Cubic / Isometric' ? 1 : 0);
 
   // Simple pairwise magnetic repulsion strictly for high-overlap shapes like Diamond (post-015442, post-015454)
   if (repelStrength > 1e-4 && activeCount > 1) {
@@ -3974,13 +4061,15 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
     const dynTipJitter = Math.max(0.06, P.tipJitter.value);
     const dynChamfer = Math.max(0, chamfer);
 
-    if (hasHabitMorph) {
+    const isDoubleTerm = !!node.isDoubleTerm;
+
+    if (morphBlend > 1e-4 && morphBlend < 1 - 1e-4 && hFrom && hTo && hFrom !== hTo) {
       computeSystemPlanes(
-        hFrom, nodeSymmetry, taperLy, latScale, nodeTilt, dynChamfer, dynDom, faceJitterAmt, dynTipJitter, fs, L, r,
+        hFrom, nodeSymmetry, taperLy, latScale, nodeTilt, dynChamfer, dynDom, faceJitterAmt, dynTipJitter, fs, L, r, isDoubleTerm,
         tgtLx, tgtLy, tgtLz, tgtOffR, tgtOffL
       );
       computeSystemPlanes(
-        hTo, nodeSymmetry, taperLy, latScale, nodeTilt, dynChamfer, dynDom, faceJitterAmt, dynTipJitter, fs, L, r,
+        hTo, nodeSymmetry, taperLy, latScale, nodeTilt, dynChamfer, dynDom, faceJitterAmt, dynTipJitter, fs, L, r, isDoubleTerm,
         altLx, altLy, altLz, altOffR, altOffL
       );
       for (let k = 0; k < 18; k++) {
@@ -3996,7 +4085,7 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
       }
     } else {
       computeSystemPlanes(
-        hTo || curHabit, nodeSymmetry, taperLy, latScale, nodeTilt, dynChamfer, dynDom, faceJitterAmt, dynTipJitter, fs, L, r,
+        curHabit, nodeSymmetry, taperLy, latScale, nodeTilt, dynChamfer, dynDom, faceJitterAmt, dynTipJitter, fs, L, r, isDoubleTerm,
         tgtLx, tgtLy, tgtLz, tgtOffR, tgtOffL
       );
     }
@@ -4009,16 +4098,17 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
       node.smoothOffL = new Float32Array(tgtOffL);
       node.planesInit = true;
     } else if (nodeDt > 0) {
+      const aPlane = 1 - Math.exp(-3.0 * nodeDt);
       for (let k = 0; k < 18; k++) {
-        const nx = node.smoothLx[k] + (tgtLx[k] - node.smoothLx[k]) * aUnified;
-        const ny = node.smoothLy[k] + (tgtLy[k] - node.smoothLy[k]) * aUnified;
-        const nz = node.smoothLz[k] + (tgtLz[k] - node.smoothLz[k]) * aUnified;
+        const nx = node.smoothLx[k] + (tgtLx[k] - node.smoothLx[k]) * aPlane;
+        const ny = node.smoothLy[k] + (tgtLy[k] - node.smoothLy[k]) * aPlane;
+        const nz = node.smoothLz[k] + (tgtLz[k] - node.smoothLz[k]) * aPlane;
         const inv = 1 / (Math.hypot(nx, ny, nz) || 1);
         node.smoothLx[k] = nx * inv;
         node.smoothLy[k] = ny * inv;
         node.smoothLz[k] = nz * inv;
-        node.smoothOffR[k] += (tgtOffR[k] - node.smoothOffR[k]) * aUnified;
-        node.smoothOffL[k] += (tgtOffL[k] - node.smoothOffL[k]) * aUnified;
+        node.smoothOffR[k] += (tgtOffR[k] - node.smoothOffR[k]) * aPlane;
+        node.smoothOffL[k] += (tgtOffL[k] - node.smoothOffL[k]) * aPlane;
       }
     }
 
@@ -4051,9 +4141,14 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
       node.smoothChip2 = rawChip2;
       node.smoothChip3 = rawChip3;
     } else if (nodeDt > 0) {
-      node.smoothChip1 += (rawChip1 - node.smoothChip1) * aUnified;
-      node.smoothChip2 += (rawChip2 - node.smoothChip2) * aUnified;
-      node.smoothChip3 += (rawChip3 - node.smoothChip3) * aUnified;
+      const aChip = 1 - Math.exp(-0.22 * nodeDt);
+      const maxStepChip = 0.065 * nodeDt;
+      const d1 = rawChip1 - node.smoothChip1;
+      node.smoothChip1 += Math.max(-maxStepChip, Math.min(maxStepChip, d1 * aChip));
+      const d2 = rawChip2 - node.smoothChip2;
+      node.smoothChip2 += Math.max(-maxStepChip, Math.min(maxStepChip, d2 * aChip));
+      const d3 = rawChip3 - node.smoothChip3;
+      node.smoothChip3 += Math.max(-maxStepChip, Math.min(maxStepChip, d3 * aChip));
     }
 
     // Lock corner-nip indices to fixed faces in {0, 1, 2} so they NEVER jump!
@@ -4071,30 +4166,36 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
     const kt0 = 1;
     const kt1 = 2;
 
+    const whaleRoll1 = cornerWhaleRoll(node.uid, 18);
+    const whaleRoll2 = cornerWhaleRoll(node.uid, 19);
+    const whaleRoll3 = cornerWhaleRoll(node.uid, 20);
+    const whaleMult1 = whaleRoll1 >= 0.99 ? 20.0 : (whaleRoll1 >= 0.93 ? 10.0 : 1.0);
+    const whaleMult2 = whaleRoll2 >= 0.99 ? 20.0 : (whaleRoll2 >= 0.93 ? 10.0 : 1.0);
+    const whaleMult3 = whaleRoll3 >= 0.99 ? 20.0 : (whaleRoll3 >= 0.93 ? 10.0 : 1.0);
+
+    const nipSizeMult1 = (0.40 + 1.25 * Math.pow(((node.uid * 41 + 11) % 29) / 28, 1.35)) * whaleMult1;
+    const nipSizeMult2 = (0.40 + 1.25 * Math.pow(((node.uid * 59 + 17) % 31) / 30, 1.35)) * whaleMult2;
+    const nipSizeMult3 = (0.40 + 1.25 * Math.pow(((node.uid * 67 + 23) % 37) / 36, 1.35)) * whaleMult3;
+
     // Exact vertices of this crystal (planes 0..17) so every corner nip is a cap measured from the
     // crystal's true support in its direction: continuous, always a corner, never culls the crystal.
     const vertCount = enumerateCrystalVertices(rowIdx);
 
-    if (edgeChipsVal > 0.005) {
-      const nipSizeMult1 = 0.40 + 0.85 * Math.pow(((node.uid * 41 + 11) % 29) / 28, 1.35);
-      const nipSizeMult2 = 0.40 + 0.85 * Math.pow(((node.uid * 59 + 17) % 31) / 30, 1.35);
-      const nipSizeMult3 = 0.40 + 0.85 * Math.pow(((node.uid * 67 + 23) % 37) / 36, 1.35);
+    const nipDepth1 = r * (0.0045 + 0.0105 * edgeChipsVal) * chipSizeVal * nipSizeMult1 * (whaleMult1 > 1.0 ? Math.max(0.65, node.smoothChip1) : node.smoothChip1);
+    writeCornerNipPlane(rowIdx, 18, k0, k1, shHoriz1, shVert1, nipDepth1, 0.85, 1.15, vertCount, L, r);
 
-      const nipDepth1 = r * (0.0085 * edgeChipsVal) * chipSizeVal * nipSizeMult1 * node.smoothChip1;
-      writeCornerNipPlane(rowIdx, 18, k0, k1, shHoriz1, shVert1, nipDepth1, 0.85, 1.15, vertCount, L, r);
+    const nipDepth2 = r * (0.0040 + 0.0095 * edgeChipsVal) * chipSizeVal * nipSizeMult2 * (whaleMult2 > 1.0 ? Math.max(0.65, node.smoothChip2) : node.smoothChip2);
+    writeCornerNipPlane(rowIdx, 19, k2, k3, shHoriz2, shVert2, nipDepth2, 1.12, 0.88, vertCount, L, r);
 
-      const nipDepth2 = r * (0.0075 * edgeChipsVal) * chipSizeVal * nipSizeMult2 * node.smoothChip2;
-      writeCornerNipPlane(rowIdx, 19, k2, k3, shHoriz2, shVert2, nipDepth2, 1.12, 0.88, vertCount, L, r);
+    const nipDepth3 = r * (0.0036 + 0.0088 * edgeChipsVal) * chipSizeVal * nipSizeMult3 * (whaleMult3 > 1.0 ? Math.max(0.65, node.smoothChip3) : node.smoothChip3);
+    writeCornerNipPlane(rowIdx, 20, kt0, kt1, tipHoriz, tipVert, nipDepth3, 0.90, 1.10, vertCount, L, r);
 
-      const nipDepth3 = r * (0.0068 * edgeChipsVal) * chipSizeVal * nipSizeMult3 * node.smoothChip3;
-      writeCornerNipPlane(rowIdx, 20, kt0, kt1, tipHoriz, tipVert, nipDepth3, 0.90, 1.10, vertCount, L, r);
-    }
-
-    const half = 0.5 * L;
+    const half = (isDoubleTerm ? 0.72 : 0.51) * L;
+    const midFrac = isDoubleTerm ? 0.29 : 0.49;
     const nodeAlpha = Math.max(0.0, Math.min(1.0, node.alpha * smooth01(Math.min(1.0, presence / 0.55))));
-    const scx = root[0] + ax[0] * half;
-    const scy = root[1] + ax[1] * half;
-    const scz = root[2] + ax[2] * half;
+    const scx = root[0] + ax[0] * midFrac * L;
+    const scy = root[1] + ax[1] * midFrac * L;
+    const scz = root[2] + ax[2] * midFrac * L;
     let maxVertDist2 = 0;
     for (let v = 0; v < vertCount; v++) {
       const dvx = POLY_V[v * 3] - scx;
@@ -4122,11 +4223,13 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
     weightTotal += w;
 
     const tipY = root[1] + ax[1] * L;
+    const botReach = isDoubleTerm ? 0.44 * L : 0.04 * L;
+    const botY = root[1] - ax[1] * botReach;
     const effPad = r * (0.1 + 0.35 * nodeAlpha);
-    minY = Math.min(minY, Math.min(root[1], tipY) - effPad);
-    maxY = Math.max(maxY, Math.max(root[1], tipY) + effPad);
+    minY = Math.min(minY, Math.min(botY, tipY) - effPad);
+    maxY = Math.max(maxY, Math.max(botY, tipY) + effPad);
     const rTip = Math.hypot(root[0] + ax[0] * L, root[2] + ax[2] * L) + effPad;
-    const rRoot = Math.hypot(root[0], root[2]) + effPad;
+    const rRoot = Math.hypot(root[0] - ax[0] * botReach, root[2] - ax[2] * botReach) + effPad;
     maxR2 = Math.max(maxR2, rTip * rTip, rRoot * rRoot);
   }
 
@@ -6426,7 +6529,7 @@ const presets = {
     hopper: 0,
     crystals: 3,
     fan: 38,
-    crossAt: 0.15,
+    crossAt: 0.28,
     lengthJitter: 0.28,
     thickness: 0.092,
     faceJitter: 0.42,
@@ -6463,7 +6566,7 @@ const presets = {
     iridescence: 0.28,
     flash: 0.35,
   },
-  // 2. Amethyst Cathedral — dense geode cluster of 13 shorter, smaller rhombohedral heads radiating from a curved cathedral bowl (strong shape contrast vs Quartz #1)
+  // 2. Amethyst Cathedral — dense geode cluster of 11 shorter, smaller rhombohedral heads radiating from a shared clumped base (strong shape contrast vs Quartz #1)
   'Amethyst Cathedral': {
     seed: 7,
     habit: 'Trigonal',
@@ -6473,13 +6576,13 @@ const presets = {
     chamfer: 0.14,
     twinShare: 0.32,
     twinAngle: 54,
-    cavityCurve: 0.78,
+    cavityCurve: 0.24,
     hopper: 0,
-    crystals: 13,
-    fan: 72,
-    crossAt: 0.28,
-    lengthJitter: 0.46,
-    thickness: 0.125,
+    crystals: 11,
+    fan: 58,
+    crossAt: 0.30,
+    lengthJitter: 0.42,
+    thickness: 0.128,
     thicknessJitter: 0.35,
     faceJitter: 0.32,
     faceDominance: 0.32,
@@ -6515,7 +6618,7 @@ const presets = {
     iridescence: 0.36,
     flash: 0.45,
   },
-  // 3. High-Dispersion Diamond — ultra-clear adamantine octahedral crystal (zero cloudiness, zero milk/veils/frost, razor-sharp dispersion)
+  // 3. High-Dispersion Diamond — adamantine octahedral crystal with dithered internal dispersion and subtle optical complication
   'High-Dispersion Diamond': {
     seed: 88,
     habit: 'Cubic / Isometric',
@@ -6536,33 +6639,35 @@ const presets = {
     tipAngle: 54.7,
     tipJitter: 0.08,
     faceDominance: 0.06,
-    stoneColour: '#ffffff',
-    colourDepth: 0.04,
-    colourZoning: 0,
+    stoneColour: '#f8fafc',
+    colourDepth: 0.16,
+    colourZoning: 0.08,
     biColour: 0,
     ior: 2.417,
-    fire: 0.145,
+    fire: 0.135,
     fireSamples: 8,
     bounces: 8,
     depth: 4,
-    striations: 0,
-    frostShare: 0,
-    frost: 0,
-    edgeChips: 0,
-    edgeWear: 0,
-    milk: 0,
-    veils: 0,
-    phantom: 0,
-    phantomRate: 0,
-    phantomLayers: 1,
+    striations: 0.05,
+    frostShare: 0.22,
+    frost: 0.14,
+    edgeChips: 0.18,
+    edgeWear: 0.14,
+    milk: 0.02,
+    veils: 0.14,
+    phantom: 0.18,
+    phantomRate: 0.32,
+    phantomLayers: 2,
     needles: 0,
-    fractures: 0.06,
-    fractureGlow: 2.1,
+    fractures: 0.22,
+    fractureGlow: 1.95,
     hueShift: 180,
-    keyLight: 12,
-    rimLight: 19,
-    glimmer: 1.15,
-    ditherBlend: 0,
+    keyLight: 8.5,
+    rimLight: 12,
+    lightSize: 0.85,
+    lightSoftness: 0.14,
+    glimmer: 0,
+    ditherBlend: 0.55,
     iridescence: 0.72,
     flash: 0.15,
   },
@@ -6893,7 +6998,7 @@ const presets = {
     iridescence: 0.38,
     flash: 0.45,
   },
-  // 11. Glimmer Diamond — crystal-clear rainbow-dispersive isometric diamond cluster with spectral fire (brilliant white vs pink/mint #10)
+  // 11. Glimmer Diamond — rainbow-dispersive isometric diamond cluster with dithered spectral fire (brilliant white vs pink/mint #10)
   'Glimmer Diamond': {
     seed: 88,
     habit: 'Cubic / Isometric',
@@ -6915,34 +7020,36 @@ const presets = {
     tipJitter: 0.12,
     faceDominance: 0.08,
     stoneColour: '#f8fafc',
-    colourDepth: 0.05,
-    colourZoning: 0.05,
+    colourDepth: 0.12,
+    colourZoning: 0.08,
     biColour: 0,
     coreColour: '#e0f2fe',
     ior: 2.417,
-    fire: 0.15,
+    fire: 0.14,
     fireSamples: 8,
     bounces: 8,
     depth: 4,
-    striations: 0,
-    frostShare: 0,
-    frost: 0,
+    striations: 0.04,
+    frostShare: 0.22,
+    frost: 0.12,
     edgeChips: 0.16,
     edgeWear: 0.12,
-    milk: 0,
-    veils: 0,
-    phantom: 0,
-    phantomRate: 0,
-    phantomLayers: 1,
+    milk: 0.01,
+    veils: 0.14,
+    phantom: 0.12,
+    phantomRate: 0.25,
+    phantomLayers: 2,
     needles: 0,
-    fractures: 0.14,
-    fractureGlow: 2.2,
+    fractures: 0.18,
+    fractureGlow: 1.9,
     hueShift: 180,
-    keyLight: 12,
-    rimLight: 19,
-    glimmer: 1.35,
-    ditherBlend: 0,
-    iridescence: 0.92,
+    keyLight: 9,
+    rimLight: 13,
+    lightSize: 0.85,
+    lightSoftness: 0.14,
+    glimmer: 0.45,
+    ditherBlend: 0.48,
+    iridescence: 0.78,
     flash: 0.22,
   },
   // 12. Imperial Zircon — fiery hyacinth red-orange tetragonal bipyramids with sub-adamantine luster (fiery red-gold vs white diamond #11)
@@ -7781,8 +7888,8 @@ function run(slug, { manifest, params, presets, randomize, sketch }) {
         else if (st === 'Subtle') targetOcclusion = 0.38;
         else if (st === 'Off') targetOcclusion = 0.0;
         panel.syncAll();
-      } else if (changedKey === 'occlusion') {
-        occlusionManualHold = 30.0;
+      } else if (changedKey === 'occlusion' || changedKey === 'occlusionType') {
+        occlusionManualHold = 180.0;
         smoothOcclusion = Number(P.occlusion?.value) || 0;
         targetOcclusion = smoothOcclusion;
       } else if (changedKey) {
@@ -8409,7 +8516,7 @@ const __default_shader = {
     let dtR = rt - glowState.rt;
     if (!(dtR >= 0)) dtR = 0.016;
     glowState.rt = rt;
-    const aG = glowState.init ? 1 - Math.exp(-Math.min(dtR, 0.5) / 0.22) : 1;
+    const aG = glowState.init ? 1 - Math.exp(-Math.min(dtR, 0.5) / 1.1) : 1;
     glowState.init = true;
     for (let c = 0; c < 3; c++) {
       const tg = lin(hslChannel(c === 0 ? 0 : c === 1 ? 8 : 4, h, P.backdropSat.value, 0.5)) * P.backdropLight.value;
@@ -8564,83 +8671,99 @@ float occOpacityFor(int row) {
   return smoothstep(0.0, 0.25, (x - delay) / (1.0 - delay));
 }
 
-// 1a. Massive Abstract Ovoid Occlusion Voids (u_occlusionType == 0): fixed-radius 3D displacing spheres/wedges
-float evalOvoidOcclusionVoid(int row, vec3 ro, vec3 rd, float tEntry, out vec3 outWallN, out float outRim) {
-  outWallN = vec3(0.0, 1.0, 0.0);
-  outRim = 0.0;
-  if (u_occlusion <= 0.001) return 0.0;
-  vec3 ax = body(row, 1).xyz;
-  vec3 rt = body(row, 3).xyz;
-  float Lh = max(body(row, 1).w, 0.02);
-  float rh = max(body(row, 2).w, 0.01);
-  vec3 sideC = body(row, PA).xyz - ax * dot(body(row, PA).xyz, ax);
-  int nextRow = occPartnerRow(row, 0);
-  float g = occGrowthFor(row);
-  float bestCut = 0.0;
-  for (int m = 0; m < 2; m++) {
-    vec4 rawEc = body(nextRow, m);
-    // Each void is a bubble seeded just under this crystal's surface (on the side facing the
-    // partner crystal) that grows with the occlusion level and shrinks back to that seed. It opens
-    // as a small hole that steadily widens, instead of appearing late and already huge (when it
-    // grew from the partner's centre deep inside the cluster, whole crystals vanished in ~3 s).
-    vec3 axPt = rt + ax * (Lh * (m == 0 ? 0.55 : 0.8));
-    vec3 toC = rawEc.xyz - axPt;
-    vec3 perpT = toC - ax * dot(toC, ax);
-    vec3 outDir = normalize(perpT + sideC * max(0.0, rh - length(perpT)) + vec3(1e-6));
-    float rad = rawEc.w * 0.92 * g;
-    vec4 ec = vec4(axPt + outDir * (rh * 0.85 + 0.35 * rad), rad);
-    if (ec.w <= 1e-4) continue;
-    vec3 oc = ro - ec.xyz;
-    float b = dot(oc, rd);
-    float h = b * b - dot(oc, oc) + ec.w * ec.w;
-    if (h <= 0.0) continue;
-    float s = sqrt(h);
-    float tc0 = -b - s, tc1 = -b + s;
-    // Radial direction from this crystal's axis line to the void centre. When the centre sits on
-    // (or crosses) the axis line this vector is ~0 and normalizing it flips the wedge planes from
-    // frame to frame (whole chunks popped), so blend smoothly toward the crystal's own side axis.
-    vec3 perpC = ec.xyz - rt - ax * dot(ec.xyz - rt, ax);
-    vec3 radDir = normalize(perpC + sideC * max(0.0, ec.w * 0.35 - length(perpC)) + vec3(1e-6));
-    vec3 nUp = normalize(ax + radDir * 0.42);
-    vec3 nDn = normalize(-ax + radDir * 0.48);
-    float dUp = ec.w * 0.62 - dot(nUp, oc);
-    float dnUp = dot(nUp, rd);
-    if (abs(dnUp) > 1e-6) {
-      float tUp = dUp / dnUp;
-      if (dnUp < 0.0) tc0 = max(tc0, tUp); else tc1 = min(tc1, tUp);
-    } else if (dUp < 0.0) continue;
-    float dDn = ec.w * 0.66 - dot(nDn, oc);
-    float dnDn = dot(nDn, rd);
-    if (abs(dnDn) > 1e-6) {
-      float tDn = dDn / dnDn;
-      if (dnDn < 0.0) tc0 = max(tc0, tDn); else tc1 = min(tc1, tDn);
-    } else if (dDn < 0.0) continue;
-    if (tc1 > tc0 && tc1 > tEntry) {
-      float frontSoft = 1.0 - smoothstep(tEntry - ec.w * 0.06, tEntry + ec.w * 0.28, tc0);
-      float span = max(0.0, tc1 - max(tc0, tEntry));
-      float depthSoft = smoothstep(0.0, max(ec.w * 0.36, 1e-3), span);
-      float cut = frontSoft * depthSoft;
-      if (cut > bestCut) {
-        bestCut = cut;
-        vec3 pHit = ro + rd * max(tc0, tEntry);
-        vec3 relC = pHit - ec.xyz;
-        outWallN = -normalize(relC + 1e-5);
-        outRim = clamp(cut * (1.0 - cut) * 4.0, 0.0, 1.0);
-      }
-    }
-  }
-  return clamp(bestCut, 0.0, 1.0);
-}
-
 vec3 rotateAroundAxis(vec3 v, vec3 k, float cosA, float sinA) {
   return v * cosA + cross(k, v) * sinA + k * dot(k, v) * (1.0 - cosA);
 }
 
-// 1b. Invisible Crystal Occlusions (u_occlusionType == 1): invisible crystals of the exact same shape & form (facet planes 0..17) as the current batch occluding visible crystals
-float evalInvisibleCrystalVoid(int row, vec3 ro, vec3 rd, float tEntry, out vec3 outWallN, out float outRim) {
-  outWallN = vec3(0.0, 1.0, 0.0);
-  outRim = 0.0;
-  if (u_occlusion <= 0.001) return 0.0;
+// 1a. 3D CSG Ovoid + Wedge Void Interval (u_occlusionType == 0):
+//     Computes ray interval [tc0, tc1], entry/exit 3D cavity wall normals, and interior crease distance exitSeam.
+bool evalOvoidVoidInterval(int row, int m, vec3 ro, vec3 rd, out float tc0, out float tc1, out vec3 enterN, out vec3 exitN, out float exitSeam) {
+  tc0 = -1e9; tc1 = 1e9;
+  enterN = vec3(0.0, 1.0, 0.0);
+  exitN = vec3(0.0, 1.0, 0.0);
+  exitSeam = 1e9;
+  if (u_occlusion <= 0.002) return false;
+  float g = occGrowthFor(row) * smoothstep(0.55, 0.95, clamp(body(row, 2).x, 0.0, 1.0));
+  if (g <= 1e-3) return false;
+
+  vec3 ax = body(row, 1).xyz;
+  vec3 rt = body(row, 3).xyz;
+  float Lh = max(body(row, 1).w, 0.08);
+  float rh = max(body(row, 2).w, 0.02);
+  vec3 p0 = body(row, PA).xyz;
+  vec3 side1 = p0 - ax * dot(p0, ax);
+  float sLen = length(side1);
+  side1 = sLen > 1e-4 ? (side1 / sLen) : normalize(cross(ax, vec3(0.577, 0.577, 0.577)));
+  vec3 side2 = cross(ax, side1);
+
+  float uid = max(1.0, body(row, 2).z);
+  float azV = uid * 2.399963 + float(m) * 2.65;
+  vec3 outDir = side1 * cos(azV) + side2 * sin(azV);
+  float hFrac = (m == 0) ? 0.42 : 0.72;
+  vec3 axPt = rt + ax * (Lh * hFrac);
+  float rad = rh * (1.32 + 0.24 * float(m)) * g;
+  vec4 ec = vec4(axPt + outDir * (rh * 1.04), rad);
+  if (ec.w <= 1e-4) return false;
+
+  vec3 oc = ro - ec.xyz;
+  float b = dot(oc, rd);
+  float h = b * b - dot(oc, oc) + ec.w * ec.w;
+  if (h <= 0.0) return false;
+  float s = sqrt(h);
+  tc0 = -b - s;
+  tc1 = -b + s;
+  int enterSurf = 0;
+  int exitSurf = 0;
+
+  vec3 nUp = normalize(ax + outDir * 0.44);
+  vec3 nDn = normalize(-ax + outDir * 0.48);
+  float dUp = ec.w * 0.66 - dot(nUp, oc);
+  float dnUp = dot(nUp, rd);
+  if (abs(dnUp) > 1e-6) {
+    float tUp = dUp / dnUp;
+    if (dnUp < 0.0) {
+      if (tUp > tc0) { tc0 = tUp; enterSurf = 1; }
+    } else {
+      if (tUp < tc1) { tc1 = tUp; exitSurf = 1; }
+    }
+  } else if (dUp < 0.0) return false;
+
+  float dDn = ec.w * 0.68 - dot(nDn, oc);
+  float dnDn = dot(nDn, rd);
+  if (abs(dnDn) > 1e-6) {
+    float tDn = dDn / dnDn;
+    if (dnDn < 0.0) {
+      if (tDn > tc0) { tc0 = tDn; enterSurf = 2; }
+    } else {
+      if (tDn < tc1) { tc1 = tDn; exitSurf = 2; }
+    }
+  } else if (dDn < 0.0) return false;
+
+  if (tc1 <= tc0) return false;
+
+  vec3 rel0 = (ro + rd * tc0) - ec.xyz;
+  enterN = (enterSurf == 1) ? nUp : ((enterSurf == 2) ? nDn : normalize(rel0 + 1e-6));
+  vec3 rel1 = (ro + rd * tc1) - ec.xyz;
+  exitN = (exitSurf == 1) ? nUp : ((exitSurf == 2) ? nDn : normalize(rel1 + 1e-6));
+
+  float dSph = max(0.0, ec.w - length(rel1));
+  float dU = max(0.0, ec.w * 0.66 - dot(nUp, rel1));
+  float dD = max(0.0, ec.w * 0.68 - dot(nDn, rel1));
+  exitSeam = (exitSurf == 0) ? min(dU, dD) : ((exitSurf == 1) ? min(dSph, dD) : min(dSph, dU));
+  return true;
+}
+
+// 1b. 3D CSG Invisible Crystal Void Interval (u_occlusionType == 1):
+//     Carves a 3D faceted crystal cavity of the exact 18-plane crystallographic habit of partner tRow.
+bool evalCrystalVoidInterval(int row, int m, vec3 ro, vec3 rd, out float tc0, out float tc1, out vec3 enterN, out vec3 exitN, out float exitSeam) {
+  tc0 = -1e9; tc1 = 1e9;
+  enterN = vec3(0.0, 1.0, 0.0);
+  exitN = vec3(0.0, 1.0, 0.0);
+  exitSeam = 1e9;
+  if (u_occlusion <= 0.002) return false;
+  float g = occGrowthFor(row) * smoothstep(0.55, 0.95, clamp(body(row, 2).x, 0.0, 1.0));
+  if (g <= 1e-3) return false;
+
   vec3 axRow = body(row, 1).xyz;
   float LRow = max(body(row, 1).w, 0.08);
   float rRow = max(body(row, 2).w, 0.02);
@@ -8651,77 +8774,114 @@ float evalInvisibleCrystalVoid(int row, vec3 ro, vec3 rd, float tEntry, out vec3
   side1 = sLen > 1e-4 ? (side1 / sLen) : normalize(cross(axRow, vec3(0.577, 0.577, 0.577)));
   vec3 side2 = cross(axRow, side1);
 
-  float bestCut = 0.0;
+  int tRow = occPartnerRow(row, m);
+  vec3 axTpl = body(tRow, 1).xyz;
+  float LTpl = max(body(tRow, 1).w, 0.08);
+  float rTpl = max(body(tRow, 2).w, 0.02);
+  vec3 rtTpl = body(tRow, 3).xyz;
+  vec3 cTpl = rtTpl + axTpl * (LTpl * 0.48);
 
-  for (int m = 0; m < 2; m++) {
-    int tRow = occPartnerRow(row, m);
-    vec3 axTpl = body(tRow, 1).xyz;
-    float LTpl = max(body(tRow, 1).w, 0.08);
-    float rTpl = max(body(tRow, 2).w, 0.02);
-    vec3 rtTpl = body(tRow, 3).xyz;
-    vec3 cTpl = rtTpl + axTpl * (LTpl * 0.48);
+  float uid = max(1.0, body(row, 2).z);
+  float azV = uid * 2.399963 + float(m) * 2.45 + 0.55;
+  vec3 outDir = side1 * cos(azV) + side2 * sin(azV);
+  vec3 tanDir = -side1 * sin(azV) + side2 * cos(azV);
+  float hFrac = (m == 0) ? 0.40 : 0.70;
+  vec3 cAnchor = rtRow + axRow * (LRow * hFrac) + outDir * (rRow * 0.94);
+  vec3 rotAxis = normalize(tanDir + axRow * ((m == 0) ? 0.28 : -0.24));
+  float ang = (m == 0) ? 1.12 : -1.02;
+  float cosA = cos(ang), sinA = sin(ang);
+  float invScale = clamp((rTpl / max(rRow, 0.02)) * 0.76, 0.48, 1.28) / max(g, 0.02);
 
-    float hFrac = (m == 0) ? 0.44 : 0.72;
-    // While small, seed the void just under the crystal's surface so its hole is visible from the
-    // start and widens steadily; ease back to the original interior anchor as it reaches full size.
-    vec3 cAnchor = rtRow + axRow * (LRow * hFrac) + ((m == 0) ? side1 : side2) * (rRow * mix(0.92, 0.22, occGrowthFor(row)));
-    vec3 rotAxis = (m == 0) ? normalize(side2 + axRow * 0.25) : normalize(side1 - axRow * 0.22);
-    float ang = (m == 0) ? 1.08 : -0.96;
-    float cosA = cos(ang), sinA = sin(ang);
-    float invScale = clamp((rTpl / max(rRow, 0.02)) * 0.80, 0.55, 1.35) / max(occGrowthFor(row), 0.02);
+  vec3 roTpl = cTpl + rotateAroundAxis((ro - cAnchor) * invScale, rotAxis, cosA, sinA);
+  vec3 rdTpl = rotateAroundAxis(rd * invScale, rotAxis, cosA, sinA);
 
-    vec3 roTpl = cTpl + rotateAroundAxis((ro - cAnchor) * invScale, rotAxis, cosA, sinA);
-    vec3 rdTpl = rotateAroundAxis(rd * invScale, rotAxis, cosA, sinA);
-
-    float tc0 = -1e9, tc1 = 1e9;
-    vec3 hitN = vec3(0.0, 1.0, 0.0);
-    for (int k = 0; k < 18; k++) {
-      vec4 pl = body(tRow, PA + k);
-      float dn = dot(pl.xyz, rdTpl);
-      float dist = pl.w - dot(pl.xyz, roTpl);
-      if (abs(dn) < 1e-8) {
-        if (dist < 0.0) { tc0 = 1e9; break; }
-        continue;
-      }
-      float tPl = dist / dn;
-      if (dn < 0.0) {
-        if (tPl > tc0) { tc0 = tPl; hitN = pl.xyz; }
-      } else if (tPl < tc1) {
-        tc1 = tPl;
-      }
-      if (tc0 > tc1) break;
+  vec3 enterPlN = vec3(0.0, 1.0, 0.0);
+  vec3 exitPlN = vec3(0.0, 1.0, 0.0);
+  int kExit = 0;
+  for (int k = 0; k < 18; k++) {
+    vec4 pl = body(tRow, PA + k);
+    float dn = dot(pl.xyz, rdTpl);
+    float dist = pl.w - dot(pl.xyz, roTpl);
+    if (abs(dn) < 1e-8) {
+      if (dist < 0.0) return false;
+      continue;
     }
-
-    if (tc1 > tc0 && tc1 > tEntry) {
-      float feather = rRow * 0.06;
-      float frontSoft = 1.0 - smoothstep(tEntry - feather * 0.4, tEntry + feather * 1.4, tc0);
-      float span = max(0.0, tc1 - max(tc0, tEntry));
-      float depthSoft = smoothstep(0.0, max(rRow * 0.14, 1e-3), span);
-      float cut = frontSoft * depthSoft;
-      if (cut > bestCut) {
-        bestCut = cut;
-        vec3 worldWallN = rotateAroundAxis(hitN, rotAxis, cosA, -sinA);
-        outWallN = -normalize(worldWallN + 1e-5);
-        outRim = clamp(cut * (1.0 - cut) * 4.0, 0.0, 1.0);
-      }
+    float tPl = dist / dn;
+    if (dn < 0.0) {
+      if (tPl > tc0) { tc0 = tPl; enterPlN = pl.xyz; }
+    } else if (tPl < tc1) {
+      tc1 = tPl; exitPlN = pl.xyz; kExit = k;
     }
+    if (tc0 > tc1) return false;
   }
-  return clamp(bestCut, 0.0, 1.0);
+  if (tc1 <= tc0) return false;
+
+  enterN = normalize(rotateAroundAxis(enterPlN, rotAxis, cosA, -sinA) + 1e-6);
+  exitN = normalize(rotateAroundAxis(exitPlN, rotAxis, cosA, -sinA) + 1e-6);
+
+  vec3 pTplExit = roTpl + rdTpl * tc1;
+  float dMinSeam = 1e9;
+  for (int k = 0; k < 18; k++) {
+    if (k == kExit) continue;
+    vec4 pl = body(tRow, PA + k);
+    float cosAng = dot(pl.xyz, exitPlN);
+    if (cosAng > 0.995) continue;
+    float sinAng = sqrt(max(1e-3, 1.0 - cosAng * cosAng));
+    float dPl = max(0.0, pl.w - dot(pl.xyz, pTplExit)) / (sinAng * invScale);
+    if (dPl < dMinSeam) dMinSeam = dPl;
+  }
+  exitSeam = dMinSeam;
+  return true;
 }
 
-// Unified Occlusion Void Evaluator (blends Ovoids at u_occlusionType=0 and Invisible Crystals at u_occlusionType=1)
-float evalMassiveOcclusionVoid(int row, vec3 ro, vec3 rd, float tEntry, out vec3 outWallN, out float outRim) {
-  outWallN = vec3(0.0, 1.0, 0.0);
-  outRim = 0.0;
-  if (u_occlusion <= 0.002) return 0.0;
+bool evalSingleVoidInterval(int row, int m, vec3 ro, vec3 rd, out float tc0, out float tc1, out vec3 enterN, out vec3 exitN, out float exitSeam) {
   float kType = clamp(u_occlusionType, 0.0, 1.0);
-  vec3 nOvoid = vec3(0.0, 1.0, 0.0), nCryst = vec3(0.0, 1.0, 0.0);
-  float rOvoid = 0.0, rCryst = 0.0;
-  float cOvoid = (kType < 0.99) ? evalOvoidOcclusionVoid(row, ro, rd, tEntry, nOvoid, rOvoid) : 0.0;
-  float cCryst = (kType > 0.01) ? evalInvisibleCrystalVoid(row, ro, rd, tEntry, nCryst, rCryst) : 0.0;
-  outWallN = normalize(mix(nOvoid, nCryst, kType) + vec3(1e-5));
-  outRim = mix(rOvoid, rCryst, kType);
-  return mix(cOvoid, cCryst, kType);
+  bool useCrystal = (kType >= 0.85) || (kType > 0.15 && m == 0);
+  if (useCrystal) {
+    return evalCrystalVoidInterval(row, m, ro, rd, tc0, tc1, enterN, exitN, exitSeam);
+  }
+  return evalOvoidVoidInterval(row, m, ro, rd, tc0, tc1, enterN, exitN, exitSeam);
+}
+
+// Unified 3D CSG Occlusion Void Carve:
+// Subtracts 3D ovoid/crystal void volumes [tc0, tc1] from crystal interval [tn, tf], advancing tn to tc1
+// when a cavity is carved into the front face (with true 3D interior wall normal outVoidN and crisp 3D
+// border distance outVoidBorder) or returning false when the void slices completely through the silhouette.
+bool applyOcclusionVoidCSG(int row, vec3 ro, vec3 rd, inout float tn, inout float tf, inout int kn, out vec3 outVoidN, out float outVoidBorder, out float outVoidSeam) {
+  outVoidN = (kn < CP) ? body(row, PA + kn).xyz : vec3(0.0, 1.0, 0.0);
+  outVoidBorder = 1e9;
+  outVoidSeam = 1e9;
+  if (u_occlusion <= 0.002) return true;
+  float rRow = max(body(row, 2).w, 0.02);
+  float tnOrig = max(tn, 0.0);
+  float tfOrig = tf;
+
+  for (int m = 0; m < 2; m++) {
+    float tc0, tc1, exitSeam;
+    vec3 enterN, exitN;
+    if (!evalSingleVoidInterval(row, m, ro, rd, tc0, tc1, enterN, exitN, exitSeam)) continue;
+
+    float tStart = max(tn, 0.0);
+    if (tc0 <= tStart + rRow * 0.06 && tc1 > tStart) {
+      if (tc1 >= tf - 1e-4) return false;
+      float dFront = max(0.0, tc1 - tnOrig);
+      float dBack = max(0.0, tf - tc1);
+      float dLip = (tc0 > tnOrig - rRow * 0.08) ? max(0.0, tnOrig + rRow * 0.06 - tc0) : 1e9;
+      tn = tc1;
+      kn = CP + m + 1;
+      outVoidN = -exitN;
+      outVoidBorder = min(dFront, min(dBack, dLip));
+      outVoidSeam = exitSeam;
+    } else if (tc0 > tStart && tc0 < tf && tc1 >= tf - rRow * 0.06) {
+      float dBackCut = max(0.0, tfOrig - tc0);
+      float dThru = max(0.0, tc0 - tStart);
+      tf = tc0;
+      if (tf <= max(tn, 0.0) + 1e-4) return false;
+      outVoidBorder = min(outVoidBorder, min(dBackCut, dThru));
+      outVoidSeam = min(outVoidSeam, exitSeam);
+    }
+  }
+  return tf > max(tn, 0.0) + 1e-4;
 }
 
 float n3(vec3 p) {
@@ -8886,9 +9046,8 @@ void evalSingleRidgeBevel(
 bool applyTinyEdgeChip(int row, int k0, vec3 ro, vec3 rd, inout float tn, inout float tf, inout int kn, out float edgeSilAlpha, out vec3 outChipN) {
   edgeSilAlpha = 1.0;
   float effEdgeMacro = max(0.0, u_patinaMacro * u_edgeMacro);
-  float chipGate = clamp(u_edgeChips * 2.5, 0.0, 1.0);
   float effChips = clamp(u_edgeChips * effEdgeMacro, 0.0, 2.0);
-  float effIrreg = clamp((u_edgeIrregularity + 0.25 * u_edgeWear) * effEdgeMacro * chipGate, 0.0, 2.0);
+  float effIrreg = clamp((u_edgeIrregularity + 0.25 * u_edgeWear) * effEdgeMacro, 0.0, 2.0);
   vec4 pl0 = body(row, PA + k0);
   vec3 n0 = pl0.xyz;
   outChipN = n0;
@@ -8910,7 +9069,7 @@ bool applyTinyEdgeChip(int row, int k0, vec3 ro, vec3 rd, inout float tn, inout 
   vec4 pl1 = vec4(0.0), pl2 = vec4(0.0);
   float maxValidOff = L * 1.35 + r * 2.2;
 
-  for (int k = 0; k < 16; k++) {
+  for (int k = 0; k < 18; k++) {
     if (k == k0) continue;
     vec4 pl = body(row, PA + k);
     if (pl.w - dot(pl.xyz, rt) > maxValidOff) continue;
@@ -8938,7 +9097,7 @@ bool applyTinyEdgeChip(int row, int k0, vec3 ro, vec3 rd, inout float tn, inout 
     v2 = max(k0, max(k1, k2));
     v1 = (k0 + k1 + k2) - v0 - v2;
     whaleRoll = hash(vec3(uid * 17.0 + float(v0) * 31.0, float(v1) * 23.0 + float(v2) * 13.0, 7.0));
-    whaleMult = (u_hopper > 0.35) ? ((whaleRoll >= 0.99) ? 12.0 : ((whaleRoll >= 0.93) ? 6.0 : 1.0)) : 1.0;
+    whaleMult = (whaleRoll >= 0.99) ? 20.0 : ((whaleRoll >= 0.93) ? 10.0 : 1.0);
   }
   if (whaleMult <= 1.0 && d1 >= r * 0.095 * max(0.45, max(chipSz, effIrreg))) return true;
 
@@ -9072,27 +9231,53 @@ bool convexHit(int row, vec3 ro, vec3 rd, out float tn, out float tf, out int kn
   return tf > max(tn, 0.0);
 }
 
-float exitCrystal(int row, vec3 ro, vec3 rd, out int kf) {
+float exitCrystal(int row, vec3 ro, vec3 rd, out int kf, out vec3 outExitN) {
   float tf = 1e9; kf = 0;
+  outExitN = body(row, PA).xyz;
   for (int k = 0; k < CP; k++) {
     vec4 pl = body(row, PA + k);
     float dn = dot(pl.xyz, rd);
     if (dn > 1e-8) {
       float t = (pl.w - dot(pl.xyz, ro)) / dn;
-      if (t < tf) { tf = t; kf = k; }
+      if (t < tf) { tf = t; kf = k; outExitN = pl.xyz; }
+    }
+  }
+  if (u_occlusion > 0.002) {
+    for (int m = 0; m < 2; m++) {
+      float tc0, tc1, exitSeam;
+      vec3 enterN, exitN;
+      if (!evalSingleVoidInterval(row, m, ro, rd, tc0, tc1, enterN, exitN, exitSeam)) continue;
+      if (tc0 > 1e-4 && tc0 < tf) {
+        tf = tc0;
+        kf = CP + m + 1;
+        outExitN = -enterN;
+      }
     }
   }
   return max(tf, 0.0);
 }
 
-bool traceScene(vec3 ro, vec3 rd, int skipMask, out int id, out float tHit, out float tfHit, out int kHit) {
+bool traceScene(vec3 ro, vec3 rd, int skipMask, out int id, out float tHit, out float tfHit, out int kHit, out vec3 outVoidN, out float outVoidBorder, out float outVoidSeam) {
   bool hit = false; id = 0; kHit = 0; tHit = 1e9; tfHit = 1e9;
+  outVoidN = vec3(0.0, 1.0, 0.0);
+  outVoidBorder = 1e9;
+  outVoidSeam = 1e9;
   float tn, tf; int kn, kf;
   int nc = clamp(int(f_crystals + 0.5), 0, MAX_CRYSTALS);
   for (int i = 0; i < nc; i++) {
     if ((skipMask & (1 << i)) != 0 || !sphereHit(ro, rd, body(i, 0), tHit)) continue;
     if (convexHit(i, ro, rd, tn, tf, kn, kf)) {
-      if (tn > 1e-4 && tf > tn + 1e-4 && tn < tHit) { tHit = tn; tfHit = tf; id = i; kHit = kn; hit = true; }
+      vec3 candVoidN = vec3(0.0, 1.0, 0.0);
+      float candBorder = 1e9, candSeam = 1e9;
+      if (u_occlusion > 0.002) {
+        if (!applyOcclusionVoidCSG(i, ro, rd, tn, tf, kn, candVoidN, candBorder, candSeam)) continue;
+      }
+      float tCand = max(tn, 0.0);
+      if (tf > tCand + 1e-4 && tCand < tHit) {
+        tHit = tCand; tfHit = tf; id = i; kHit = kn;
+        outVoidN = candVoidN; outVoidBorder = candBorder; outVoidSeam = candSeam;
+        hit = true;
+      }
     }
   }
   return hit;
@@ -9148,7 +9333,7 @@ vec3 insideVolume(int id, vec3 ro, vec3 rd, float len, float jitter, int maxStep
     vec3 pp = ro + rd * (dt * (float(s) + jitter));
     vec3 rel = pp - root;
     float axial = dot(rel, axis);
-    float hgt = clamp(axial / max(L, 1e-3), 0.0, 1.0);
+    float hgt = clamp(abs(axial - 0.14 * L) / max(0.86 * L, 1e-3), 0.0, 1.0);
     float radFrac = clamp(length(rel - axis * axial) / max(r, 1e-3), 0.0, 1.0);
     float coreMix = u_biColour * clamp((1.0 - radFrac * 0.85) * 0.65 + (1.0 - hgt) * 0.55, 0.0, 1.0);
     vec3 baseSigma = mix(f_sigma, f_sigmaCore, coreMix);
@@ -9178,11 +9363,10 @@ vec3 insideVolume(int id, vec3 ro, vec3 rd, float len, float jitter, int maxStep
       float flashPower = u_flash * (0.65 + 0.45 * u_flash);
       scat += T * coreEnvelope * singleGlow * schillerResonance * deepFlashCol * (f_ambient * 2.2 + vec3(0.38)) * flashPower * effOpticalScale * dt * 2.4;
     }
-    if (u_iridescence > 0.01 && u_rainbow * (1.0 - 0.85 * g1) > 0.001 && (effMilk + effVeils) > 0.01) {
+    if (u_iridescence > 0.01 && u_rainbow * (1.0 - 0.85 * g1) > 0.001) {
       float iridPhase = hgt * mix(1.85, 1.45, dither) + radFrac * mix(1.25, 0.95, dither) + dot(rd, axis) * mix(1.15, 0.95, dither) + hueOff + v.b * mix(0.75, 0.55, dither);
       vec3 iridWave = spectralRainbow(iridPhase);
-      float veilGate = clamp((effMilk + effVeils) * 1.6, 0.0, 1.0);
-      float veilBand = (0.03 + 0.14 * v.g + 0.06 * v.r) * veilGate * clamp(u_iridescence * 0.48, 0.0, 1.3) * u_rainbow * (1.0 - 0.85 * g1) * (1.0 - 0.32 * dither);
+      float veilBand = (0.03 + 0.14 * v.g + 0.06 * v.r) * clamp(u_iridescence * 0.48, 0.0, 1.3) * u_rainbow * (1.0 - 0.85 * g1) * (1.0 - 0.32 * dither);
       scat += T * iridWave * effLightIn * veilBand * dt * mix(2.1, 1.45, dither);
     }
     vec3 sigma = baseSigma * effOpticalScale * (1.0 + u_colourZoning * (2.0 * hgt - 1.0)) * (0.75 + 0.5 * v.b);
@@ -9191,10 +9375,10 @@ vec3 insideVolume(int id, vec3 ro, vec3 rd, float len, float jitter, int maxStep
 
   // Deep internal iridescent cleavage plane (blends glossy f50bae4 rainbow pipeline with transparent 555e23b cleavage via u_ditherBlend, and Jack Bush thin-film rainbow cracks via u_glimmer)
   float crackRainbowGate = max(u_rainbow, g1);
-  if (u_fractures > 0.01 && crackRainbowGate > 0.001) {
+  if ((u_fractures > 0.01 || u_iridescence > 0.01 || u_flash > 0.01) && crackRainbowGate > 0.001) {
     float uid = crystalUid(id);
     float bounceCleaveW = (maxSteps > 5) ? 1.0 : mix(1.0 - 0.88 * dither, 1.0, g1);
-    float effFractures = clamp(u_fractures, 0.0, 1.0);
+    float effFractures = mix(clamp(u_fractures + u_iridescence * 0.22 + u_flash * 0.25, 0.0, 1.0), u_fractures, g1);
     float fracRoll = mix(hash(vec3(uid, f_seed, 91.0)), hash(vec3(float(id), f_seed, 91.0)), g1);
     float fracW = mix(smoothstep(fracRoll - 0.14, fracRoll + 0.14, effFractures), step(fracRoll, effFractures), g1) * bounceCleaveW;
     if (fracW > 1e-4) {
@@ -9326,7 +9510,7 @@ void insidePrimaryExtras(int id, vec3 ro, vec3 rd, float len, float travelled, i
 
   // Occasional razor-thin internal & sub-surface hairline fractures (u_hairlineFractures)
   // Monotone single-valued gently curved cleavage traces near terminations & edges (zero closed-loop bullseye rings!)
-  float effHairline = clamp(u_hairlineFractures * u_patinaMacro * u_surfaceMacro * clamp(u_fractures * 2.2, 0.0, 1.0), 0.0, 2.0);
+  float effHairline = clamp(u_hairlineFractures * u_patinaMacro * u_surfaceMacro, 0.0, 2.0);
   if (effHairline > 0.005) {
     vec3 p0 = body(id, PA).xyz;
     vec3 t1 = p0 - axis * dot(p0, axis);
@@ -9582,9 +9766,10 @@ float edgeDist(int id, int k, vec3 p, out vec3 adjN, out int outKLo, out int out
     float sHi = max(0.0, plHi.w - dot(plHi.xyz, p)) / sinAng;
     return abs(sLo - sHi) * 0.5;
   }
-  if (k == CP || k == CP + 1) {
-    int nextRow = occPartnerRow(id, k - CP);
-    vec4 rawEc = body(nextRow, k - CP);
+  if (k >= CP && k < CP + 5000) {
+    int m = clamp(k - CP - 1, 0, 1);
+    int nextRow = occPartnerRow(id, m);
+    vec4 rawEc = body(nextRow, m);
     vec4 ec = vec4(rawEc.xyz, rawEc.w * u_occlusion);
     adjN = normalize(ec.xyz - p + vec3(1e-5));
     return max(0.0, ec.w - length(p - ec.xyz));
@@ -9757,7 +9942,8 @@ vec3 crystalBloomGlint(int id, int k, vec3 p, vec3 rd, vec3 nSmooth, float dEdge
 vec3 shadeBehindRay(vec3 roIn, vec3 rdIn, int skipIn, float travIn, float jitter, out float firstHitMask) {
   firstHitMask = 0.0;
   int bId, bK; float bT, bTf;
-  if (!traceScene(roIn, rdIn, skipIn, bId, bT, bTf, bK)) {
+  vec3 bVoidN; float bVoidBorder, bVoidSeam;
+  if (!traceScene(roIn, rdIn, skipIn, bId, bT, bTf, bK, bVoidN, bVoidBorder, bVoidSeam)) {
     return refractedEnv(rdIn, 0.0, 0.0);
   }
   vec3 bP = roIn + rdIn * bT;
@@ -9776,7 +9962,7 @@ vec3 shadeBehindRay(vec3 roIn, vec3 rdIn, int skipIn, float travIn, float jitter
   float bUid = crystalUid(bId);
   float bFrostRoll = hash(vec3(bUid, float(bK), f_seed + 0.5));
   float bRough = effFrost * smoothstep(bFrostRoll - 0.15, bFrostRoll + 0.15, effFrostShare);
-  vec3 bRawN = (bK < CP) ? body(bId, PA + bK).xyz : normalize(bP - body(bId, 0).xyz);
+  vec3 bRawN = (bK < CP) ? body(bId, PA + bK).xyz : bVoidN;
   vec3 bN = faceNormal(bId, bK < CP ? bK : 18, bRawN, bP, bRough, travB * f_pixAngle, 1.0);
   float bF = fresnel(-dot(rdIn, bN), 1.0 / u_ior);
   vec3 bEntryRefl = facetIridescence(bId, bK, bP, rdIn, bN, 1.0, softFacetRefl(env(reflect(rdIn, bN), bRough)));
@@ -9786,7 +9972,8 @@ vec3 shadeBehindRay(vec3 roIn, vec3 rdIn, int skipIn, float travIn, float jitter
   vec3 bRefrIn = refract(rdIn, bN, 1.0 / u_ior);
   vec3 rdB = dot(bRefrIn, bRefrIn) > 1e-6 ? normalize(bRefrIn) : rdIn;
   int bKf;
-  float bLen = exitCrystal(bId, bP, rdB, bKf);
+  vec3 bExitRawN;
+  float bLen = exitCrystal(bId, bP, rdB, bKf, bExitRawN);
   vec3 bTrans;
   vec3 bInScat = insideVolume(bId, bP, rdB, bLen, jitter, clamp(int(u_inclusionSteps + 0.5), 2, 4), bTrans);
   colB += thrB * bInScat;
@@ -9795,7 +9982,7 @@ vec3 shadeBehindRay(vec3 roIn, vec3 rdIn, int skipIn, float travIn, float jitter
   bP += rdB * bLen;
   float bExitRoll = hash(vec3(bUid, float(bKf), f_seed + 0.5));
   float bFr = effFrost * smoothstep(bExitRoll - 0.15, bExitRoll + 0.15, effFrostShare);
-  vec3 bNf = faceNormal(bId, bKf, body(bId, PA + bKf).xyz, bP, bFr, travB * f_pixAngle, 1.0);
+  vec3 bNf = faceNormal(bId, bKf < CP ? bKf : 18, bExitRawN, bP, bFr, travB * f_pixAngle, 1.0);
   float bFo = fresnel(dot(rdB, bNf), u_ior);
   vec3 bExitRefl = facetIridescence(bId, bKf, bP, rdB, -bNf, 1.0, softFacetRefl(env(reflect(rdB, -bNf), bFr)));
   colB += thrB * (bFo * bExitRefl * 0.42 * (0.15 + 0.85 * glare));
@@ -10034,7 +10221,9 @@ void main() {
   for (int hop = 0; hop < maxHops; hop++) {
     if (hopCost >= float(depth) || dot(thr, thr) < 1e-6) break;
     int id, k; float t, tfHit;
-    if (!traceScene(ro, rd, skipMask, id, t, tfHit, k)) break;
+    vec3 voidWallN = vec3(0.0, 1.0, 0.0);
+    float voidBorder = 1e9, voidSeam = 1e9;
+    if (!traceScene(ro, rd, skipMask, id, t, tfHit, k, voidWallN, voidBorder, voidSeam)) break;
 
     float effEdgeMacro = max(0.0, u_patinaMacro * u_edgeMacro);
     float edgeSilAlpha = 1.0;
@@ -10054,14 +10243,6 @@ void main() {
     skipMask |= (1 << id);
 
     float rawAlpha = clamp(body(id, 2).x, 0.0, 1.0) * edgeSilAlpha;
-    vec3 voidWallN = vec3(0.0, 1.0, 0.0);
-    float voidRim = 0.0;
-    if (!primaryEvaluated && u_occlusion > 0.001) {
-      float occBlend = occOpacityFor(id) * smoothstep(0.6, 1.0, rawAlpha);
-      float voidCut = evalMassiveOcclusionVoid(id, ro, rd, t, voidWallN, voidRim);
-      rawAlpha *= (1.0 - min(0.995, occBlend * voidCut));
-      voidRim *= occBlend;
-    }
     primaryEvaluated = true;
 
     float budgetWeight = clamp(float(depth) - hopCost, 0.0, 1.0);
@@ -10089,7 +10270,13 @@ void main() {
     bool isOcclusionVoid = (k >= CP && k < CP + 5000);
     bool isEdgeIncursion = isTinyEdgeChip || isCornerVertexChip || isOcclusionVoid;
     bool isCornerNip = (k >= 18 && k < CP);
-    vec3 rawFaceN = (isTinyEdgeChip || isCornerVertexChip) ? chipFacetN : body(id, PA + k).xyz;
+    vec3 rawFaceN = isOcclusionVoid
+      ? voidWallN
+      : ((isTinyEdgeChip || isCornerVertexChip) ? chipFacetN : body(id, PA + k).xyz);
+    if (isOcclusionVoid) {
+      // Keep 3D void cavity walls smooth & clear (zero noisy texture, pure 3D geometric delineation)
+      rough *= 0.20;
+    }
 
     vec3 adjN = rawFaceN;
     int ridgeKLo = -1, ridgeKHi = -1;
@@ -10109,10 +10296,6 @@ void main() {
       rough = max(rough, 0.025 * clamp(u_edgeWear * effEdgeMacro, 0.0, 1.0));
     }
     vec3 n = faceNormal(id, isEdgeIncursion ? 18 : k, rawFaceN, p, rough, footprint, dEdge);
-    if (voidRim > 0.001) {
-      n = normalize(mix(n, voidWallN, voidRim * 0.65));
-      rough = max(rough, 0.18 * voidRim);
-    }
     if (hop == 0 && (isTinyEdgeChip || isCornerVertexChip || isCornerNip)) {
       vec3 axis = body(id, 1).xyz, root = body(id, 3).xyz;
       float L = max(body(id, 1).w, 0.12);
@@ -10131,7 +10314,7 @@ void main() {
 
     vec3 nRefl = n;
     float patinaGlint = 0.0, patinaRough = 0.0;
-    if (hop == 0) {
+    if (hop == 0 && !isOcclusionVoid) {
       evalSurfacePatina(id, k, p, n, footprint, dEdge, nRefl, patinaGlint, patinaRough);
       // Keep internal refraction 100% pure & clear by only applying a tiny fraction (6%) of surface scratch normal to n
       n = normalize(mix(n, nRefl, 0.06 * (1.0 - 0.85 * dither)));
@@ -10141,7 +10324,7 @@ void main() {
     vec3 hopCol = vec3(0.0);
     vec3 hopThr = vec3(1.0);
     bool isChippedFacet = isTinyEdgeChip || isCornerVertexChip || isCornerNip;
-    float effGlare = (isOcclusionVoid ? (glare * 0.45) : (isChippedFacet ? (glare * 0.65) : glare)) * (1.0 - 0.30 * dither);
+    float effGlare = (isOcclusionVoid ? min(1.0, glare * 1.15 + 0.12) : (isChippedFacet ? (glare * 0.65) : glare)) * (1.0 - 0.30 * dither);
     float cosEntry = mix(max(0.32, -dot(rd, nRefl)), clamp(-dot(rd, nRefl), 0.0, 1.0), g1);
     float F = fresnel(cosEntry, 1.0 / effIor);
     vec3 rawEntryRefl = softFacetRefl(env(reflect(rd, nRefl), reflRough));
@@ -10157,6 +10340,29 @@ void main() {
     hopCol += iridescentFilm(id, k, p, rd, nRefl, dEdge);
     hopThr *= mix(1.0 - F * (0.3 + 0.7 * effGlare), (1.0 - F) * (1.0 - 0.6 * jbChip), g1);
 
+    // Clear 3D physical delineation of voided spaces: crisp 3D border rim where the void cuts the
+    // crystal face + distinct 3D interior cavity wall shading & interior facet seams (zero noisy texture)
+    if (u_occlusion > 0.002 && voidBorder < 1e4) {
+      float rVoid = max(body(id, 2).w, 0.02);
+      float borderW = max(rVoid * 0.032, footprint * 2.4);
+      float borderRim = exp(-voidBorder / borderW);
+      float seamW = max(rVoid * 0.022, footprint * 1.8);
+      float seamRim = isOcclusionVoid ? exp(-voidSeam / seamW) : 0.0;
+      float edge3D = clamp(borderRim * 1.20 + seamRim * 0.85, 0.0, 1.35);
+      vec3 gemTint = mix(exp(-f_sigma * 0.22), vec3(0.96, 0.98, 1.0), 0.74);
+      vec3 keyDir = normalize(vec3(f_lights[0], f_lights[1], f_lights[2]));
+      float diffWall = clamp(dot(f_toWorld * nRefl, keyDir) * 0.5 + 0.5, 0.0, 1.0);
+      vec3 rimCol = gemTint * (0.55 * f_ambient + 0.55 * entryRefl + vec3(0.32));
+      hopCol += edge3D * (isOcclusionVoid ? 0.52 : 0.34) * rimCol;
+      if (isOcclusionVoid) {
+        float cavRecess = 1.0 - exp(-voidBorder / max(rVoid * 0.12, 1e-3));
+        float grazeWall = pow(clamp(1.0 - abs(dot(rd, nRefl)), 0.0, 1.0), 2.0);
+        vec3 wallLight = gemTint * (0.38 + 0.62 * diffWall) * (0.45 * f_ambient + 0.45 * entryRefl + vec3(0.20));
+        hopCol += hopThr * (0.22 + 0.18 * grazeWall) * cavRecess * wallLight;
+        hopThr *= (1.0 - 0.26 * cavRecess - 0.20 * borderRim);
+      }
+    }
+
     vec3 rdC = rd;
     vec3 refrIn = refract(rdC, n, 1.0 / effIor);
     rdC = dot(refrIn, refrIn) > 1e-6 ? normalize(refrIn) : rdC;
@@ -10168,7 +10374,8 @@ void main() {
     vec3 nf = n;
     vec3 o = rdC;
 
-    float len0 = exitCrystal(id, roC, rdC, kf);
+    vec3 rawExitN0;
+    float len0 = exitCrystal(id, roC, rdC, kf, rawExitN0);
     vec3 trans0;
     int steps0 = (hop == 0) ? clamp(int(u_inclusionSteps + 0.5), 2, 16) : clamp(int(u_inclusionSteps + 0.5), 2, 6);
     vec3 inScat0 = insideVolume(id, roC, rdC, len0, jitter, steps0, trans0);
@@ -10190,7 +10397,7 @@ void main() {
       float jbExChip = jbExEdge * smoothstep(1.0 - 0.45 * u_edgeWear, 1.05 - 0.45 * u_edgeWear, jbExNz) * g1;
       fr = max(fr, jbExChip * 0.55);
     }
-    nf = faceNormal(id, kf, body(id, PA + kf).xyz, p, fr, travC * f_pixAngle, 1.0);
+    nf = faceNormal(id, kf < CP ? kf : 18, rawExitN0, p, kf < CP ? fr : fr * 0.2, travC * f_pixAngle, 1.0);
     if (g1 > 0.01 && kf == 16 && dot(body(id, PA + 16).xyz, body(id, 1).xyz) < -0.92) {
       hopThr *= (1.0 - 0.88 * g1);
     }
@@ -10205,7 +10412,8 @@ void main() {
       pathDisp = reflect(pathDisp, -nf);
       rdC = reflect(rdC, -nf);
       roC = p;
-      float len = exitCrystal(id, roC, rdC, kf);
+      vec3 rawExitNB;
+      float len = exitCrystal(id, roC, rdC, kf, rawExitNB);
       vec3 trans;
       vec3 inScat = insideVolume(id, roC, rdC, len, jitter, clamp(int(u_inclusionSteps + 0.5), 2, 6), trans);
       hopCol += hopThr * inScat;
@@ -10223,7 +10431,7 @@ void main() {
         float jbExChipB = jbExEdgeB * smoothstep(1.0 - 0.45 * u_edgeWear, 1.05 - 0.45 * u_edgeWear, jbExNzB) * g1;
         fr = max(fr, jbExChipB * 0.55);
       }
-      nf = faceNormal(id, kf, body(id, PA + kf).xyz, p, fr, travC * f_pixAngle, 1.0);
+      nf = faceNormal(id, kf < CP ? kf : 18, rawExitNB, p, kf < CP ? fr : fr * 0.2, travC * f_pixAngle, 1.0);
       if (g1 > 0.01 && kf == 16 && dot(body(id, PA + 16).xyz, body(id, 1).xyz) < -0.92) {
         hopThr *= (1.0 - 0.88 * g1);
       }
