@@ -7,6 +7,7 @@ import { createLoop } from './loop.js';
 import { hexToOkhsl, okhslToHex } from './okhsl.js';
 import { buildCluster, cluster, resetEvolution, stepEvolution } from '../cluster.js';
 import { createEnsoSound } from '../sound.js';
+import { computeSemanticDriftTitle } from '../params.js';
 
 const DEFAULT_ZOOM_KEY = 'crystals_default_zoom';
 const SOUND_PARAM_KEYS = new Set([
@@ -14,20 +15,19 @@ const SOUND_PARAM_KEYS = new Set([
   'soundTrack', 'trackName', 'soundRotate', 'soundReverbMode',
 ]);
 const NON_MORPH_KEYS = new Set([
-  'renderScale', 'targetFps', 'maxFps', 'maxDpr', 'timeScale',
+  'renderScale', 'targetFps', 'maxFps', 'maxDpr', 'timeScale', 'fxaa',
   'defaultZoom', 'distance', 'fov', 'tilt', 'spin', 'spinStart', 'sway', 'swaySpeed',
   'evolve', 'evolveSpeed', 'morphPresets', 'morphTime', 'autoGrow', 'growth', 'growSpeed',
   'graduallyShift', 'complementaryBg', 'hueShift', 'studioEdge',
   'mirrorMode', 'mirrorScale', 'mirrorStrength', 'mirrorDepthFade', 'mirrorLiquid', 'mirrorChecker', 'mirrorComplement', 'occlusionStyle', 'occlusionType', 'occlusion',
   'seed', 'filmFps', 'fireSamples', 'bounces', 'depth', 'rainbow', 'rainbowGlow', 'bloom', 'faceGlare', 'chipSize', 'edgeGranularity',
   'patinaMacro', 'edgeMacro', 'surfaceMacro', 'edgeIrregularity', 'patina', 'hairlineFractures',
-  'symmetry', 'fan', 'twinAngle', 'cavityCurve', 'taper', 'tipAngle',
   ...SOUND_PARAM_KEYS,
 ]);
 
 export function computeDeviceDpr() {
   const isMobile = window.innerWidth <= 820 || (window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
-  const dpr = Math.min(window.devicePixelRatio || 1, isMobile ? 1.25 : 2);
+  const dpr = Math.min(window.devicePixelRatio || 1, isMobile ? 1.5 : 2);
   return dpr;
 }
 
@@ -150,8 +150,8 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
   const morphState = {
     stageIndex: 0,
     diceRolls: 0,
-    fromPreset: standardPresetNames[0] || 'Amethyst Cathedral',
-    toPreset: standardPresetNames[1] || 'Glacial Ice',
+    fromPreset: standardPresetNames[0] || 'Classic Quartz Prism',
+    toPreset: standardPresetNames[1] || 'Amethyst Cathedral',
     elapsed: 0,
     holdRemaining: 0,
     progress: 0,
@@ -161,13 +161,17 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
     toOkhsl: Object.create(null),
   };
 
-  function prepareMorphStage(fromName, nextStageIdx, holdSeconds = 0) {
-    morphState.fromPreset = fromName || store.preset || standardPresetNames[0] || 'Current';
+  function prepareMorphStage(fromName, nextStageIdx, holdSeconds = 8.0) {
+    morphState.fromPreset = fromName || store.preset || standardPresetNames[0] || 'Classic Quartz Prism';
     morphState.stageIndex = nextStageIdx;
     morphState.elapsed = 0;
     morphState.holdRemaining = holdSeconds;
     morphState.progress = 0;
     morphState.fromLive = false;
+    cluster.morphHabitFrom = null;
+    cluster.morphHabitTo = null;
+    cluster.morphHabitBlend = 0;
+    store.semanticDriftTitle = morphState.fromPreset;
     morphState.fromMap = Object.create(null);
     morphState.toMap = Object.create(null);
     morphState.fromOkhsl = Object.create(null);
@@ -205,9 +209,9 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
     }
   }
 
-  function resetMorphFromPreset(presetName, holdSeconds = 4.0) {
+  function resetMorphFromPreset(presetName, holdSeconds = 8.0) {
     const idx = standardPresetNames.indexOf(presetName);
-    const nextIdx = idx >= 0 ? idx + 1 : standardPresetNames.length;
+    const nextIdx = idx >= 0 ? (idx + 1) % standardPresetNames.length : 0;
     morphState.diceRolls = 0;
     prepareMorphStage(presetName, nextIdx, holdSeconds);
   }
@@ -238,6 +242,7 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
       const holdTake = Math.min(rem, morphState.holdRemaining);
       morphState.holdRemaining -= holdTake;
       rem -= holdTake;
+      store.semanticDriftTitle = morphState.fromPreset;
       if (rem <= 1e-6) return false;
     }
     let moved = false;
@@ -253,6 +258,15 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
       const rawT = Math.min(1, morphState.elapsed / duration);
       morphState.progress = Number(rawT.toFixed(4));
       const k = rawT * rawT * rawT * (rawT * (rawT * 6 - 15) + 10);
+      cluster.morphHabitFrom = morphState.fromMap.habit || P.habit?.value;
+      cluster.morphHabitTo = morphState.toMap.habit || P.habit?.value;
+      cluster.morphHabitBlend = k;
+      store.semanticDriftTitle = computeSemanticDriftTitle(
+        morphState.fromPreset,
+        morphState.toPreset,
+        morphState.progress,
+        morphState.holdRemaining
+      );
 
       for (const p of store.params) {
         if (NON_MORPH_KEYS.has(p.key) || p.key === 'bloom' || p.noPreset || p.randomize === false) continue;
@@ -299,7 +313,8 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
 
       if (morphState.elapsed >= duration - 1e-5) {
         store.setPresetName(morphState.toPreset);
-        prepareMorphStage(morphState.toPreset, morphState.stageIndex + 1);
+        store.semanticDriftTitle = morphState.toPreset;
+        prepareMorphStage(morphState.toPreset, (morphState.stageIndex + 1) % standardPresetNames.length, 8.0);
       }
     }
     return moved;
@@ -307,7 +322,7 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
 
   // Initialize initial seed-to-full-size evolution & preset morph pipeline
   resetEvolution(P, { startFromSeed: !capture && !sp.has('growth') && !!P.evolve?.value });
-  resetMorphFromPreset(store.preset || standardPresetNames[0] || 'Amethyst Cathedral');
+  resetMorphFromPreset(store.preset || standardPresetNames[0] || 'Classic Quartz Prism');
 
   let occlusionDriftTime = 0;
   let occlusionManualHold = 0;
@@ -457,14 +472,22 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
 
   function applyPreset(name, seconds, save = true) {
     const all = { ...(presets || {}), ...(store.customPresets || {}) };
-    if (!all[name]) return 0;
-    const evolveOn = !!P.evolve?.value;
+    if (!all[name] && !(name === 'Glacial Ice' && all['Blue Celestite'])) return 0;
     const s = seconds !== undefined ? seconds : (instance?.presetSeconds?.(all[name]) ?? presetSeconds);
     saveOnLanding = save;
     const own = !!instance?.morph;
-    store.applyPreset(name, s, !own && s > 0);
-    if (own && s > 0) instance.morph(s, name);
-    resetMorphFromPreset(name);
+    store.applyPreset(name, s, !own && s > 0, Math.min(s, 1.25));
+    if (own && s > 0) instance.morph(s, store.preset);
+    resetMorphFromPreset(store.preset, 8.0);
+    if (s <= 0) {
+      store.semanticDriftTitle = store.preset || name;
+      cluster.snapToTarget?.(P);
+    } else {
+      cluster.morphHabitFrom = store.glideHabitFrom;
+      cluster.morphHabitTo = store.glideHabitTo;
+      cluster.morphHabitBlend = 0;
+      store.semanticDriftTitle = store.glideFromPreset || store.preset || name;
+    }
     syncPageColour();
     syncHudButtons();
     panel.syncAll();
@@ -563,7 +586,7 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
   function cyclePreset(dir) {
     const names = [...Object.keys(presets || {}), ...Object.keys(store.customPresets || {})];
     if (!names.length) return;
-    const curIdx = names.indexOf(store.preset);
+    const curIdx = names.indexOf(store.preset || names[0]);
     const nextIdx = curIdx < 0 ? 0 : (curIdx + dir + names.length) % names.length;
     applyPreset(names[nextIdx]);
   }
@@ -784,6 +807,23 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
     }
 
     const state = store.tick(dt);
+    if (state === 'moving') {
+      cluster.morphHabitFrom = store.glideHabitFrom;
+      cluster.morphHabitTo = store.glideHabitTo;
+      cluster.morphHabitBlend = store.glideHabitBlend;
+      store.semanticDriftTitle = computeSemanticDriftTitle(
+        store.glideFromPreset,
+        store.glideToPreset,
+        store.glideProgress,
+        0
+      );
+    } else if (state === 'done') {
+      cluster.morphHabitFrom = null;
+      cluster.morphHabitTo = null;
+      cluster.morphHabitBlend = 0;
+      store.semanticDriftTitle = store.preset || store.glideToPreset;
+      resetMorphFromPreset(store.preset || store.glideToPreset, 8.0);
+    }
 
     // 3. Secondary Evolve: gradual parameter morphing across standard presets -> random dice
     if (dt > 0 && state === 'idle' && P.morphPresets?.value) {
@@ -945,6 +985,7 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
     },
     computeComplementaryBg,
     computeDeviceDpr,
+    computeSemanticDriftTitle,
     preset: (name, seconds = 0) => applyPreset(name, seconds),
     randomize: (seconds = 10.0) => doRandomize(seconds),
     growMore: () => growMore(),

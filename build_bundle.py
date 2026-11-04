@@ -30,7 +30,7 @@ MODULES = [
     ),
     ("chrome", "kit/chrome.js", [], ["setupChrome"], None),
     ("loop", "kit/loop.js", [], ["createLoop"], None),
-    ("kit_params", "kit/params.js", ["const { okhslToHex } = __mod_okhsl;"], ["createModel"], None),
+    ("kit_params", "kit/params.js", ["const { hexToOkhsl, okhslToHex } = __mod_okhsl;"], ["createModel"], None),
     (
         "colour_picker",
         "kit/colour-picker.js",
@@ -49,7 +49,7 @@ MODULES = [
         "cluster",
         "cluster.js",
         [],
-        ["MAX_CRYSTALS", "CRYSTAL_PLANES", "PLANES_AT", "ROW_W", "ROWS", "cluster", "buildCluster", "resetEvolution", "stepEvolution"],
+        ["MAX_CRYSTALS", "CRYSTAL_PLANES", "PLANES_AT", "ROW_W", "ROWS", "cluster", "resolveHabitSystem", "buildCluster", "resetEvolution", "stepEvolution"],
         None,
     ),
     (
@@ -57,21 +57,6 @@ MODULES = [
         "sound.js",
         [],
         ["TRACK_ROTATE_SECONDS", "ENSO_REVERB_MODES", "ENSO_DRONE_MODES", "ENSO_WASH_INSTRUMENTS", "SAMPLE_ZONES", "ENSO_TRACKS", "ENSO_TRACK_NAMES", "createEnsoSound"],
-        None,
-    ),
-    (
-        "run",
-        "kit/run.js",
-        [
-            "const { createModel } = __mod_kit_params;",
-            "const { buildPanel } = __mod_panel;",
-            "const { setupChrome } = __mod_chrome;",
-            "const { createLoop } = __mod_loop;",
-            "const { hexToOkhsl, okhslToHex } = __mod_okhsl;",
-            "const { buildCluster, cluster, resetEvolution, stepEvolution } = __mod_cluster;",
-            "const { createEnsoSound } = __mod_sound;",
-        ],
-        ["run"],
         None,
     ),
     ("manifest", "manifest.js", [], [], "__default_manifest"),
@@ -84,8 +69,24 @@ MODULES = [
             "const { okhslToHex } = __mod_okhsl;",
             "const { ENSO_TRACK_NAMES, ENSO_REVERB_MODES, ENSO_DRONE_MODES, ENSO_WASH_INSTRUMENTS } = __mod_sound;",
         ],
-        ["HABITS", "MIRROR_MODES", "presets", "randomize"],
+        ["HABITS", "MIRROR_MODES", "presets", "PRESET_SEMANTIC_DNA", "SEMANTIC_DRIFT_CHAINS", "computeSemanticDriftTitle", "randomize"],
         "__default_params",
+    ),
+    (
+        "run",
+        "kit/run.js",
+        [
+            "const { createModel } = __mod_kit_params;",
+            "const { buildPanel } = __mod_panel;",
+            "const { setupChrome } = __mod_chrome;",
+            "const { createLoop } = __mod_loop;",
+            "const { hexToOkhsl, okhslToHex } = __mod_okhsl;",
+            "const { buildCluster, cluster, resetEvolution, stepEvolution } = __mod_cluster;",
+            "const { createEnsoSound } = __mod_sound;",
+            "const { computeSemanticDriftTitle } = __mod_params;",
+        ],
+        ["run"],
+        None,
     ),
     (
         "shader",
@@ -176,10 +177,16 @@ def main():
   index_path = ROOT / "index.html"
   html = index_path.read_text(encoding="utf-8")
   html = re.sub(r"<title>.*?</title>", "<title>Crystal Transformer</title>", html, count=1)
+  html = re.sub(
+      r'(<span id="preset-name">).*?(</span>)',
+      r"\1Classic Quartz Prism\2",
+      html,
+      count=1,
+  )
   og_block = (
       '  <meta property="og:type" content="website" />\n'
       '  <meta property="og:title" content="Crystal Transformer" />\n'
-      '  <meta property="og:description" content="Real-time WebGL2 crystal cluster ray-tracer with procedural crystal growth, continuous symmetry morphing, and Enso ambient soundscapes." />\n'
+      '  <meta property="og:description" content="Ray traced crystal experiment with procedural growth and generative ambient soundtrack." />\n'
       '  <meta property="og:url" content="https://billtribble.github.io/crystal-transformer/" />\n'
       '  <meta property="og:image" content="https://billtribble.github.io/crystal-transformer/preview.png" />\n'
       '  <meta property="og:image:type" content="image/png" />\n'
@@ -187,7 +194,7 @@ def main():
       '  <meta property="og:image:height" content="1080" />\n'
       '  <meta name="twitter:card" content="summary_large_image" />\n'
       '  <meta name="twitter:title" content="Crystal Transformer" />\n'
-      '  <meta name="twitter:description" content="Real-time WebGL2 crystal cluster ray-tracer with procedural crystal growth, continuous symmetry morphing, and Enso ambient soundscapes." />\n'
+      '  <meta name="twitter:description" content="Ray traced crystal experiment with procedural growth and generative ambient soundtrack." />\n'
       '  <meta name="twitter:image" content="https://billtribble.github.io/crystal-transformer/preview.png" />'
   )
   if 'property="og:image"' not in html:

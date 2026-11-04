@@ -1,6 +1,8 @@
 // The param model: live values for params.js, overrides saved per browser,
 // curated + user-saved custom presets in localStorage, URL state sharing, and smooth morphing.
 
+import { hexToOkhsl, okhslToHex } from './okhsl.js';
+
 function hexToRgb(h, out, scale = 1) {
   const n = parseInt(h.slice(1), 16);
   out[0] = ((n >> 16) & 255) * scale; out[1] = ((n >> 8) & 255) * scale; out[2] = (n & 255) * scale;
@@ -21,10 +23,35 @@ function writeDerived(p) {
   if (p.type === 'color') hexToRgb(String(p.value), p.rgb, 1 / 255);
 }
 
+const LEGACY_HABIT_MAP = {
+  'Quartz Cluster': 'Trigonal',
+  'Cathedral Spire': 'Hexagonal',
+  'Twin Branching': 'Trigonal',
+  'Scepter Overgrowth': 'Trigonal',
+  'Octahedral Fluorite': 'Cubic / Isometric',
+  'Tabular Gem': 'Hexagonal',
+  'Druzy Geode Bowl': 'Trigonal',
+  'Dendritic Starburst': 'Hexagonal',
+  'Cubic': 'Cubic / Isometric',
+  'Isometric': 'Cubic / Isometric',
+};
+
+const LEGACY_PRESET_NAME_MAP = {
+  'Glacial Ice': 'Blue Celestite',
+  'Glacial Ice Dendrite': 'Blue Celestite',
+  'Imperial Zircon (Tetragonal)': 'Imperial Zircon',
+  'Imperial Topaz (Orthorhombic)': 'Imperial Topaz',
+  'Kunzite Spodumene (Monoclinic)': 'Kunzite Spodumene',
+  'Sapphire Kyanite (Triclinic)': 'Sapphire Kyanite',
+};
+
 function coerce(p, v) {
   if (p.type === 'bool') return v === 'false' ? false : v === '0' ? false : !!v;
   if (p.type === 'color') return typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v) ? v.toLowerCase() : p.value;
-  if (p.type === 'select') return typeof v === 'string' && p.options.includes(v) ? v : p.value;
+  if (p.type === 'select') {
+    if (p.key === 'habit' && typeof v === 'string' && LEGACY_HABIT_MAP[v]) v = LEGACY_HABIT_MAP[v];
+    return typeof v === 'string' && p.options.includes(v) ? v : p.value;
+  }
   const n = Number(v);
   return Number.isFinite(n) ? roundTo(n, p.decimals) : p.value;
 }
@@ -38,7 +65,7 @@ function signature(params) {
 
 const CUSTOM_PRESETS_KEY = 'crystals:custom-presets';
 const STICKY_USER_KEYS = new Set([
-  'timeScale', 'defaultZoom', 'evolve', 'evolveSpeed', 'morphPresets', 'morphTime',
+  'timeScale', 'fxaa', 'defaultZoom', 'evolve', 'evolveSpeed', 'morphPresets', 'morphTime',
   'autoGrow', 'growSpeed', 'growth', 'spinStart', 'spin', 'tilt', 'fov',
   'rainbow', 'rainbowGlow', 'bloom', 'faceGlare', 'chipSize', 'edgeGranularity',
   'patinaMacro', 'edgeMacro', 'surfaceMacro', 'edgeIrregularity', 'patina', 'hairlineFractures',
@@ -86,10 +113,6 @@ export function createModel(schema, storageKey, presets = {}) {
   }
 
   const sig = signature(params);
-  const prevRainbowSig = signature(params.filter((p) => p.key !== 'rainbowGlow').map((p) => (p.key === 'rainbow' ? { key: p.key, default: 1 } : p)));
-  const prevRainbow01Sig = signature(params.filter((p) => p.key !== 'rainbowGlow'));
-  const prevRainbowGlow05Sig = signature(params.map((p) => (p.key === 'rainbowGlow' ? { key: p.key, default: 0.5 } : p)));
-  const prevRainbowGlow10Sig = signature(params.map((p) => (p.key === 'rainbowGlow' ? { key: p.key, default: 1 } : p)));
   let saveTimer = 0;
   let preset = '';
   let held = null;
@@ -97,6 +120,11 @@ export function createModel(schema, storageKey, presets = {}) {
 
   let glides = [];
   let glideT = 0, glideLen = 0;
+  let glideFromPreset = Object.keys(presets || {})[0] || 'Classic Quartz Prism';
+  let glideToPreset = glideFromPreset;
+  let glideHabitFrom = null;
+  let glideHabitTo = null;
+  let glideHabitBlend = 0;
 
   // Load user-saved custom presets from localStorage
   let customPresets = {};
@@ -213,10 +241,13 @@ export function createModel(schema, storageKey, presets = {}) {
         } catch { /* storage unavailable */ }
       }, 250);
     },
-    applyValues(values, seconds = 0.6, presetName = '', glideNumbers = true) {
+    applyValues(values, seconds = 0.6, presetName = '', glideNumbers = true, colorSeconds = null) {
       if (!values) return;
       store.setBypass(false);
+      const prevPreset = preset || Object.keys(presets || {})[0] || 'Classic Quartz Prism';
       preset = presetName;
+      glideFromPreset = prevPreset;
+      glideToPreset = presetName || prevPreset;
       const resolveTarget = (p) => {
         if (p.key === 'bloom' || p.noPreset || p.randomize === false) return p.value;
         if (values[p.key] !== undefined) return values[p.key];
@@ -232,11 +263,26 @@ export function createModel(schema, storageKey, presets = {}) {
         p.base = coerce(p, resolveTarget(p));
       }
       glides = [];
+      glideHabitFrom = byKey.habit ? String(byKey.habit.value) : 'Trigonal';
+      glideHabitTo = byKey.habit ? coerce(byKey.habit, resolveTarget(byKey.habit)) : glideHabitFrom;
+      glideHabitBlend = (seconds > 0 && glideNumbers) ? 0 : 1;
+
+      // When manually skipping through presets, allow colors to transition faster (~1.25s) while geometry
+      // completes a smooth single-stage glide over `seconds` (post-015529, post-015539).
+      const fastColorDur = colorSeconds !== null
+        ? Math.max(1e-3, colorSeconds)
+        : Math.max(1e-3, Math.min(seconds, 1.25));
+
       for (const p of params) {
         if (p.key === 'renderScale' || p.key === 'targetFps' || p.key === 'maxFps' || p.key === 'maxDpr' || p.key === 'bloom' || p.noPreset) continue;
         if (STICKY_USER_KEYS.has(p.key) && values[p.key] === undefined) continue;
         if (p.key === 'seed' && seconds > 0 && glideNumbers) continue;
         const to = coerce(p, resolveTarget(p));
+        if (p.key === 'habit' && seconds > 0 && glideNumbers) {
+          // Do NOT snap habit at t=0; blend habit planes & repulsion continuously in 1 stage via glideHabitBlend!
+          glides.push({ p, isHabit: true, from: glideHabitFrom, to });
+          continue;
+        }
         if (seconds <= 0 || p.type === 'select' || p.type === 'bool' || p.key === 'seed' || (p.type !== 'color' && !glideNumbers)) {
           assign(p, to);
           continue;
@@ -244,19 +290,23 @@ export function createModel(schema, storageKey, presets = {}) {
         if (p.type === 'color') {
           const a = [0, 0, 0], b = [0, 0, 0];
           hexToRgb(String(p.value), a); hexToRgb(String(to), b);
-          glides.push({ p, from: 0, to: 1, rgbFrom: a, rgbTo: b });
+          const h0 = hexToOkhsl(String(p.value));
+          const h1 = hexToOkhsl(String(to));
+          glides.push({ p, from: 0, to: 1, rgbFrom: a, rgbTo: b, okhslFrom: h0, okhslTo: h1, dur: fastColorDur });
         } else if (Number(p.value) !== Number(to)) {
-          glides.push({ p, from: Number(p.value), to: Number(to) });
+          glides.push({ p, from: Number(p.value), to: Number(to), dur: seconds });
         }
       }
       glideT = 0;
       glideLen = Math.max(seconds, 1e-3);
     },
-    applyPreset(name, seconds = 0.65, glideNumbers = true) {
-      const resolvedName = (name === 'Glacial Ice Dendrite' && presets?.['Glacial Ice']) ? 'Glacial Ice' : name;
+    applyPreset(name, seconds = 0.65, glideNumbers = true, colorSeconds = null) {
+      const resolvedName = (LEGACY_PRESET_NAME_MAP[name] && presets?.[LEGACY_PRESET_NAME_MAP[name]])
+        ? LEGACY_PRESET_NAME_MAP[name]
+        : name;
       const values = customPresets[resolvedName] || presets?.[resolvedName];
       if (!values) return;
-      store.applyValues(values, seconds, resolvedName, glideNumbers);
+      store.applyValues(values, seconds, resolvedName, glideNumbers, colorSeconds);
     },
     randomize(customRandomizer, seconds = 10.0) {
       const next = typeof customRandomizer === 'function' ? { ...customRandomizer(store) } : {};
@@ -268,13 +318,18 @@ export function createModel(schema, storageKey, presets = {}) {
           delete next[p.key];
         }
       }
-      store.applyValues(next, seconds, 'Randomized', seconds > 0);
+      store.applyValues(next, seconds, 'Randomized', seconds > 0, Math.min(seconds, 2.2));
       return next;
     },
     get gliding() { return glides.length > 0; },
     get glideElapsed() { return glideT; },
     get glideDuration() { return glideLen; },
     get glideProgress() { return glideLen > 0 ? Math.min(1, glideT / glideLen) : 0; },
+    get glideFromPreset() { return glideFromPreset; },
+    get glideToPreset() { return glideToPreset; },
+    get glideHabitFrom() { return glideHabitFrom; },
+    get glideHabitTo() { return glideHabitTo; },
+    get glideHabitBlend() { return glideHabitBlend; },
     saveCustomPreset(name) {
       const clean = String(name || '').trim();
       if (!clean) return null;
@@ -369,20 +424,41 @@ export function createModel(schema, storageKey, presets = {}) {
       glideT = Math.min(glideLen, glideT + dt);
       const done = glideT >= glideLen;
       const k = easeInOut(glideT / glideLen);
+      glideHabitBlend = done ? 1 : k;
       for (const g of glides) {
+        if (g.isHabit) {
+          if (done) assign(g.p, g.to);
+          continue;
+        }
+        const gDur = g.dur || glideLen;
+        const gk = done || glideT >= gDur ? 1 : easeInOut(glideT / gDur);
         if (g.rgbFrom && g.rgbTo) {
-          const a = g.rgbFrom, b = g.rgbTo;
-          const r = a[0] + (b[0] - a[0]) * k, gr = a[1] + (b[1] - a[1]) * k, bl = a[2] + (b[2] - a[2]) * k;
-          if (done) assign(g.p, rgbToHex(r, gr, bl));
-          else assignSmooth(g.p, null, [r / 255, gr / 255, bl / 255]);
-        } else if (done) {
+          const h0 = g.okhslFrom, h1 = g.okhslTo;
+          if (done || glideT >= gDur) {
+            const b = g.rgbTo;
+            assign(g.p, rgbToHex(b[0], b[1], b[2]));
+          } else if (h0 && h1 && Number.isFinite(h0.h) && Number.isFinite(h1.h) && h0.s > 0.12 && h1.s > 0.12) {
+            const dh = ((h1.h - h0.h + 1.5) % 1) - 0.5;
+            const h = (h0.h + dh * gk + 1) % 1;
+            const s = h0.s + (h1.s - h0.s) * gk;
+            const l = h0.l + (h1.l - h0.l) * gk;
+            assignSmooth(g.p, okhslToHex(h, s, l));
+          } else {
+            const a = g.rgbFrom, b = g.rgbTo;
+            const r = a[0] + (b[0] - a[0]) * gk, gr = a[1] + (b[1] - a[1]) * gk, bl = a[2] + (b[2] - a[2]) * gk;
+            assignSmooth(g.p, null, [r / 255, gr / 255, bl / 255]);
+          }
+        } else if (done || glideT >= gDur) {
           assign(g.p, g.to);
         } else {
-          assignSmooth(g.p, g.from + (g.to - g.from) * k);
+          assignSmooth(g.p, g.from + (g.to - g.from) * gk);
         }
       }
       if (!done) return 'moving';
       glides = [];
+      glideHabitFrom = null;
+      glideHabitTo = null;
+      glideHabitBlend = 0;
       return 'done';
     },
     clearSaved() {
@@ -395,7 +471,10 @@ export function createModel(schema, storageKey, presets = {}) {
   if (storageKey) {
     try {
       const saved = JSON.parse(localStorage.getItem(storageKey) || 'null');
-      if (saved && (saved.sig === sig || saved.sig === prevRainbowSig || saved.sig === prevRainbow01Sig || saved.sig === prevRainbowGlow05Sig || saved.sig === prevRainbowGlow10Sig)) {
+      if (saved && typeof saved === 'object' && saved.values) {
+        if (typeof saved.preset === 'string' && LEGACY_PRESET_NAME_MAP[saved.preset]) {
+          saved.preset = LEGACY_PRESET_NAME_MAP[saved.preset];
+        }
         for (const k in saved.values) if (byKey[k]) assign(byKey[k], saved.values[k]);
         for (const k in saved.bases || {}) if (byKey[k]) byKey[k].base = coerce(byKey[k], saved.bases[k]);
         for (const k in saved.ranges || {}) {
@@ -403,51 +482,44 @@ export function createModel(schema, storageKey, presets = {}) {
           if (byKey[k] && Array.isArray(r) && Number.isFinite(r[0]) && Number.isFinite(r[1]) && r[0] < r[1]) [byKey[k].min, byKey[k].max] = r;
         }
         if (typeof saved.preset === 'string' && (customPresets[saved.preset] || presets?.[saved.preset])) preset = saved.preset;
-        if (saved.sig !== sig) {
-          saved.sig = sig;
-          try { localStorage.setItem(storageKey, JSON.stringify(saved)); } catch { /* ignore */ }
-        }
       }
       if (saved && saved.values) {
-        if ((saved.values.rainbow === 1 || Number(saved.values.rainbow) === 1) && byKey.rainbow) {
-          assign(byKey.rainbow, 0.1);
-          byKey.rainbow.base = 0.1;
-          delete saved.values.rainbow;
-          if (saved.bases) delete saved.bases.rainbow;
-          saved.sig = sig;
-          try { localStorage.setItem(storageKey, JSON.stringify(saved)); } catch { /* ignore */ }
-        }
-        if ((saved.values.rainbowGlow === 0.5 || Number(saved.values.rainbowGlow) === 0.5 || saved.values.rainbowGlow === 1 || Number(saved.values.rainbowGlow) === 1) && byKey.rainbowGlow) {
-          assign(byKey.rainbowGlow, 1.3);
-          byKey.rainbowGlow.base = 1.3;
-          delete saved.values.rainbowGlow;
-          if (saved.bases) delete saved.bases.rainbowGlow;
-          saved.sig = sig;
-          try { localStorage.setItem(storageKey, JSON.stringify(saved)); } catch { /* ignore */ }
-        }
-        if (saved.values.chipSize === 0.55 && byKey.chipSize) {
-          assign(byKey.chipSize, 1.5);
-          byKey.chipSize.base = 1.5;
-        }
-        if (saved.values.edgeGranularity === 1.65 && byKey.edgeGranularity) {
-          assign(byKey.edgeGranularity, 1.4);
-          byKey.edgeGranularity.base = 1.4;
-        }
-        if ((saved.values.iridescence === 0.38 || saved.values.iridescence === 0.22 || saved.values.iridescence === 0.29 || saved.values.iridescence === 0.46 || saved.values.iridescence === 0.14 || saved.values.iridescence === 0.42) && byKey.iridescence) {
-          const pDef = presets?.[preset]?.iridescence ?? 0.35;
-          assign(byKey.iridescence, pDef);
-          byKey.iridescence.base = pDef;
-        }
-        if (preset && presets?.[preset]) {
-          for (const rk of ['fire', 'fractures', 'fractureGlow', 'phantom', 'phantomRate', 'phantomLayers', 'frostShare', 'frost']) {
-            if (presets[preset][rk] !== undefined && byKey[rk]) {
-              assign(byKey[rk], presets[preset][rk]);
-              byKey[rk].base = presets[preset][rk];
+        let migrated = saved.sig !== sig;
+        if (migrated) {
+          const activePresetName = preset || Object.keys(presets || {})[0] || 'Classic Quartz Prism';
+          const pTarget = presets?.[activePresetName];
+          if (pTarget) {
+            for (const rk of [
+              'habit', 'crystals', 'fan', 'crossAt', 'lengthJitter', 'thickness', 'tipAngle', 'cavityCurve',
+              'hopper', 'phantom', 'phantomRate', 'phantomLayers', 'milk', 'milkBase', 'veils',
+              'frostShare', 'frost', 'striations', 'striationScale', 'edgeChips', 'edgeWear',
+              'stoneColour', 'colourDepth', 'colourZoning', 'biColour', 'coreColour',
+              'fire', 'fractures', 'fractureGlow', 'ditherBlend', 'glimmer', 'iridescence', 'flash',
+            ]) {
+              if (pTarget[rk] !== undefined && byKey[rk]) {
+                assign(byKey[rk], pTarget[rk]);
+                byKey[rk].base = byKey[rk].value;
+                delete saved.values[rk];
+                if (saved.bases) delete saved.bases[rk];
+              }
+            }
+          }
+          for (const mk of ['edgeMacro', 'surfaceMacro', 'edgeIrregularity', 'patina', 'hairlineFractures', 'chipSize', 'edgeGranularity']) {
+            if (byKey[mk]) {
+              assign(byKey[mk], byKey[mk].default);
+              byKey[mk].base = byKey[mk].default;
+              delete saved.values[mk];
+              if (saved.bases) delete saved.bases[mk];
             }
           }
         }
+        if (migrated) {
+          saved.sig = sig;
+          try { localStorage.setItem(storageKey, JSON.stringify(saved)); } catch { /* ignore */ }
+        }
       }
       if (byKey.chipSize && byKey.chipSize.max < 3.0) byKey.chipSize.max = 3.0;
+      if (byKey.edgeGranularity && byKey.edgeGranularity.max < 3.0) byKey.edgeGranularity.max = 3.0;
       if (byKey.iridescence && byKey.iridescence.max < 3.0) byKey.iridescence.max = 3.0;
     } catch { /* storage unavailable — run on defaults */ }
   }

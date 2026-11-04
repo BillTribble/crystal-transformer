@@ -115,12 +115,11 @@ const POLY_V = new Float64Array(3 * 816);
  * Enumerates the exact vertices of crystal `rowIdx` (the intersection of its active half-spaces
  * 0..17, skipping the parked far-away slots above `nSym`) into POLY_V and returns the count.
  */
-function enumerateCrystalVertices(rowIdx, nSym) {
+function enumerateCrystalVertices(rowIdx) {
   const base = (rowIdx * ROW_W + PLANES_AT) * 4;
   const d = cluster.data;
   let n = 0;
   for (let k = 0; k < 18; k++) {
-    if ((k < 8 && k > nSym) || (k >= 8 && k < 16 && k - 8 > nSym)) continue;
     const o = base + k * 4;
     POLY_N[n * 3] = d[o]; POLY_N[n * 3 + 1] = d[o + 1]; POLY_N[n * 3 + 2] = d[o + 2];
     POLY_W[n] = d[o + 3];
@@ -249,21 +248,394 @@ function buildSideBasis(twistAngle) {
   sz[2] = ax[0] * sx[1] - ax[1] * sx[0];
 }
 
+export function resolveHabitSystem(habit) {
+  const h = String(habit || 'Trigonal');
+  if (h.startsWith('Cubic') || h.startsWith('Isometric') || h === 'Octahedral Fluorite') return 'Cubic / Isometric';
+  if (h.startsWith('Hexagonal') || h === 'Cathedral Spire' || h === 'Tabular Gem' || h === 'Dendritic Starburst') return 'Hexagonal';
+  if (h.startsWith('Tetragonal')) return 'Tetragonal';
+  if (h.startsWith('Orthorhombic')) return 'Orthorhombic';
+  if (h.startsWith('Monoclinic')) return 'Monoclinic';
+  if (h.startsWith('Triclinic')) return 'Triclinic';
+  return 'Trigonal';
+}
+
 function primaryCountFor(n, habit, twinShare) {
+  const sys = resolveHabitSystem(habit);
   let nPrimary = n;
   if (n > 2) {
-    if (habit === 'Scepter Overgrowth') {
-      nPrimary = Math.max(1, Math.ceil(n * 0.55));
-    } else if (habit === 'Twin Branching') {
-      nPrimary = Math.max(1, Math.round(n * (1 - 0.58 * Math.max(0.35, twinShare))));
-    } else if (habit === 'Dendritic Starburst') {
-      nPrimary = Math.min(n, 7);
+    if (sys === 'Cubic / Isometric') {
+      nPrimary = Math.max(2, Math.round(n * 0.72));
+    } else if (sys === 'Monoclinic' || sys === 'Triclinic') {
+      nPrimary = Math.max(2, Math.round(n * (1 - 0.38 * twinShare)));
     } else if (twinShare > 0.02) {
       nPrimary = Math.max(1, Math.round(n * (1 - 0.45 * twinShare)));
     }
   }
   return nPrimary;
 }
+
+/**
+ * Magnetic overlap repulsion weight by crystal system (post-015442, post-015454):
+ * - Normal prismatic crystals (Trigonal & Hexagonal: Classic Quartz Prism, Amethyst Cathedral,
+ *   Rutilated Smoky Scepter, Glacial Ice, Emerald, Tourmaline, Ruby Druzy, Aquamarine) = 0.0
+ *   so their shared radiating cluster base is 100% untouched.
+ * - Cubic / Isometric (Diamond) = 1.0 so equant octahedra don't clump concentric at the origin.
+ * - Chunky non-hexagonal systems (Tetragonal, Orthorhombic, Monoclinic, Triclinic) = 0.50..0.62
+ *   so heavily overlapping polyhedra push apart cleanly when sitting on top of each other.
+ */
+function habitRepelWeight(habit) {
+  const sys = resolveHabitSystem(habit);
+  if (sys === 'Cubic / Isometric') return 1.0;
+  if (sys === 'Tetragonal' || sys === 'Orthorhombic') return 0.62;
+  if (sys === 'Monoclinic' || sys === 'Triclinic') return 0.50;
+  return 0.0;
+}
+
+const activeNodes = new Array(MAX_CRYSTALS);
+const initRootX = new Float32Array(MAX_CRYSTALS);
+const initRootY = new Float32Array(MAX_CRYSTALS);
+const initRootZ = new Float32Array(MAX_CRYSTALS);
+
+function setLocalPlane(outLx, outLy, outLz, outOffR, outOffL, k, lx, ly, lz, offR, offL) {
+  const inv = 1 / (Math.hypot(lx, ly, lz) || 1);
+  outLx[k] = lx * inv;
+  outLy[k] = ly * inv;
+  outLz[k] = lz * inv;
+  outOffR[k] = offR;
+  outOffL[k] = offL;
+}
+
+/**
+ * Computes the 18 primary crystallographic half-space planes (k = 0..17) in the crystal's
+ * local (sx, ax, sz) coordinate frame for any of the 7 crystallographic crystal systems:
+ *   1. Trigonal (3-fold rhombohedral r{10-11}/z{01-11} & ditrigonal/hexagonal prism)
+ *   2. Cubic / Isometric (a = b = c, alpha = beta = gamma = 90°: octahedron {111} + cube {100} + dodecahedron {110})
+ *   3. Hexagonal (6-fold c-axis, gamma = 120°: equal 6-sided prism {10-10} + flat {0001} pinacoid + {10-11} bipyramid)
+ *   4. Tetragonal (4-fold c-axis, a = b != c, 90°: square prism {100}/{110} + steep bipyramid {101}/{211})
+ *   5. Orthorhombic (a != b != c, alpha = beta = gamma = 90°: unequal rhombic prism {110}+{100}+{010} + chisel domes {101}/{011})
+ *   6. Monoclinic (a != b != c, alpha = gamma = 90°, beta != 90°: flattened lath prism + obliquely slanted {001} & clinodomes)
+ *   7. Triclinic (a != b != c, alpha != beta != gamma != 90°: non-90° skewed bladed prism + doubly-oblique asymmetric wedge)
+ */
+function computeSystemPlanes(
+  habit, symVal, taperLy, latScale, nodeTilt, chamfer, dom, faceJitterAmt, tipJitterAmt, fs, L, r,
+  outLx, outLy, outLz, outOffR, outOffL
+) {
+  const sys = resolveHabitSystem(habit);
+  const fVar = (k, scale = 0.35) => Math.max(0.55, Math.min(1.45, 1 + faceJitterAmt * scale * fs[k]));
+  const tVar = (k, scale = 0.28) => tipJitterAmt * scale * fs[8 + k];
+
+  if (sys === 'Cubic / Isometric') {
+    // Equant isometric polyhedron (a = b = c, alpha = beta = gamma = 90°) centered at y = 0.52 * L
+    const isoScale = Math.max(1.18, Math.min(2.25, (0.34 * L) / Math.max(r, 1e-4)));
+    const cosOct = 0.57735027; // 1 / sqrt(3)
+    const sinOct = 0.81649658; // sqrt(2 / 3)
+    const cos45 = 0.70710678;
+    const cubeDist = isoScale * Math.max(0.96, 1.38 - 0.52 * chamfer);
+    const dodDist = isoScale * Math.max(1.02, 1.24 - 0.24 * chamfer);
+    for (let m = 0; m < 4; m++) {
+      const aCube = m * 0.5 * Math.PI; // 0, 90, 180, 270 deg: vertical {100}/{001} cube faces
+      const kCube = m * 2;
+      setLocalPlane(
+        outLx, outLy, outLz, outOffR, outOffL, kCube,
+        Math.cos(aCube), 0, Math.sin(aCube),
+        cubeDist * fVar(kCube, 0.14), 0
+      );
+      const aOct = (m + 0.5) * 0.5 * Math.PI; // 45, 135, 225, 315 deg: octahedral {111} faces
+      const kBotOct = m * 2 + 1;
+      const dBot = isoScale * (1 + 0.10 * tipJitterAmt * fs[kBotOct]);
+      setLocalPlane(
+        outLx, outLy, outLz, outOffR, outOffL, kBotOct,
+        sinOct * Math.cos(aOct), -cosOct, sinOct * Math.sin(aOct),
+        dBot, -0.52 * cosOct
+      );
+      const kTopOct = 8 + m * 2;
+      const dTop = isoScale * (1 + 0.10 * tipJitterAmt * fs[kTopOct]);
+      setLocalPlane(
+        outLx, outLy, outLz, outOffR, outOffL, kTopOct,
+        sinOct * Math.cos(aOct), cosOct, sinOct * Math.sin(aOct),
+        dTop, 0.52 * cosOct
+      );
+      const kDod = 8 + m * 2 + 1; // {110} rhombic dodecahedral bevels
+      setLocalPlane(
+        outLx, outLy, outLz, outOffR, outOffL, kDod,
+        cos45 * Math.cos(aCube), cos45, cos45 * Math.sin(aCube),
+        dodDist * fVar(kDod, 0.12), 0.52 * cos45
+      );
+    }
+    setLocalPlane(outLx, outLy, outLz, outOffR, outOffL, 16, 0, -1, 0, cubeDist, -0.52);
+    setLocalPlane(outLx, outLy, outLz, outOffR, outOffL, 17, 0, 1, 0, cubeDist, 0.52);
+    return;
+  }
+
+  if (sys === 'Hexagonal') {
+    // 6-fold hexagonal prism {10-10} + prominent flat {0001} basal pinacoid + 6 equal {10-11} bipyramid bevels
+    const hexTaper = taperLy * 0.45;
+    const hexLat = Math.sqrt(Math.max(0.1, 1 - hexTaper * hexTaper));
+    for (let k = 0; k < 6; k++) {
+      const a = (k * TAU) / 6;
+      const radR = 1.0 * fVar(k, 0.20);
+      setLocalPlane(
+        outLx, outLy, outLz, outOffR, outOffL, k,
+        hexLat * Math.cos(a), hexTaper, hexLat * Math.sin(a),
+        radR, 0.5 * hexTaper
+      );
+    }
+    // Dihexagonal {11-20} accessory bevels at 30° and 210°
+    for (let m = 0; m < 2; m++) {
+      const k = 6 + m;
+      const a = (m * Math.PI) + Math.PI / 6;
+      setLocalPlane(
+        outLx, outLy, outLz, outOffR, outOffL, k,
+        hexLat * Math.cos(a), hexTaper, hexLat * Math.sin(a),
+        (1.20 - 0.12 * chamfer) * fVar(k, 0.15), 0.5 * hexTaper
+      );
+    }
+    const bipTilt = Math.max(30 * DEG, Math.min(58 * DEG, nodeTilt * 0.78));
+    const cosB = Math.cos(bipTilt), sinB = Math.sin(bipTilt);
+    const tableH = Math.max(0.68, 0.84 - 0.22 * chamfer);
+    for (let j = 0; j < 6; j++) {
+      const a = (j * TAU) / 6;
+      const offR = (0.34 - 0.16 * chamfer) * sinB + tVar(j, 0.16);
+      setLocalPlane(
+        outLx, outLy, outLz, outOffR, outOffL, 8 + j,
+        sinB * Math.cos(a), cosB, sinB * Math.sin(a),
+        offR, tableH * cosB
+      );
+    }
+    const bip2Tilt = Math.min(68 * DEG, bipTilt + 9 * DEG);
+    const cosB2 = Math.cos(bip2Tilt), sinB2 = Math.sin(bip2Tilt);
+    for (let m = 0; m < 2; m++) {
+      const a = (m * Math.PI) + Math.PI / 6;
+      setLocalPlane(
+        outLx, outLy, outLz, outOffR, outOffL, 14 + m,
+        sinB2 * Math.cos(a), cosB2, sinB2 * Math.sin(a),
+        0.48 * sinB2, tableH * cosB2
+      );
+    }
+    setLocalPlane(outLx, outLy, outLz, outOffR, outOffL, 16, 0, -1, 0, 0.04, 0);
+    setLocalPlane(outLx, outLy, outLz, outOffR, outOffL, 17, 0, 1, 0, 0, tableH);
+    return;
+  }
+
+  if (sys === 'Tetragonal') {
+    // 4-fold c-axis symmetry (a = b != c, alpha = beta = gamma = 90°): square {100} prism + {110} corner chamfers + {101}/{211} bipyramid
+    const cornerChamfer = 1.14 - 0.22 * chamfer;
+    for (let k = 0; k < 8; k++) {
+      const a = (k * TAU) / 8; // 0, 45, 90, 135, 180, 225, 270, 315 deg
+      const isCorner = (k & 1) === 1;
+      const baseR = isCorner ? cornerChamfer : 0.90;
+      setLocalPlane(
+        outLx, outLy, outLz, outOffR, outOffL, k,
+        latScale * Math.cos(a), taperLy, latScale * Math.sin(a),
+        baseR * fVar(k, 0.16), 0.5 * taperLy
+      );
+    }
+    const t101 = Math.max(38 * DEG, Math.min(66 * DEG, nodeTilt));
+    const c101 = Math.cos(t101), s101 = Math.sin(t101);
+    const t211 = Math.min(78 * DEG, t101 + 12 * DEG);
+    const c211 = Math.cos(t211), s211 = Math.sin(t211);
+    for (let j = 0; j < 8; j++) {
+      const a = (j * TAU) / 8;
+      const isSecondOrder = (j & 1) === 1;
+      const ct = isSecondOrder ? c211 : c101;
+      const st = isSecondOrder ? s211 : s101;
+      const offR = (isSecondOrder ? (0.30 - 0.16 * chamfer) : 0.06) + tVar(j, 0.18);
+      setLocalPlane(
+        outLx, outLy, outLz, outOffR, outOffL, 8 + j,
+        st * Math.cos(a), ct, st * Math.sin(a),
+        offR, ct
+      );
+    }
+    setLocalPlane(outLx, outLy, outLz, outOffR, outOffL, 16, 0, -1, 0, 0.05, 0);
+    setLocalPlane(outLx, outLy, outLz, outOffR, outOffL, 17, 0, 1, 0, 0, Math.max(0.76, 1.08 - 0.42 * chamfer));
+    return;
+  }
+
+  if (sys === 'Orthorhombic') {
+    // 3 mutually perpendicular unequal axes (a != b != c, alpha = beta = gamma = 90°):
+    // Short a-axis (0.68 r) along sx, wide b-axis (1.36 r) along sz, rhombic prism {110} + macrodomes {101} & brachydomes {011}
+    const orthoAz = [0, 31 * DEG, 90 * DEG, 149 * DEG, 180 * DEG, 211 * DEG, 270 * DEG, 329 * DEG];
+    const orthoRadii = [0.70, 0.82, 1.34, 0.82, 0.70, 0.82, 1.34, 0.82];
+    for (let k = 0; k < 8; k++) {
+      const a = orthoAz[k];
+      setLocalPlane(
+        outLx, outLy, outLz, outOffR, outOffL, k,
+        latScale * Math.cos(a), taperLy, latScale * Math.sin(a),
+        orthoRadii[k] * fVar(k, 0.18), 0.5 * taperLy
+      );
+    }
+    const tMacro = Math.min(76 * DEG, nodeTilt + 10 * DEG); // Steep macrodome {101} at 0°, 180°
+    const tBrachy = Math.max(28 * DEG, nodeTilt - 16 * DEG); // Shallow chisel brachydome {011} at 90°, 270°
+    const tBip = nodeTilt; // Rhombic bipyramid {111} at corners
+    for (let j = 0; j < 8; j++) {
+      const a = orthoAz[j];
+      let tj = tBip;
+      let baseOffR = 0.18 - 0.12 * chamfer;
+      if (j === 0 || j === 4) {
+        tj = tMacro;
+        baseOffR = 0.04;
+      } else if (j === 2 || j === 6) {
+        tj = tBrachy;
+        baseOffR = 0.14;
+      }
+      const ct = Math.cos(tj), st = Math.sin(tj);
+      setLocalPlane(
+        outLx, outLy, outLz, outOffR, outOffL, 8 + j,
+        st * Math.cos(a), ct, st * Math.sin(a),
+        baseOffR + tVar(j, 0.18), ct
+      );
+    }
+    setLocalPlane(outLx, outLy, outLz, outOffR, outOffL, 16, 0, -1, 0, 0.04, 0);
+    setLocalPlane(outLx, outLy, outLz, outOffR, outOffL, 17, 0, 1, 0, 0, Math.max(0.74, 0.98 - 0.34 * chamfer));
+    return;
+  }
+
+  if (sys === 'Monoclinic') {
+    // 1 oblique inclined clino-axis (a != b != c, alpha = gamma = 90°, beta ≈ 116° != 90°):
+    // Flattened lath prism + obliquely slanted {001} termination & forward-sheared clinodomes {011}
+    const monoAz = [0, 38 * DEG, 90 * DEG, 142 * DEG, 180 * DEG, 218 * DEG, 270 * DEG, 322 * DEG];
+    const monoRadii = [0.60, 0.82, 1.38, 0.82, 0.60, 0.82, 1.38, 0.82];
+    for (let k = 0; k < 8; k++) {
+      const a = monoAz[k];
+      setLocalPlane(
+        outLx, outLy, outLz, outOffR, outOffL, k,
+        latScale * Math.cos(a), taperLy, latScale * Math.sin(a),
+        monoRadii[k] * fVar(k, 0.20), 0.5 * taperLy
+      );
+    }
+    const betaShear = 0.44; // sin(26°) monoclinic inclination along +sx (clino-axis a)
+    for (let j = 0; j < 8; j++) {
+      const a = monoAz[j];
+      const isBack = Math.cos(a) < -0.15;
+      const tj = isBack ? Math.max(26 * DEG, nodeTilt - 18 * DEG) : Math.min(72 * DEG, nodeTilt + 6 * DEG);
+      const ct = Math.cos(tj), st = Math.sin(tj);
+      const lx = st * Math.cos(a) + betaShear * ct;
+      const ly = ct;
+      const lz = st * Math.sin(a);
+      const inv = 1 / (Math.hypot(lx, ly, lz) || 1);
+      const normLy = ly * inv;
+      const offR = (isBack ? 0.28 : 0.12) + tVar(j, 0.20);
+      setLocalPlane(
+        outLx, outLy, outLz, outOffR, outOffL, 8 + j,
+        lx * inv, normLy, lz * inv,
+        offR, 0.90 * normLy
+      );
+    }
+    // Lower & upper basal pinacoids {00-1} and {001} slanted at beta = 116° in the sx-ax plane (lz = 0 since alpha = gamma = 90°)
+    const sinBeta = Math.sin(26 * DEG), cosBeta = Math.cos(26 * DEG);
+    setLocalPlane(outLx, outLy, outLz, outOffR, outOffL, 16, -sinBeta * 0.75, -cosBeta, 0, 0.28, 0);
+    const monoTopH = Math.max(0.68, 0.84 - 0.18 * chamfer);
+    setLocalPlane(outLx, outLy, outLz, outOffR, outOffL, 17, sinBeta, cosBeta, 0, 0.08, monoTopH * cosBeta);
+    return;
+  }
+
+  if (sys === 'Triclinic') {
+    // All 3 axes and all 3 interaxial angles unequal & non-90° (a != b != c, alpha ≈ 72°, beta ≈ 108°, gamma ≈ 70°):
+    // Skewed non-orthogonal parallelogram bladed prism + doubly-inclined asymmetric wedge termination
+    const tricAz = [0, 34 * DEG, 70 * DEG, 128 * DEG, 180 * DEG, 214 * DEG, 250 * DEG, 308 * DEG];
+    const tricRadii = [0.52, 0.78, 1.42, 1.06, 0.52, 0.78, 1.42, 1.06];
+    const tricLySkew = [0.09, 0.08, 0.12, -0.07, -0.09, -0.08, -0.12, 0.07];
+    for (let k = 0; k < 8; k++) {
+      const a = tricAz[k];
+      const ly = taperLy + tricLySkew[k];
+      const ls = Math.sqrt(Math.max(0.1, 1 - ly * ly));
+      setLocalPlane(
+        outLx, outLy, outLz, outOffR, outOffL, k,
+        ls * Math.cos(a), ly, ls * Math.sin(a),
+        tricRadii[k] * fVar(k, 0.22), 0.5 * ly
+      );
+    }
+    const tricTiltOffsets = [8, -2, -14, 12, -18, -6, 6, -10];
+    for (let j = 0; j < 8; j++) {
+      const a = tricAz[j];
+      const tj = Math.max(26 * DEG, Math.min(74 * DEG, nodeTilt + tricTiltOffsets[j] * DEG));
+      const ct = Math.cos(tj), st = Math.sin(tj);
+      // Doubly-oblique shear in both +sx (beta != 90°) and +sz (alpha != 90°)
+      const lx = st * Math.cos(a) + 0.30 * ct;
+      const ly = ct;
+      const lz = st * Math.sin(a) + 0.26 * ct;
+      const inv = 1 / (Math.hypot(lx, ly, lz) || 1);
+      const normLy = ly * inv;
+      const offR = 0.14 + 0.06 * (j % 3) + tVar(j, 0.22);
+      setLocalPlane(
+        outLx, outLy, outLz, outOffR, outOffL, 8 + j,
+        lx * inv, normLy, lz * inv,
+        offR, 0.88 * normLy
+      );
+    }
+    // Doubly-inclined basal pinacoids {00-1} and {001} (non-zero lx AND non-zero lz)
+    setLocalPlane(outLx, outLy, outLz, outOffR, outOffL, 16, -0.34, -0.88, -0.33, 0.32, 0);
+    const tricTopH = Math.max(0.66, 0.82 - 0.18 * chamfer);
+    setLocalPlane(outLx, outLy, outLz, outOffR, outOffL, 17, 0.38, 0.84, 0.39, 0.10, tricTopH * 0.84);
+    return;
+  }
+
+  // Default: Trigonal (Rhombohedral — 3-fold c-axis symmetry, e.g. Quartz, Corundum, Tourmaline)
+  // Smoothly blends between 3-sided rounded ditrigonal Tourmaline prism (symVal ≈ 3) and 6-sided Quartz prism (symVal ≈ 6)
+  const triRound = smooth01(Math.max(0, Math.min(1, (4.8 - symVal) / 1.5)));
+  for (let k = 0; k < 6; k++) {
+    const a = (k * TAU) / 6;
+    const isMinorPrism = (k & 1) === 1;
+    const baseR = isMinorPrism
+      ? (1.0 + 0.16 * triRound + 0.04 * dom)
+      : (1.0 - 0.16 * triRound - 0.04 * dom);
+    setLocalPlane(
+      outLx, outLy, outLz, outOffR, outOffL, k,
+      latScale * Math.cos(a), taperLy, latScale * Math.sin(a),
+      baseR * fVar(k, 0.35), 0.5 * taperLy
+    );
+  }
+  // Accessory ditrigonal rounding bevels in slots 6..7 (at 90° and 270°)
+  for (let m = 0; m < 2; m++) {
+    const k = 6 + m;
+    const a = (m * Math.PI) + 0.5 * Math.PI;
+    const ditrigR = (1.10 * triRound + 1.28 * (1 - triRound)) * fVar(k, 0.20);
+    setLocalPlane(
+      outLx, outLy, outLz, outOffR, outOffL, k,
+      latScale * Math.cos(a), taperLy, latScale * Math.sin(a),
+      ditrigR, 0.5 * taperLy
+    );
+  }
+  // 3-fold Rhombohedral termination: major r{10-11} (even j = 0,2,4) alternating with minor z{01-11} (odd j = 1,3,5)
+  const effDom = Math.max(0.14, dom);
+  const rTilt = nodeTilt;
+  const zTilt = Math.min(82 * DEG, nodeTilt + (4 + 12 * effDom) * DEG);
+  const cosR = Math.cos(rTilt), sinR = Math.sin(rTilt);
+  const cosZ = Math.cos(zTilt), sinZ = Math.sin(zTilt);
+  for (let j = 0; j < 6; j++) {
+    const a = (j * TAU) / 6;
+    const isMinorRhombo = (j & 1) === 1;
+    const ct = isMinorRhombo ? cosZ : cosR;
+    const st = isMinorRhombo ? sinZ : sinR;
+    const offR = (isMinorRhombo ? (0.30 + 0.52 * effDom + 0.16 * triRound) : (0.04 - 0.18 * effDom)) + tVar(j, 0.32);
+    setLocalPlane(
+      outLx, outLy, outLz, outOffR, outOffL, 8 + j,
+      st * Math.cos(a), ct, st * Math.sin(a),
+      offR, ct
+    );
+  }
+  // Steep trigonal trapezohedron {51-61} shoulder facets in slots 14..15
+  const trapTilt = Math.min(82 * DEG, nodeTilt + 14 * DEG);
+  const cosT = Math.cos(trapTilt), sinT = Math.sin(trapTilt);
+  for (let m = 0; m < 2; m++) {
+    const a = (m * Math.PI) + 32 * DEG;
+    setLocalPlane(
+      outLx, outLy, outLz, outOffR, outOffL, 14 + m,
+      sinT * Math.cos(a), cosT, sinT * Math.sin(a),
+      (0.58 - 0.22 * chamfer) + tVar(6 + m, 0.20), cosT
+    );
+  }
+  const rootOffR = Math.max(0.02, effDom * 0.25 + Math.abs(tipJitterAmt * 0.15 * fs[16]));
+  setLocalPlane(outLx, outLy, outLz, outOffR, outOffL, 16, 0, -1, 0, rootOffR, 0);
+  const tableFrac = Math.max(0.72, 1.14 - 0.54 * Math.max(0, chamfer));
+  setLocalPlane(outLx, outLy, outLz, outOffR, outOffL, 17, 0, 1, 0, 0, tableFrac);
+}
+
+// Pre-allocated scratch buffers for target and morph-blended local crystal planes (0..17)
+const tgtLx = new Float32Array(18), tgtLy = new Float32Array(18), tgtLz = new Float32Array(18);
+const tgtOffR = new Float32Array(18), tgtOffL = new Float32Array(18);
+const altLx = new Float32Array(18), altLy = new Float32Array(18), altLz = new Float32Array(18);
+const altOffR = new Float32Array(18), altOffL = new Float32Array(18);
 
 let nextUid = 0;
 let spawnTimer = 0;
@@ -618,7 +990,7 @@ export function stepEvolution(P, dt, viewportW = 0, viewportH = 0) {
 
   let rem = safeDt;
   const evolveSpd = P?.evolveSpeed !== undefined ? Math.max(0, Number(P.evolveSpeed.value)) : 1;
-  const growSpd = P?.growSpeed !== undefined ? Math.max(0, Number(P.growSpeed.value)) : 0.04;
+  const growSpd = P?.growSpeed !== undefined ? Math.max(0, Number(P.growSpeed.value)) : 0.07;
 
   while (rem > 1e-6) {
     const stepDt = Math.min(rem, 0.2);
@@ -696,10 +1068,13 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
   const rawEffPrimaryCount = Math.max(1.8, floatC * (1.0 - 0.38 * twinShare));
   const nodeDt = Math.max(0, Math.min(cluster.pendingNodeDt || 0, 10));
   cluster.pendingNodeDt = 0;
+  // Single unified smoothing factor across all crystal geometry properties (presence, twinW, axis, planes, chips)
+  // so every geometry change happens in ONE single smooth continuous stage (zero 2-stage snap+chase).
+  const aUnified = nodeDt > 0 ? (1 - Math.exp(-1.45 * nodeDt)) : 0;
   if (!Number.isFinite(cluster.smoothEffPrimaryCount)) {
     cluster.smoothEffPrimaryCount = rawEffPrimaryCount;
   } else if (nodeDt > 0) {
-    cluster.smoothEffPrimaryCount += (rawEffPrimaryCount - cluster.smoothEffPrimaryCount) * (1 - Math.exp(-0.22 * nodeDt));
+    cluster.smoothEffPrimaryCount += (rawEffPrimaryCount - cluster.smoothEffPrimaryCount) * aUnified;
   }
   const effPrimaryCount = cluster.smoothEffPrimaryCount;
   let activeCount = 0;
@@ -710,11 +1085,9 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
     const i = node.cohortIdx;
     const nodeSymmetry = symmetry;
 
-    // Continuous presence & twinW with ultra-slow 2nd-order critically-damped spring (omega = 0.20..0.24 rad/s,
-    // max velocity <= 0.065/s, taking ~15-18s — 3x longer than before) so appearing and disappearing
-    // crystals bud and shrink very gradually across preset changes.
-    const rawPresence = smooth01(Math.max(0.0, Math.min(1.0, floatC - i)));
-    const rawTwinW = i < 2 ? 0.0 : smooth01(Math.max(0.0, Math.min(1.0, (twinShare - node.twinRoll + 0.44) / 0.88)));
+    // Smooth presence window: crystals i < floatC are active; when floatC == 3, only 3 crystals exist
+    const rawPresence = i < 3 ? 1.0 : smooth01(Math.max(0.0, Math.min(1.0, floatC - i)));
+    const rawTwinW = (i < 2 || twinShare <= 0.001) ? 0.0 : smooth01(Math.max(0.0, Math.min(1.0, (twinShare - node.twinRoll * 0.65) / 0.45)));
     if (!node.smoothInit) {
       node.smoothPresence = rawPresence;
       node.velPresence = 0;
@@ -722,30 +1095,12 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
       node.velTwinW = 0;
       node.smoothInit = true;
     } else if (nodeDt > 0) {
-      let remN = nodeDt;
-      const omegaN = 0.20 + 0.04 * (0.5 + 0.5 * (node.uLen || 0));
-      const omegaN2 = omegaN * omegaN;
-      const dampN = 2.0 * omegaN;
-      const maxVelN = 0.065;
-      while (remN > 1e-6) {
-        const ndt = Math.min(remN, 0.05);
-        remN -= ndt;
-        node.velPresence += ((rawPresence - node.smoothPresence) * omegaN2 - dampN * node.velPresence) * ndt;
-        if (node.velPresence > maxVelN) node.velPresence = maxVelN;
-        else if (node.velPresence < -maxVelN) node.velPresence = -maxVelN;
-        node.smoothPresence = Math.max(0, Math.min(1, node.smoothPresence + node.velPresence * ndt));
-
-        node.velTwinW += ((rawTwinW - node.smoothTwinW) * omegaN2 - dampN * node.velTwinW) * ndt;
-        if (node.velTwinW > maxVelN) node.velTwinW = maxVelN;
-        else if (node.velTwinW < -maxVelN) node.velTwinW = -maxVelN;
-        node.smoothTwinW = Math.max(0, Math.min(1, node.smoothTwinW + node.velTwinW * ndt));
-      }
+      node.smoothPresence += (rawPresence - node.smoothPresence) * aUnified;
+      node.smoothTwinW += (rawTwinW - node.smoothTwinW) * aUnified;
       if (rawPresence <= 1e-4 && node.smoothPresence < 1e-3) {
         node.smoothPresence = 0;
-        node.velPresence = 0;
       } else if (rawPresence >= 1 - 1e-4 && node.smoothPresence > 1 - 1e-3) {
         node.smoothPresence = 1;
-        node.velPresence = 0;
       }
     }
 
@@ -780,81 +1135,87 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
     const lenMod = 0.95 + 0.32 * lenWave;
     const radMod = 1.0 + 0.18 * radWave;
 
-    // Lock each crystal's unit axis (axis0), orthonormal basis (u0, v0), twist (rot0),
-    // and integer face symmetry (baseSides + faceAngles) permanently at initialization
-    // so individual crystals NEVER rotate on their own axis or tilt relative to the cluster.
+    // Compute target crystal unit axis (independent of evoPhase so crystals never wobble on their own axis),
+    // and smoothly damp node.axis0 toward the target axis when fan, cavityCurve, twinAngle, or habit changes.
+    const initPrimaryCount = Math.max(1.8, floatC * (1.0 - 0.38 * twinShare));
+    const rho0 = i === 0 ? 0.12 * node.uRho : Math.min(1.0, Math.sqrt((i + 0.5 * node.uRho) / initPrimaryCount));
+    node.rho = rho0;
+    const az0 = i * GOLDEN + 0.55 * node.uAz;
+    let lean0 = fan * Math.min(1, rho0 + 0.28 * node.uLean * (i > 0 ? 1 : 0.25));
+    if (i === 0) lean0 = Math.max(0.02, lean0);
+
+    if (growSideways) {
+      if (i > 0) {
+        const targetSideLean = Math.min(84 * DEG, Math.max(lean0, (56 + 26 * rho0) * DEG));
+        lean0 = lean0 + (targetSideLean - lean0) * dirProgress * Math.min(1, 0.45 + 0.55 * rho0);
+      }
+    } else {
+      lean0 = lean0 * (1 - 0.58 * dirProgress);
+    }
+
+    const leanAz0 = az0 + 0.35 * node.uLeanAz;
+    primAx[0] = Math.sin(lean0) * Math.cos(leanAz0);
+    primAx[1] = Math.cos(lean0);
+    primAx[2] = Math.sin(lean0) * Math.sin(leanAz0);
+
+    if (cavityCurve > 0.001) {
+      const inTilt = cavityCurve * 0.45 * rho0;
+      primAx[0] = primAx[0] * (1 - inTilt) - Math.cos(az0) * inTilt * 0.5;
+      primAx[2] = primAx[2] * (1 - inTilt) - Math.sin(az0) * inTilt * 0.5;
+      const al0 = Math.hypot(primAx[0], primAx[1], primAx[2]) || 1;
+      primAx[0] /= al0; primAx[1] /= al0; primAx[2] /= al0;
+    }
+
     if (!node.frameInit) {
-      const initPrimaryCount = Math.max(1.8, floatC * (1.0 - 0.38 * twinShare));
-      const rho0 = i === 0 ? 0.12 * node.uRho : Math.min(1.0, Math.sqrt((i + 0.5 * node.uRho) / initPrimaryCount));
-      node.rho = rho0;
-      const az0 = i * GOLDEN + 0.55 * node.uAz;
-      let lean0 = fan * Math.min(1, rho0 + 0.28 * node.uLean * (i > 0 ? 1 : 0.25));
-      if (i === 0) lean0 = Math.max(0.02, lean0);
-
-      if (growSideways) {
-        if (i > 0) {
-          const targetSideLean = Math.min(84 * DEG, Math.max(lean0, (56 + 26 * rho0) * DEG));
-          lean0 = lean0 + (targetSideLean - lean0) * dirProgress * Math.min(1, 0.45 + 0.55 * rho0);
-        }
-      } else {
-        lean0 = lean0 * (1 - 0.58 * dirProgress);
-      }
-
-      const leanAz0 = az0 + 0.35 * node.uLeanAz;
-      primAx[0] = Math.sin(lean0) * Math.cos(leanAz0);
-      primAx[1] = Math.cos(lean0);
-      primAx[2] = Math.sin(lean0) * Math.sin(leanAz0);
-
-      if (cavityCurve > 0.001) {
-        const inTilt = cavityCurve * 0.45 * rho0;
-        primAx[0] = primAx[0] * (1 - inTilt) - Math.cos(az0) * inTilt * 0.5;
-        primAx[2] = primAx[2] * (1 - inTilt) - Math.sin(az0) * inTilt * 0.5;
-        const al0 = Math.hypot(primAx[0], primAx[1], primAx[2]) || 1;
-        primAx[0] /= al0; primAx[1] /= al0; primAx[2] /= al0;
-      }
-
       const isTwinNode = i >= 2 && rawTwinW >= 0.5;
       node.lockedTwinRole = isTwinNode ? 1 : 0;
       node.rot0 = node.uTwist;
-
-      if (!isTwinNode) {
-        ax[0] = primAx[0]; ax[1] = primAx[1]; ax[2] = primAx[2];
-        buildSideBasis(node.rot0);
-      } else {
-        const pNode = cluster.nodes[node.parentIdx >= 0 ? node.parentIdx : 0];
-        const pAxis = (pNode && pNode.axis0) ? pNode.axis0 : new Float32Array([0, 1, 0]);
-        const pTwist = (pNode && Number.isFinite(pNode.rot0)) ? pNode.rot0 : 0;
-        for (let k = 0; k < 3; k++) ax[k] = pAxis[k];
-        buildSideBasis(pTwist);
-        const branchAz = i * GOLDEN + 0.35 * node.uBranchAz;
-        const bAngle = twinAngle * (0.85 + 0.3 * node.uBranchAngle);
-        const cosB = Math.cos(bAngle), sinB = Math.sin(bAngle);
-        const rx = sx[0] * Math.cos(branchAz) + sz[0] * Math.sin(branchAz);
-        const ry = sx[1] * Math.cos(branchAz) + sz[1] * Math.sin(branchAz);
-        const rz = sx[2] * Math.cos(branchAz) + sz[2] * Math.sin(branchAz);
-        twinAx[0] = pAxis[0] * cosB + rx * sinB;
-        twinAx[1] = pAxis[1] * cosB + ry * sinB;
-        twinAx[2] = pAxis[2] * cosB + rz * sinB;
-        const tal = Math.hypot(twinAx[0], twinAx[1], twinAx[2]) || 1;
-        ax[0] = twinAx[0] / tal; ax[1] = twinAx[1] / tal; ax[2] = twinAx[2] / tal;
-        buildSideBasis(node.rot0);
-        node.branchRadial0 = new Float32Array([rx, ry, rz]);
-      }
-
-      node.axis0 = new Float32Array(ax);
-      node.u0 = new Float32Array(sx);
-      node.v0 = new Float32Array(sz);
       node.az0 = az0;
-      const lockedN = Math.max(3, Math.min(8, Math.round(Number(node.birthSymmetry ?? nodeSymmetry) || 6)));
-      node.baseSides = lockedN;
-      node.faceAngles = new Float32Array(8);
-      for (let k = 0; k < 8; k++) {
-        node.faceAngles[k] = k < lockedN ? (TAU * k) / lockedN : 0;
-      }
-      node.frameInit = true;
     }
 
-    // Use the permanently locked crystal axis & orthonormal side basis (zero axial rotation!)
+    if (!node.lockedTwinRole) {
+      ax[0] = primAx[0]; ax[1] = primAx[1]; ax[2] = primAx[2];
+    } else {
+      const pNode = cluster.nodes[node.parentIdx >= 0 ? node.parentIdx : 0];
+      const pAxis = (pNode && pNode.axis0) ? pNode.axis0 : new Float32Array([0, 1, 0]);
+      const pTwist = (pNode && Number.isFinite(pNode.rot0)) ? pNode.rot0 : 0;
+      for (let k = 0; k < 3; k++) ax[k] = pAxis[k];
+      buildSideBasis(pTwist);
+      const branchAz = i * GOLDEN + 0.35 * node.uBranchAz;
+      const bAngle = twinAngle * (0.85 + 0.3 * node.uBranchAngle);
+      const cosB = Math.cos(bAngle), sinB = Math.sin(bAngle);
+      const rx = sx[0] * Math.cos(branchAz) + sz[0] * Math.sin(branchAz);
+      const ry = sx[1] * Math.cos(branchAz) + sz[1] * Math.sin(branchAz);
+      const rz = sx[2] * Math.cos(branchAz) + sz[2] * Math.sin(branchAz);
+      twinAx[0] = pAxis[0] * cosB + rx * sinB;
+      twinAx[1] = pAxis[1] * cosB + ry * sinB;
+      twinAx[2] = pAxis[2] * cosB + rz * sinB;
+      const tal = Math.hypot(twinAx[0], twinAx[1], twinAx[2]) || 1;
+      ax[0] = twinAx[0] / tal; ax[1] = twinAx[1] / tal; ax[2] = twinAx[2] / tal;
+      if (!node.branchRadial0) node.branchRadial0 = new Float32Array(3);
+      node.branchRadial0[0] = rx; node.branchRadial0[1] = ry; node.branchRadial0[2] = rz;
+    }
+
+    if (!node.frameInit || !node.axis0) {
+      node.axis0 = new Float32Array(ax);
+      buildSideBasis(node.rot0);
+      node.u0 = new Float32Array(sx);
+      node.v0 = new Float32Array(sz);
+      node.frameInit = true;
+    } else if (nodeDt > 0) {
+      node.axis0[0] += (ax[0] - node.axis0[0]) * aUnified;
+      node.axis0[1] += (ax[1] - node.axis0[1]) * aUnified;
+      node.axis0[2] += (ax[2] - node.axis0[2]) * aUnified;
+      const al = Math.hypot(node.axis0[0], node.axis0[1], node.axis0[2]) || 1;
+      node.axis0[0] /= al; node.axis0[1] /= al; node.axis0[2] /= al;
+      for (let k = 0; k < 3; k++) ax[k] = node.axis0[k];
+      buildSideBasis(node.rot0);
+      for (let k = 0; k < 3; k++) {
+        node.u0[k] = sx[k];
+        node.v0[k] = sz[k];
+      }
+    }
+
     for (let k = 0; k < 3; k++) {
       ax[k] = node.axis0[k];
       sx[k] = node.u0[k];
@@ -864,7 +1225,9 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
     const rho = node.rho;
     const az = node.az0 || (i * GOLDEN + 0.55 * node.uAz);
 
-    let primBaseL = (i === 0 ? 1 : Math.max(0.18, 1 - P.lengthJitter.value * (0.4 * node.uLen + 0.6 * rho))) * lenMod;
+    const geodeCompact = 1.0 - 0.52 * cavityCurve;
+    const leaderScale = 1.0 - 0.36 * cavityCurve;
+    let primBaseL = (i === 0 ? leaderScale : Math.max(0.24, 1 - P.lengthJitter.value * (0.4 * node.uLen + 0.6 * rho))) * geodeCompact * lenMod;
     const horizComp = Math.hypot(ax[0], ax[2]);
     const vertComp = Math.abs(ax[1]);
     if (growSideways) {
@@ -873,7 +1236,7 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
       primBaseL *= 1 + dirProgress * (0.85 * vertComp * Math.min(1.9, 1 / aspect) - 0.16 * horizComp);
     }
 
-    const primBaseR = P.thickness.value * Math.pow(primBaseL, 0.65) * Math.max(0.25, 1 + P.thicknessJitter.value * 0.55 * node.uRadSym) * radMod;
+    const primBaseR = P.thickness.value * Math.pow(primBaseL, 0.55) * Math.max(0.25, 1 + P.thicknessJitter.value * 0.55 * node.uRadSym) * radMod;
 
     let baseL = primBaseL;
     let baseR = primBaseR;
@@ -901,9 +1264,9 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
         }
       }
       if (cavityCurve > 0.001) {
-        const bowlR = 0.52 * cavityCurve * (0.35 + 0.65 * gScale) * presence;
-        const ringR = bowlR * rho;
-        const bowlY = -bowlR * Math.cos(rho * 1.15) + bowlR * 0.45;
+        const bowlR = 0.68 * cavityCurve * (0.35 + 0.65 * gScale) * presence;
+        const ringR = bowlR * (0.18 + 0.82 * rho);
+        const bowlY = (Math.sin(i * 1.7 + node.uRootV * 2.0) * 0.22 - 0.35 * rho * rho) * bowlR;
         root[0] += Math.cos(az) * ringR;
         root[1] += bowlY;
         root[2] += Math.sin(az) * ringR;
@@ -959,65 +1322,200 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
       continue;
     }
 
-    const rowIdx = activeCount++;
-    const fs = node.faceSeeds;
-    let rMax = 0;
+    initRootX[activeCount] = root[0];
+    initRootY[activeCount] = root[1];
+    initRootZ[activeCount] = root[2];
+    activeNodes[activeCount++] = node;
+  }
 
-    // Fixed integer prism symmetry & fixed azimuth angles `node.faceAngles[k]` per crystal
-    // so prism and termination facets NEVER revolve or sweep around the crystal's axis!
-    const nSym = node.baseSides || Math.max(3, Math.min(8, Math.round(Number(nodeSymmetry) || 6)));
+  const curHabit = P.habit ? String(P.habit.value) : 'Trigonal';
+  const morphBlend = Math.max(0, Math.min(1, Number(cluster.morphHabitBlend) || 0));
+  const hFrom = cluster.morphHabitFrom ? resolveHabitSystem(cluster.morphHabitFrom) : '';
+  const hTo = cluster.morphHabitTo ? resolveHabitSystem(cluster.morphHabitTo) : '';
+  const curSys = resolveHabitSystem(curHabit);
+  const hasHabitMorph = Boolean(hFrom && hTo && hFrom !== hTo);
+  const repelStrength = hasHabitMorph
+    ? habitRepelWeight(hFrom) * (1 - morphBlend) + habitRepelWeight(hTo) * morphBlend
+    : habitRepelWeight(curSys);
+  const cubicBlend = hasHabitMorph
+    ? (hFrom === 'Cubic / Isometric' ? 1 - morphBlend : 0) + (hTo === 'Cubic / Isometric' ? morphBlend : 0)
+    : (curSys === 'Cubic / Isometric' ? 1 : 0);
+
+  // Simple pairwise magnetic repulsion strictly for high-overlap shapes like Diamond (post-015442, post-015454)
+  if (repelStrength > 1e-4 && activeCount > 1) {
+    const centerFrac = 0.46 + 0.06 * cubicBlend;
+    for (let iter = 0; iter < 4; iter++) {
+      for (let a = 0; a < activeCount - 1; a++) {
+        const nodeA = activeNodes[a];
+        const rootA = nodeA.worldRoot, axA = nodeA.worldAxis;
+        const La = nodeA.worldL, ra = nodeA.worldR;
+        const radA = cubicBlend * Math.max(1.22 * ra, 0.34 * La) + (1 - cubicBlend) * Math.max(1.28 * ra, 0.22 * La);
+        const cax = rootA[0] + axA[0] * centerFrac * La;
+        const cay = rootA[1] + axA[1] * centerFrac * La;
+        const caz = rootA[2] + axA[2] * centerFrac * La;
+        const azA = nodeA.az0 || (nodeA.cohortIdx * GOLDEN);
+
+        for (let b = a + 1; b < activeCount; b++) {
+          const nodeB = activeNodes[b];
+          const rootB = nodeB.worldRoot, axB = nodeB.worldAxis;
+          const Lb = nodeB.worldL, rb = nodeB.worldR;
+          const radB = cubicBlend * Math.max(1.22 * rb, 0.34 * Lb) + (1 - cubicBlend) * Math.max(1.28 * rb, 0.22 * Lb);
+          const cbx = rootB[0] + axB[0] * centerFrac * Lb;
+          const cby = rootB[1] + axB[1] * centerFrac * Lb;
+          const cbz = rootB[2] + axB[2] * centerFrac * Lb;
+
+          const dcx = cax - cbx, dcy = cay - cby, dcz = caz - cbz;
+          const dist = Math.hypot(dcx, dcy, dcz);
+          const pairPres = Math.min(nodeA.presence, nodeB.presence);
+          const minSep = (radA + radB) * (0.72 + 0.32 * cubicBlend) * repelStrength * pairPres;
+
+          if (dist < minSep) {
+            const rawGap = minSep - dist;
+            const softKnee = 0.08 * minSep + 1e-4;
+            const overlap = rawGap < softKnee ? (rawGap * rawGap) / (2 * softKnee) : rawGap - 0.5 * softKnee;
+            const azB = nodeB.az0 || (nodeB.cohortIdx * GOLDEN);
+
+            let vx = dcx + 0.32 * (La * axA[0] - Lb * axB[0]) + 0.08 * (Math.cos(azA) - Math.cos(azB));
+            let vy = (dcy + 0.16 * (La * axA[1] - Lb * axB[1])) * 0.42;
+            let vz = dcz + 0.32 * (La * axA[2] - Lb * axB[2]) + 0.08 * (Math.sin(azA) - Math.sin(azB));
+            const vl = Math.hypot(vx, vy, vz) || 1;
+            vx /= vl; vy /= vl; vz /= vl;
+
+            const push = overlap * 0.50;
+            const wA = a === 0 ? 0.42 : 0.5;
+            const wB = 1.0 - wA;
+            rootA[0] += vx * push * wA;
+            rootA[1] += vy * push * wA;
+            rootA[2] += vz * push * wA;
+            rootB[0] -= vx * push * wB;
+            rootB[1] -= vy * push * wB;
+            rootB[2] -= vz * push * wB;
+
+            const tiltPush = (overlap / Math.max(0.35, La + Lb)) * 0.14 * repelStrength;
+            axA[0] += vx * tiltPush * wA;
+            axA[1] = Math.max(0.15, axA[1] + vy * tiltPush * wA);
+            axA[2] += vz * tiltPush * wA;
+            const alA = Math.hypot(axA[0], axA[1], axA[2]) || 1;
+            axA[0] /= alA; axA[1] /= alA; axA[2] /= alA;
+
+            axB[0] -= vx * tiltPush * wB;
+            axB[1] = Math.max(0.15, axB[1] - vy * tiltPush * wB);
+            axB[2] -= vz * tiltPush * wB;
+            const alB = Math.hypot(axB[0], axB[1], axB[2]) || 1;
+            axB[0] /= alB; axB[1] /= alB; axB[2] /= alB;
+          }
+        }
+      }
+    }
+
+    // Re-center net magnetic translation so the cluster stays centered at the origin
+    let shiftX = 0, shiftY = 0, shiftZ = 0, shiftW = 0;
+    for (let a = 0; a < activeCount; a++) {
+      const nA = activeNodes[a];
+      const w = nA.presence * nA.worldL;
+      shiftX += (nA.worldRoot[0] - initRootX[a]) * w;
+      shiftY += (nA.worldRoot[1] - initRootY[a]) * w;
+      shiftZ += (nA.worldRoot[2] - initRootZ[a]) * w;
+      shiftW += w;
+    }
+    if (shiftW > 1e-6) {
+      shiftX /= shiftW; shiftY /= shiftW; shiftZ /= shiftW;
+      for (let a = 0; a < activeCount; a++) {
+        activeNodes[a].worldRoot[0] -= shiftX;
+        activeNodes[a].worldRoot[1] -= shiftY;
+        activeNodes[a].worldRoot[2] -= shiftZ;
+      }
+    }
+  }
+
+  for (let rowIdx = 0; rowIdx < activeCount; rowIdx++) {
+    const node = activeNodes[rowIdx];
+    const presence = node.presence;
+    const L = node.worldL;
+    const r = node.worldR;
+    const nodeSymmetry = symmetry;
+    for (let k = 0; k < 3; k++) {
+      ax[k] = node.worldAxis[k];
+      root[k] = node.worldRoot[k];
+    }
+    buildSideBasis(node.worldTwist);
+    for (let k = 0; k < 3; k++) {
+      node.worldSide[k] = sx[k];
+    }
+
+    const fs = node.faceSeeds;
+    let rMax = r * 1.45;
+
     const taperLy = Math.max(-0.32, Math.min(0.32, taperParam * 0.38));
     const latScale = Math.sqrt(Math.max(0.1, 1 - taperLy * taperLy));
     const faceJitterAmt = Math.max(0.08, P.faceJitter.value);
-
-    // Slots 0..7: prism shaft faces at 100% FIXED azimuth angles `a` around the crystal axis
-    for (let k = 0; k < 8; k++) {
-      if (k < nSym) {
-        const a = node.faceAngles ? node.faceAngles[k] : (TAU * k) / nSym;
-        const fSeed = fs[k];
-        const faceR = r * Math.max(0.35, 1 + faceJitterAmt * fSeed);
-        const midOffset = Math.max(r * 0.22, faceR + 0.5 * L * taperLy);
-        const topR = faceR - 0.5 * L * taperLy;
-        const botR = faceR + 0.5 * L * taperLy;
-        rMax = Math.max(rMax, faceR, topR, botR);
-        crystalPlane(rowIdx, k, latScale * Math.cos(a), taperLy, latScale * Math.sin(a), midOffset);
-      } else {
-        crystalPlane(rowIdx, k, 0, 1, 0, L * 12 + r * 12);
-      }
-    }
-
-    // Slots 8..15: crown pyramid termination faces at 100% FIXED azimuth angles `a`
     const nodeTilt = Math.max(20 * DEG, Math.min(84 * DEG, tilt));
-    const cosNT = Math.cos(nodeTilt), sinNT = Math.sin(nodeTilt);
+    const cosNT = Math.cos(nodeTilt);
     const dynDom = P.faceDominance.value;
     const dynTipJitter = Math.max(0.06, P.tipJitter.value);
-    for (let k = 0; k < 8; k++) {
-      if (k < nSym) {
-        const a = node.faceAngles ? node.faceAngles[k] : (TAU * k) / nSym;
-        const domWeight = (k & 1) ? 0.85 : 0.25;
-        const tSeed = fs[8 + k];
-        const big = domWeight * dynDom * r;
-        const tipOff = L * cosNT + big + dynTipJitter * r * 0.45 * tSeed;
-        crystalPlane(rowIdx, 8 + k, sinNT * Math.cos(a), cosNT, sinNT * Math.sin(a), Math.max(0.02 * L, tipOff));
-      } else {
-        crystalPlane(rowIdx, 8 + k, 0, 1, 0, L * 12 + r * 12);
+    const dynChamfer = Math.max(0, chamfer);
+
+    if (hasHabitMorph) {
+      computeSystemPlanes(
+        hFrom, nodeSymmetry, taperLy, latScale, nodeTilt, dynChamfer, dynDom, faceJitterAmt, dynTipJitter, fs, L, r,
+        tgtLx, tgtLy, tgtLz, tgtOffR, tgtOffL
+      );
+      computeSystemPlanes(
+        hTo, nodeSymmetry, taperLy, latScale, nodeTilt, dynChamfer, dynDom, faceJitterAmt, dynTipJitter, fs, L, r,
+        altLx, altLy, altLz, altOffR, altOffL
+      );
+      for (let k = 0; k < 18; k++) {
+        const bx = tgtLx[k] + (altLx[k] - tgtLx[k]) * morphBlend;
+        const by = tgtLy[k] + (altLy[k] - tgtLy[k]) * morphBlend;
+        const bz = tgtLz[k] + (altLz[k] - tgtLz[k]) * morphBlend;
+        const inv = 1 / (Math.hypot(bx, by, bz) || 1);
+        tgtLx[k] = bx * inv;
+        tgtLy[k] = by * inv;
+        tgtLz[k] = bz * inv;
+        tgtOffR[k] = tgtOffR[k] + (altOffR[k] - tgtOffR[k]) * morphBlend;
+        tgtOffL[k] = tgtOffL[k] + (altOffL[k] - tgtOffL[k]) * morphBlend;
+      }
+    } else {
+      computeSystemPlanes(
+        hTo || curHabit, nodeSymmetry, taperLy, latScale, nodeTilt, dynChamfer, dynDom, faceJitterAmt, dynTipJitter, fs, L, r,
+        tgtLx, tgtLy, tgtLz, tgtOffR, tgtOffL
+      );
+    }
+
+    if (!node.planesInit || !node.smoothLx) {
+      node.smoothLx = new Float32Array(tgtLx);
+      node.smoothLy = new Float32Array(tgtLy);
+      node.smoothLz = new Float32Array(tgtLz);
+      node.smoothOffR = new Float32Array(tgtOffR);
+      node.smoothOffL = new Float32Array(tgtOffL);
+      node.planesInit = true;
+    } else if (nodeDt > 0) {
+      for (let k = 0; k < 18; k++) {
+        const nx = node.smoothLx[k] + (tgtLx[k] - node.smoothLx[k]) * aUnified;
+        const ny = node.smoothLy[k] + (tgtLy[k] - node.smoothLy[k]) * aUnified;
+        const nz = node.smoothLz[k] + (tgtLz[k] - node.smoothLz[k]) * aUnified;
+        const inv = 1 / (Math.hypot(nx, ny, nz) || 1);
+        node.smoothLx[k] = nx * inv;
+        node.smoothLy[k] = ny * inv;
+        node.smoothLz[k] = nz * inv;
+        node.smoothOffR[k] += (tgtOffR[k] - node.smoothOffR[k]) * aUnified;
+        node.smoothOffL[k] += (tgtOffL[k] - node.smoothOffL[k]) * aUnified;
       }
     }
 
-    // Slot 16: Root base termination plane
-    const rootOff = Math.max(0.01 * r, dynDom * r * 0.35 + Math.abs(dynTipJitter * r * 0.2 * fs[16]));
-    crystalPlane(rowIdx, 16, 0, -1, 0, rootOff);
-
-    // Slot 17: Continuous top crown table / bevel truncation plane (no discrete chamfer threshold)
-    const dynChamfer = Math.max(0, chamfer);
-    const tableFrac = Math.max(0.68, 1.12 - 0.58 * dynChamfer);
-    crystalPlane(rowIdx, 17, 0, 1, 0, L * tableFrac);
+    for (let k = 0; k < 18; k++) {
+      const offVal = Math.max(-0.95 * L, node.smoothOffR[k] * r + node.smoothOffL[k] * L);
+      if (k < 8) {
+        rMax = Math.max(rMax, Math.abs(offVal));
+      }
+      crystalPlane(rowIdx, k, node.smoothLx[k], node.smoothLy[k], node.smoothLz[k], offVal);
+    }
 
     // Slots 18..20: Literal 3D geometric corner-nip half-space planes (scaled by P.chipSize and macro faders)
     const macroEdgeScale = (P.patinaMacro ? Number(P.patinaMacro.value) : 1.0) * (P.edgeMacro ? Number(P.edgeMacro.value) : 1.0);
     const edgeChipsVal = Math.max(0, Math.min(2, (P.edgeChips ? Number(P.edgeChips.value) : 0.28) * macroEdgeScale));
     const chipSizeVal = P.chipSize ? Math.max(0.1, Math.min(3.0, Number(P.chipSize.value))) : 1.5;
-    const rc = rMax / Math.cos(Math.PI / Math.max(3, nSym));
+    const rc = rMax * 1.25;
     crystalPlane(rowIdx, 18, 0, 1, 0, L * 12 + r * 12);
     crystalPlane(rowIdx, 19, 0, 1, 0, L * 12 + r * 12);
     crystalPlane(rowIdx, 20, 0, 1, 0, L * 12 + r * 12);
@@ -1034,14 +1532,9 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
       node.smoothChip2 = rawChip2;
       node.smoothChip3 = rawChip3;
     } else if (nodeDt > 0) {
-      const aChip = 1 - Math.exp(-0.22 * nodeDt);
-      const maxStepChip = 0.065 * nodeDt;
-      const d1 = rawChip1 - node.smoothChip1;
-      node.smoothChip1 += Math.max(-maxStepChip, Math.min(maxStepChip, d1 * aChip));
-      const d2 = rawChip2 - node.smoothChip2;
-      node.smoothChip2 += Math.max(-maxStepChip, Math.min(maxStepChip, d2 * aChip));
-      const d3 = rawChip3 - node.smoothChip3;
-      node.smoothChip3 += Math.max(-maxStepChip, Math.min(maxStepChip, d3 * aChip));
+      node.smoothChip1 += (rawChip1 - node.smoothChip1) * aUnified;
+      node.smoothChip2 += (rawChip2 - node.smoothChip2) * aUnified;
+      node.smoothChip3 += (rawChip3 - node.smoothChip3) * aUnified;
     }
 
     // Lock corner-nip indices to fixed faces in {0, 1, 2} so they NEVER jump!
@@ -1059,36 +1552,39 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
     const kt0 = 1;
     const kt1 = 2;
 
-    const whaleRoll1 = cornerWhaleRoll(node.uid, 18);
-    const whaleRoll2 = cornerWhaleRoll(node.uid, 19);
-    const whaleRoll3 = cornerWhaleRoll(node.uid, 20);
-    const whaleMult1 = whaleRoll1 >= 0.99 ? 20.0 : (whaleRoll1 >= 0.93 ? 10.0 : 1.0);
-    const whaleMult2 = whaleRoll2 >= 0.99 ? 20.0 : (whaleRoll2 >= 0.93 ? 10.0 : 1.0);
-    const whaleMult3 = whaleRoll3 >= 0.99 ? 20.0 : (whaleRoll3 >= 0.93 ? 10.0 : 1.0);
-
-    const nipSizeMult1 = (0.40 + 1.25 * Math.pow(((node.uid * 41 + 11) % 29) / 28, 1.35)) * whaleMult1;
-    const nipSizeMult2 = (0.40 + 1.25 * Math.pow(((node.uid * 59 + 17) % 31) / 30, 1.35)) * whaleMult2;
-    const nipSizeMult3 = (0.40 + 1.25 * Math.pow(((node.uid * 67 + 23) % 37) / 36, 1.35)) * whaleMult3;
-
     // Exact vertices of this crystal (planes 0..17) so every corner nip is a cap measured from the
     // crystal's true support in its direction: continuous, always a corner, never culls the crystal.
-    const vertCount = enumerateCrystalVertices(rowIdx, nSym);
+    const vertCount = enumerateCrystalVertices(rowIdx);
 
-    const nipDepth1 = r * (0.0045 + 0.0105 * edgeChipsVal) * chipSizeVal * nipSizeMult1 * (whaleMult1 > 1.0 ? Math.max(0.65, node.smoothChip1) : node.smoothChip1);
-    writeCornerNipPlane(rowIdx, 18, k0, k1, shHoriz1, shVert1, nipDepth1, 0.85, 1.15, vertCount, L, r);
+    if (edgeChipsVal > 0.005) {
+      const nipSizeMult1 = 0.40 + 0.85 * Math.pow(((node.uid * 41 + 11) % 29) / 28, 1.35);
+      const nipSizeMult2 = 0.40 + 0.85 * Math.pow(((node.uid * 59 + 17) % 31) / 30, 1.35);
+      const nipSizeMult3 = 0.40 + 0.85 * Math.pow(((node.uid * 67 + 23) % 37) / 36, 1.35);
 
-    const nipDepth2 = r * (0.0040 + 0.0095 * edgeChipsVal) * chipSizeVal * nipSizeMult2 * (whaleMult2 > 1.0 ? Math.max(0.65, node.smoothChip2) : node.smoothChip2);
-    writeCornerNipPlane(rowIdx, 19, k2, k3, shHoriz2, shVert2, nipDepth2, 1.12, 0.88, vertCount, L, r);
+      const nipDepth1 = r * (0.0085 * edgeChipsVal) * chipSizeVal * nipSizeMult1 * node.smoothChip1;
+      writeCornerNipPlane(rowIdx, 18, k0, k1, shHoriz1, shVert1, nipDepth1, 0.85, 1.15, vertCount, L, r);
 
-    const nipDepth3 = r * (0.0036 + 0.0088 * edgeChipsVal) * chipSizeVal * nipSizeMult3 * (whaleMult3 > 1.0 ? Math.max(0.65, node.smoothChip3) : node.smoothChip3);
-    writeCornerNipPlane(rowIdx, 20, kt0, kt1, tipHoriz, tipVert, nipDepth3, 0.90, 1.10, vertCount, L, r);
+      const nipDepth2 = r * (0.0075 * edgeChipsVal) * chipSizeVal * nipSizeMult2 * node.smoothChip2;
+      writeCornerNipPlane(rowIdx, 19, k2, k3, shHoriz2, shVert2, nipDepth2, 1.12, 0.88, vertCount, L, r);
+
+      const nipDepth3 = r * (0.0068 * edgeChipsVal) * chipSizeVal * nipSizeMult3 * node.smoothChip3;
+      writeCornerNipPlane(rowIdx, 20, kt0, kt1, tipHoriz, tipVert, nipDepth3, 0.90, 1.10, vertCount, L, r);
+    }
 
     const half = 0.5 * L;
     const nodeAlpha = Math.max(0.0, Math.min(1.0, node.alpha * smooth01(Math.min(1.0, presence / 0.55))));
     const scx = root[0] + ax[0] * half;
     const scy = root[1] + ax[1] * half;
     const scz = root[2] + ax[2] * half;
-    const sr = Math.hypot(half + r * 0.65, rc) * 1.04;
+    let maxVertDist2 = 0;
+    for (let v = 0; v < vertCount; v++) {
+      const dvx = POLY_V[v * 3] - scx;
+      const dvy = POLY_V[v * 3 + 1] - scy;
+      const dvz = POLY_V[v * 3 + 2] - scz;
+      const d2 = dvx * dvx + dvy * dvy + dvz * dvz;
+      if (d2 > maxVertDist2) maxVertDist2 = d2;
+    }
+    const sr = Math.max(Math.hypot(half + r * 0.65, rc), Math.sqrt(maxVertDist2)) * 1.05;
     sphereCentres[rowIdx * 4] = scx;
     sphereCentres[rowIdx * 4 + 1] = scy;
     sphereCentres[rowIdx * 4 + 2] = scz;
@@ -1185,6 +1681,7 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
 cluster.resetEvolution = resetEvolution;
 cluster.stepEvolution = stepEvolution;
 cluster.applyManualParam = (key, P) => {
+  cluster.morphHabitBlend = 0;
   if (key === 'habit' && P?.habit) {
     const h = String(P.habit.value);
     const desiredCount = Math.max(1, Math.min(MAX_CRYSTALS, Math.round(P?.crystals ? Number(P.crystals.value) : 9)));
@@ -1193,19 +1690,23 @@ cluster.applyManualParam = (key, P) => {
     for (let i = 0; i < cluster.nodes.length; i++) {
       cluster.nodes[i].birthHabit = h;
       cluster.nodes[i].birthNPrimary = np;
-      cluster.nodes[i].frameInit = false;
     }
   } else if (key === 'symmetry' && P?.symmetry) {
     const s = Math.max(3, Math.min(8, Math.round(Number(P.symmetry.value))));
     for (let i = 0; i < cluster.nodes.length; i++) {
       cluster.nodes[i].birthSymmetry = s;
-      cluster.nodes[i].frameInit = false;
-    }
-  } else if (key === 'fan' || key === 'twinAngle' || key === 'cavityCurve') {
-    for (let i = 0; i < cluster.nodes.length; i++) {
-      cluster.nodes[i].frameInit = false;
     }
   }
+};
+cluster.snapToTarget = (P) => {
+  cluster.morphHabitBlend = 0;
+  for (let i = 0; i < cluster.nodes.length; i++) {
+    cluster.nodes[i].planesInit = false;
+    cluster.nodes[i].frameInit = false;
+    cluster.nodes[i].smoothInit = false;
+  }
+  cluster.centerInit = false;
+  if (P) buildCluster(P);
 };
 cluster.triggerGrowBurst = triggerGrowBurst;
 cluster.surgeBranch = triggerGrowBurst;

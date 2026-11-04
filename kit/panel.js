@@ -221,10 +221,34 @@ export function buildPanel({ slug, store, onEdited, presets, onPreset, onRandomi
   controls.appendChild(searchSection);
 
   let lastMenuKey = '';
+  function setHudPresetPhrase(hudEl, nextPhrase) {
+    const clean = String(nextPhrase || 'Classic Quartz Prism');
+    const prev = hudEl.dataset.driftPhrase || '';
+    if (prev === clean) return;
+    hudEl.dataset.driftPhrase = clean;
+    if (!prev) {
+      hudEl.textContent = clean;
+      return;
+    }
+    const prevWords = prev.split(/\s+/);
+    const nextWords = clean.split(/\s+/);
+    hudEl.innerHTML = '';
+    nextWords.forEach((word, idx) => {
+      if (idx > 0) hudEl.appendChild(document.createTextNode(' '));
+      const span = document.createElement('span');
+      const stayedSame = prevWords[idx] === word || prevWords.includes(word);
+      span.className = stayedSame ? 'drift-word' : 'drift-word drift-word-enter';
+      span.textContent = word;
+      hudEl.appendChild(span);
+    });
+  }
+
   function rebuildPresetMenu(force = false) {
     const hudPresetName = document.getElementById('preset-name') || document.getElementById('hud-preset-name');
+    const firstPresetName = presets ? Object.keys(presets)[0] : 'Classic Quartz Prism';
     if (hudPresetName) {
-      hudPresetName.textContent = store.preset || 'Amethyst Cathedral';
+      const displayTitle = store.semanticDriftTitle || store.preset || firstPresetName || 'Classic Quartz Prism';
+      setHudPresetPhrase(hudPresetName, displayTitle);
     }
     delPresetBtn.hidden = !(store.preset && store.customPresets && store.customPresets[store.preset]);
     if (!force && document.activeElement === presetMenu) return;
