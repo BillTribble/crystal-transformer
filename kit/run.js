@@ -84,16 +84,7 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
 
   if (P.defaultZoom) {
     if (!capture && !sp.has('defaultZoom')) {
-      try {
-        const rawZoom = localStorage.getItem(DEFAULT_ZOOM_KEY);
-        if (rawZoom !== null) {
-          const parsed = Number(rawZoom);
-          if (Number.isFinite(parsed) && parsed >= 0.4 && parsed <= 2.5) {
-            store.setValue(P.defaultZoom, parsed);
-            P.defaultZoom.base = P.defaultZoom.value;
-          }
-        }
-      } catch { /* ignore */ }
+      try { localStorage.removeItem(DEFAULT_ZOOM_KEY); } catch { /* ignore */ }
     } else if (sp.has('defaultZoom') && !capture) {
       try { localStorage.setItem(DEFAULT_ZOOM_KEY, String(P.defaultZoom.value)); } catch { /* ignore */ }
     }
@@ -199,9 +190,7 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
       targetRaw = randomize ? randomize(store) : {};
       morphState.toPreset = 'Random Dice #' + morphState.diceRolls;
     }
-    if (!store.gliding) {
-      setPresetDrift(morphState.fromPreset, morphState.toPreset, 0);
-    }
+    setPresetDrift(morphState.fromPreset, morphState.toPreset, 0);
 
     for (const p of store.params) {
       if (NON_MORPH_KEYS.has(p.key) || p.key === 'bloom' || p.noPreset || p.randomize === false) continue;
@@ -348,7 +337,7 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
     store.setPresetName(prevName);
     const targetValues = store.randomize(randomize, dur);
     prepareMorphStage('Randomized', standardPresetNames.length, 2.5);
-    setPresetDrift(prevName, 'Randomized', dur > 0 ? 0.001 : 0);
+    setPresetDrift('Randomized', morphState.toPreset, 0);
     syncPageColour();
     panel.syncAll();
     panel.refreshStatus();
@@ -492,18 +481,13 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
     store.applyPreset(name, s, !own && s > 0, Math.min(s, 1.25));
     if (own && s > 0) instance.morph(s, store.preset);
     resetMorphFromPreset(store.preset, 2.0);
+    setPresetDrift(store.preset || name, morphState.toPreset, 0);
     if (s <= 0) {
-      setPresetDrift(store.preset || name, morphState.toPreset, 0);
       cluster.snapToTarget?.(P);
     } else {
       cluster.morphHabitFrom = store.glideHabitFrom;
       cluster.morphHabitTo = store.glideHabitTo;
       cluster.morphHabitBlend = 0;
-      setPresetDrift(
-        store.glideFromPreset || store.preset || name,
-        store.glideToPreset || store.preset || name,
-        0.001
-      );
     }
     syncPageColour();
     syncHudButtons();
@@ -517,7 +501,7 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
     slug,
     store,
     presets,
-    onPreset: (name) => applyPreset(name),
+    onPreset: (name, seconds) => applyPreset(name, seconds),
     onRandomize: doRandomize,
     onSkipTrack: () => sound.nextTrack(1),
     onEdited(changedKey) {
@@ -828,7 +812,6 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
       cluster.morphHabitFrom = store.glideHabitFrom;
       cluster.morphHabitTo = store.glideHabitTo;
       cluster.morphHabitBlend = store.glideHabitBlend;
-      setPresetDrift(store.glideFromPreset, store.glideToPreset, store.glideProgress);
     } else if (state === 'done') {
       cluster.morphHabitFrom = null;
       cluster.morphHabitTo = null;

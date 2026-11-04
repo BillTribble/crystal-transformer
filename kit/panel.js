@@ -226,9 +226,10 @@ export function buildPanel({ slug, store, onEdited, presets, onPreset, onRandomi
     if (!hudEl) return;
     const firstPresetName = presets ? Object.keys(presets)[0] : 'Classic Quartz Prism';
     const drift = store.presetDrift;
-    const rawFrom = String((drift && drift.fromName) || store.preset || firstPresetName || 'Classic Quartz Prism');
-    const rawTo = String((drift && drift.toName) || rawFrom);
     const rawP = drift && Number.isFinite(drift.progress) ? Math.max(0, Math.min(1, drift.progress)) : 0;
+    const driftActive = drift && rawP > 0.0005 && drift.fromName && drift.toName && drift.fromName !== drift.toName;
+    const rawFrom = String(driftActive ? drift.fromName : (store.preset || (drift && drift.fromName) || firstPresetName || 'Classic Quartz Prism'));
+    const rawTo = String(driftActive ? drift.toName : ((drift && drift.toName) || rawFrom));
     const arrived = rawP >= 0.9995 && rawFrom !== rawTo;
     const fromName = arrived ? rawTo : rawFrom;
     const toName = rawTo;
