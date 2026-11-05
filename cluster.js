@@ -303,6 +303,61 @@ function setLocalPlane(outLx, outLy, outLz, outOffR, outOffL, k, lx, ly, lz, off
   outOffL[k] = offL;
 }
 
+const cubeLx = new Float32Array(18), cubeLy = new Float32Array(18), cubeLz = new Float32Array(18);
+const cubeOffR = new Float32Array(18), cubeOffL = new Float32Array(18);
+
+/**
+ * Orthogonal / pseudo-cubic block planes (`prismSides = 4`, `aspect = 1.0`, `tipSlope = 0.0` flat top/bottom)
+ * used for Spanish Navajún Pyrite Cubes (`FeS2`) and stepped Bismuth Hopper blocks (`Bi`).
+ */
+function computeCubeBlockPlanes(
+  hopperBlend, chamfer, faceJitterAmt, fs, L, r,
+  outLx, outLy, outLz, outOffR, outOffL
+) {
+  const isoScale = Math.max(1.05, Math.min(2.15, (0.36 * L) / Math.max(r, 1e-4)));
+  const cosOct = 0.57735027;
+  const sinOct = 0.81649658;
+  const cos45 = 0.70710678;
+  const cubeHalf = isoScale * 0.92;
+  // Keep octahedral {111} and dodecahedral {110} planes out near the cube vertices/edges (sqrt(3)=1.732, sqrt(2)=1.414)
+  // so all 6 {100} cube faces are full orthogonal squares with only tiny mineral edge/corner micro-bevels.
+  const octDist = cubeHalf * (1.70 - 0.14 * chamfer);
+  const dodDist = cubeHalf * (1.395 - 0.08 * chamfer);
+  const fCubeVar = (k, scale = 0.07) => Math.max(0.88, Math.min(1.12, 1 + faceJitterAmt * scale * fs[k]));
+  for (let m = 0; m < 4; m++) {
+    const aCube = m * 0.5 * Math.PI;
+    const kCube = m * 2;
+    const rhoShear = 0.042 * hopperBlend * ((m & 1) === 0 ? 1 : -1);
+    setLocalPlane(
+      outLx, outLy, outLz, outOffR, outOffL, kCube,
+      Math.cos(aCube), rhoShear, Math.sin(aCube),
+      cubeHalf * fCubeVar(kCube, 0.08), 0.52 * rhoShear
+    );
+    const aOct = (m + 0.5) * 0.5 * Math.PI;
+    const kBotOct = m * 2 + 1;
+    setLocalPlane(
+      outLx, outLy, outLz, outOffR, outOffL, kBotOct,
+      sinOct * Math.cos(aOct), -cosOct, sinOct * Math.sin(aOct),
+      octDist * fCubeVar(kBotOct, 0.05), -0.52 * cosOct
+    );
+    const kTopOct = 8 + m * 2;
+    setLocalPlane(
+      outLx, outLy, outLz, outOffR, outOffL, kTopOct,
+      sinOct * Math.cos(aOct), cosOct, sinOct * Math.sin(aOct),
+      octDist * fCubeVar(kTopOct, 0.05), 0.52 * cosOct
+    );
+    const kDod = 8 + m * 2 + 1;
+    setLocalPlane(
+      outLx, outLy, outLz, outOffR, outOffL, kDod,
+      cos45 * Math.cos(aCube), cos45, cos45 * Math.sin(aCube),
+      dodDist * fCubeVar(kDod, 0.05), 0.52 * cos45
+    );
+  }
+  const topBotHalf = cubeHalf * (1.0 - 0.06 * hopperBlend) * fCubeVar(16, 0.06);
+  setLocalPlane(outLx, outLy, outLz, outOffR, outOffL, 16, 0, -1, 0, topBotHalf, -0.52);
+  setLocalPlane(outLx, outLy, outLz, outOffR, outOffL, 17, 0, 1, 0, topBotHalf, 0.52);
+}
+
 /**
  * Computes the 18 primary crystallographic half-space planes (k = 0..17) in the crystal's
  * local (sx, ax, sz) coordinate frame for any of the 7 crystallographic crystal systems:
@@ -1129,12 +1184,22 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
   const hFrom = cluster.morphHabitFrom ? resolveHabitSystem(cluster.morphHabitFrom) : '';
   const hTo = cluster.morphHabitTo ? resolveHabitSystem(cluster.morphHabitTo) : '';
   const curSys = resolveHabitSystem(curHabit);
-  const repelStrength = (morphBlend > 1e-4 && morphBlend < 1 - 1e-4 && hFrom && hTo && hFrom !== hTo)
+  const hopperVal = P.hopper ? Math.max(0, Math.min(1, Number(P.hopper.value))) : 0;
+  const metallicVal = P.metallic ? Math.max(0, Math.min(1, Number(P.metallic.value))) : 0;
+  const hopperBlend = smooth01(Math.max(0, Math.min(1, (hopperVal - 0.18) / 0.45)));
+  const pyriteCubeBlend = smooth01(Math.max(0, Math.min(1, (metallicVal - 0.25) / 0.45))) * (1 - hopperBlend);
+  const cubeBlockBlend = Math.max(hopperBlend, pyriteCubeBlend);
+
+  const baseRepel = (morphBlend > 1e-4 && morphBlend < 1 - 1e-4 && hFrom && hTo && hFrom !== hTo)
     ? habitRepelWeight(hFrom) * (1 - morphBlend) + habitRepelWeight(hTo) * morphBlend
     : habitRepelWeight(curSys);
-  const cubicBlend = (morphBlend > 1e-4 && morphBlend < 1 - 1e-4 && hFrom && hTo && hFrom !== hTo)
+  const repelStrength = hopperBlend > 1e-4
+    ? baseRepel * (1 - hopperBlend) + 0.86 * hopperBlend
+    : baseRepel * (1 - 0.66 * pyriteCubeBlend);
+  const baseCubicBlend = (morphBlend > 1e-4 && morphBlend < 1 - 1e-4 && hFrom && hTo && hFrom !== hTo)
     ? (hFrom === 'Cubic / Isometric' ? 1 - morphBlend : 0) + (hTo === 'Cubic / Isometric' ? morphBlend : 0)
     : (curSys === 'Cubic / Isometric' ? 1 : 0);
+  const cubicBlend = Math.max(baseCubicBlend, cubeBlockBlend);
 
   // Continuous float symmetry (3.0..8.0) for smooth 'opening-out' polygon transformation
   const symmetry = P.symmetry ? Math.max(3, Math.min(8, Number(P.symmetry.value))) : 6;
@@ -1296,6 +1361,22 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
       node.branchRadial0[0] = rx; node.branchRadial0[1] = ry; node.branchRadial0[2] = rz;
     }
 
+    if (hopperBlend > 1e-4) {
+      // Parallel / stepped ziggurat Bismuth Hopper block orientation: all sub-crystals share a
+      // coherent crystallographic frame (tilted ~16°–24° toward the camera) so sub-crystals step
+      // cleanly around the hero block without slicing diagonally across its Greek-key hopper wells.
+      const zigAz = (0.22 + 0.08 * ((i % 3) - 1)) * Math.PI;
+      const zigLean = (i === 0 ? 16 : (18 + 5 * (i % 3))) * DEG;
+      const zAx0 = Math.sin(zigLean) * Math.cos(zigAz);
+      const zAx1 = Math.cos(zigLean);
+      const zAx2 = Math.sin(zigLean) * Math.sin(zigAz);
+      ax[0] = ax[0] * (1 - 0.88 * hopperBlend) + zAx0 * (0.88 * hopperBlend);
+      ax[1] = ax[1] * (1 - 0.88 * hopperBlend) + zAx1 * (0.88 * hopperBlend);
+      ax[2] = ax[2] * (1 - 0.88 * hopperBlend) + zAx2 * (0.88 * hopperBlend);
+      const zal = Math.hypot(ax[0], ax[1], ax[2]) || 1;
+      ax[0] /= zal; ax[1] /= zal; ax[2] /= zal;
+    }
+
     if (!node.frameInit || !node.axis0) {
       node.axis0 = new Float32Array(ax);
       buildSideBasis(node.rot0);
@@ -1322,7 +1403,8 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
       sx[k] = node.u0[k];
       sz[k] = node.v0[k];
     }
-    const tw = node.rot0;
+    const quantTwist = Math.round(node.rot0 / (0.5 * Math.PI)) * (0.5 * Math.PI) + 0.18;
+    const tw = node.rot0 * (1 - 0.88 * hopperBlend) + quantTwist * (0.88 * hopperBlend);
     const rho = node.rho;
     const az = node.az0 || (i * GOLDEN + 0.38 * node.uAz);
     const isDoubleTerm = true;
@@ -1419,6 +1501,17 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
       for (let k = 0; k < 3; k++) {
         root[k] = pRoot[k] + pAxis[k] * attachDist + br[k] * (pR * 0.10) - ax[k] * twinBack + node.driftOffset[k];
       }
+    }
+
+    if (hopperBlend > 1e-4 && i > 0) {
+      // Terraced ziggurat stair-step offsets around the primary hopper block (like the BGS & Wikipedia specimens)
+      const tierIdx = i - 1;
+      const tierRing = (0.28 + 0.08 * Math.floor(tierIdx / 2)) * baseL;
+      const tierAng = tierIdx * (TAU / 5.0) + 0.35;
+      const tierY = (0.22 - 0.11 * (tierIdx % 4)) * baseL * gScale * presence;
+      root[0] = root[0] * (1 - 0.75 * hopperBlend) + Math.cos(tierAng) * tierRing * gScale * presence * hopperBlend;
+      root[1] = root[1] * (1 - 0.75 * hopperBlend) + tierY * hopperBlend;
+      root[2] = root[2] * (1 - 0.75 * hopperBlend) + Math.sin(tierAng) * tierRing * gScale * presence * hopperBlend;
     }
 
     // Pull emerging/shrinking crystals smoothly into the heart of the cluster core (0, 0, 0)
@@ -1596,6 +1689,24 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
       );
     }
 
+    if (cubeBlockBlend > 1e-4) {
+      computeCubeBlockPlanes(
+        hopperBlend, dynChamfer, faceJitterAmt, fs, L, r,
+        cubeLx, cubeLy, cubeLz, cubeOffR, cubeOffL
+      );
+      for (let k = 0; k < 18; k++) {
+        const bx = tgtLx[k] + (cubeLx[k] - tgtLx[k]) * cubeBlockBlend;
+        const by = tgtLy[k] + (cubeLy[k] - tgtLy[k]) * cubeBlockBlend;
+        const bz = tgtLz[k] + (cubeLz[k] - tgtLz[k]) * cubeBlockBlend;
+        const inv = 1 / (Math.hypot(bx, by, bz) || 1);
+        tgtLx[k] = bx * inv;
+        tgtLy[k] = by * inv;
+        tgtLz[k] = bz * inv;
+        tgtOffR[k] = tgtOffR[k] + (cubeOffR[k] - tgtOffR[k]) * cubeBlockBlend;
+        tgtOffL[k] = tgtOffL[k] + (cubeOffL[k] - tgtOffL[k]) * cubeBlockBlend;
+      }
+    }
+
     if (!node.planesInit || !node.smoothLx) {
       node.smoothLx = new Float32Array(tgtLx);
       node.smoothLy = new Float32Array(tgtLy);
@@ -1686,14 +1797,15 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
     // Exact vertices of this crystal (planes 0..17) so every corner nip is a cap measured from the
     // crystal's true support in its direction: continuous, always a corner, never culls the crystal.
     const vertCount = enumerateCrystalVertices(rowIdx);
+    const nipBlockDamp = 1 - 0.88 * cubeBlockBlend;
 
-    const nipDepth1 = r * (0.0045 + 0.0105 * edgeChipsVal) * chipSizeVal * nipSizeMult1 * (whaleMult1 > 1.0 ? Math.max(0.65, node.smoothChip1) : node.smoothChip1);
+    const nipDepth1 = r * (0.0045 + 0.0105 * edgeChipsVal) * chipSizeVal * nipSizeMult1 * (whaleMult1 > 1.0 ? Math.max(0.65, node.smoothChip1) : node.smoothChip1) * nipBlockDamp;
     writeCornerNipPlane(rowIdx, 18, k0, k1, shHoriz1, shVert1, nipDepth1, 0.85, 1.15, vertCount, L, r);
 
-    const nipDepth2 = r * (0.0040 + 0.0095 * edgeChipsVal) * chipSizeVal * nipSizeMult2 * (whaleMult2 > 1.0 ? Math.max(0.65, node.smoothChip2) : node.smoothChip2);
+    const nipDepth2 = r * (0.0040 + 0.0095 * edgeChipsVal) * chipSizeVal * nipSizeMult2 * (whaleMult2 > 1.0 ? Math.max(0.65, node.smoothChip2) : node.smoothChip2) * nipBlockDamp;
     writeCornerNipPlane(rowIdx, 19, k2, k3, shHoriz2, shVert2, nipDepth2, 1.12, 0.88, vertCount, L, r);
 
-    const nipDepth3 = r * (0.0036 + 0.0088 * edgeChipsVal) * chipSizeVal * nipSizeMult3 * (whaleMult3 > 1.0 ? Math.max(0.65, node.smoothChip3) : node.smoothChip3);
+    const nipDepth3 = r * (0.0036 + 0.0088 * edgeChipsVal) * chipSizeVal * nipSizeMult3 * (whaleMult3 > 1.0 ? Math.max(0.65, node.smoothChip3) : node.smoothChip3) * nipBlockDamp;
     writeCornerNipPlane(rowIdx, 20, kt0, kt1, tipHoriz, tipVert, nipDepth3, 0.90, 1.10, vertCount, L, r);
 
     const half = (isDoubleTerm ? 0.72 : 0.51) * L;

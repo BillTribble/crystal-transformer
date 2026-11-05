@@ -272,7 +272,9 @@ export function createModel(schema, storageKey, presets = {}) {
       glideLen = Math.max(seconds, 1e-3);
     },
     applyPreset(name, seconds = 0.65, glideNumbers = true) {
-      const resolvedName = (name === 'Glacial Ice Dendrite' && presets?.['Glacial Ice']) ? 'Glacial Ice' : name;
+      const resolvedName = (name === 'Glacial Ice Dendrite' && presets?.['Glacial Ice'])
+        ? 'Glacial Ice'
+        : ((name === 'Stepped Bismuth Hopper' && presets?.['Bismuth Hopper']) ? 'Bismuth Hopper' : name);
       const values = customPresets[resolvedName] || presets?.[resolvedName];
       if (!values) return;
       store.applyValues(values, seconds, resolvedName, glideNumbers);
@@ -360,7 +362,10 @@ export function createModel(schema, storageKey, presets = {}) {
     loadFromUrl() {
       const sp = new URLSearchParams(window.location.search);
       let applied = false;
-      const presetParam = sp.get('preset');
+      const rawPresetParam = sp.get('preset');
+      const presetParam = (rawPresetParam === 'Stepped Bismuth Hopper' && presets?.['Bismuth Hopper'])
+        ? 'Bismuth Hopper'
+        : rawPresetParam;
       if (presetParam && (customPresets[presetParam] || presets?.[presetParam])) {
         store.applyPreset(presetParam, 0);
         applied = true;

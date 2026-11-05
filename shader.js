@@ -609,9 +609,258 @@ float crystalSDF_fast(vec3 p, int row, out float secondD, out float thirdD, out 
   return d;
 }
 
+// 3D Skeletal Bismuth Hopper & Greek-Key Stepped Terrace Algorithm (post-015895, post-015896):
+// Pure register-only O(1) evaluation in face-local (u, v) in [-1, 1]^2 coordinates (zero UBO reads inside loops).
+// Models a chunky 6-bar G / Greek-key rectangular spiral ridge over a 3-tier stepped ziggurat hopper well.
+float sdBox2D(vec2 p, vec2 b) {
+  vec2 d = abs(p) - b;
+  return length(max(d, 0.0)) + min(max(d.x, d.y), 0.0);
+}
+
+float evalHopperDepthUV(vec2 uv, float hopperAmt, int rot, int faceId, out float outStepIdx, out float outEdgeDist) {
+  vec2 uvRot = (rot == 0) ? uv
+             : (rot == 1) ? vec2(-uv.y, uv.x)
+             : (rot == 2) ? vec2(-uv.x, -uv.y)
+                          : vec2(uv.y, -uv.x);
+
+  // Subtle natural hopper asymmetry so one side of the terrace staircase is wider than the opposite
+  vec2 uv0 = uvRot - vec2(0.025, -0.020);
+  float outerCheb = max(abs(uv0.x), abs(uv0.y));
+
+  // Solid outer perimeter frame rim (outerCheb >= 0.78): in real Bismuth hopper growth, the outer
+  // cube edges solidify first at full height (targetDepth = 0.0), guaranteeing 100% razor-sharp outer silhouettes!
+  float insideWell = 1.0 - smoothstep(0.76, 0.79, outerCheb);
+  if (insideWell <= 1e-4) {
+    outStepIdx = 0.0;
+    outEdgeDist = abs(outerCheb - 0.78);
+    return 0.0;
+  }
+
+  // Chunky 6-bar G-shaped / Greek-key rectangular spiral ridge inside [-0.78, 0.78]^2
+  float th = 0.064;
+  float dBar1 = sdBox2D(uv0 - vec2( 0.00,  0.54), vec2(0.60, th)); // Top horizontal bar
+  float dBar2 = sdBox2D(uv0 - vec2(-0.54,  0.02), vec2(th, 0.56)); // Left vertical bar
+  float dBar3 = sdBox2D(uv0 - vec2(-0.02, -0.48), vec2(0.56, th)); // Bottom horizontal bar
+  float dBar4 = sdBox2D(uv0 - vec2( 0.48, -0.14), vec2(th, 0.38)); // Right vertical bar (leaving doorway at y in [0.24, 0.48])
+  float dBar5 = sdBox2D(uv0 - vec2( 0.14,  0.18), vec2(0.38, th)); // Inward horizontal G-hook bar
+  float dBar6 = sdBox2D(uv0 - vec2(-0.18, -0.02), vec2(th, 0.24)); // Central vertical inner hook
+  float dGreek = min(min(dBar1, dBar2), min(min(dBar3, dBar4), min(dBar5, dBar6)));
+
+  // Smooth C1 wall profile (dGreek < 0 is on top of the raised Greek-key spiral ridge)
+  float greekWallMask = 1.0 - smoothstep(-0.014, 0.014, dGreek);
+
+  // 3 stepped rectangular ziggurat floor tiers descending toward the heart of the face
+  float tier1 = 1.0 - smoothstep(0.58, 0.61, outerCheb);
+  float tier2 = 1.0 - smoothstep(0.34, 0.37, outerCheb);
+  float tier3 = 1.0 - smoothstep(0.14, 0.17, outerCheb);
+
+  float channelFloorDepth = (0.20 + 0.14 * tier1 + 0.14 * tier2 + 0.12 * tier3) * hopperAmt;
+  float greekTopDepth = (0.07 + 0.05 * tier1 + 0.05 * tier2) * hopperAmt;
+  float wellDepth = mix(channelFloorDepth, greekTopDepth, greekWallMask);
+
+  float targetDepth = wellDepth * insideWell;
+  outStepIdx = (0.65 + 0.85 * tier1 + 0.85 * tier2 + 0.80 * tier3 - 0.55 * greekWallMask) * insideWell + float(faceId) * 0.14;
+  outEdgeDist = min(abs(dGreek), min(abs(outerCheb - 0.78), min(abs(outerCheb - 0.60), abs(outerCheb - 0.36))));
+  return targetDepth;
+}
+
+float evalBismuthHopper(vec3 p, int row, float hopperAmt, out float outStepIdx, out float outEdgeDist) {
+  outStepIdx = 0.0;
+  outEdgeDist = 1.0;
+  if (hopperAmt <= 0.01) return -1e9;
+
+  vec3 ax = body(row, 1).xyz;
+  float L = max(body(row, 1).w, 0.08);
+  vec3 rt = body(row, 3).xyz;
+  vec3 cMid = rt + ax * (0.52 * L);
+  vec3 p0 = body(row, PA).xyz;
+  vec3 sx = p0 - ax * dot(p0, ax);
+  float sxLen = length(sx);
+  sx = sxLen > 1e-4 ? (sx / sxLen) : normalize(cross(ax, vec3(0.577, 0.577, 0.577)));
+  vec3 sz = cross(ax, sx);
+
+  float hx = max(0.035, 0.5 * ((body(row, PA + 0).w - dot(body(row, PA + 0).xyz, cMid)) + (body(row, PA + 4).w - dot(body(row, PA + 4).xyz, cMid))));
+  float hz = max(0.035, 0.5 * ((body(row, PA + 2).w - dot(body(row, PA + 2).xyz, cMid)) + (body(row, PA + 6).w - dot(body(row, PA + 6).xyz, cMid))));
+  float hy = max(0.035, 0.5 * ((body(row, PA + 17).w - dot(body(row, PA + 17).xyz, cMid)) + (body(row, PA + 16).w - dot(body(row, PA + 16).xyz, cMid))));
+  vec3 halfExt = vec3(hx, hy, hz);
+  float fScale = min(hx, min(hy, hz));
+
+  vec3 rel = p - cMid;
+  vec3 q = vec3(dot(rel, sx), dot(rel, ax), dot(rel, sz)) / halfExt;
+  vec3 aq = abs(q);
+
+  vec2 uv;
+  float wNorm;
+  int faceId;
+  if (aq.x >= aq.y && aq.x >= aq.z) {
+    faceId = (q.x >= 0.0) ? 0 : 1;
+    uv = vec2(q.z * (q.x >= 0.0 ? 1.0 : -1.0), q.y);
+    wNorm = 1.0 - aq.x;
+  } else if (aq.y >= aq.x && aq.y >= aq.z) {
+    faceId = (q.y >= 0.0) ? 2 : 3;
+    uv = vec2(q.x * (q.y >= 0.0 ? 1.0 : -1.0), q.z);
+    wNorm = 1.0 - aq.y;
+  } else {
+    faceId = (q.z >= 0.0) ? 4 : 5;
+    uv = vec2(-q.x * (q.z >= 0.0 ? 1.0 : -1.0), q.y);
+    wNorm = 1.0 - aq.z;
+  }
+
+  int uidInt = int(max(1.0, body(row, 2).z) + 0.5);
+  int rot = (uidInt + faceId) & 3;
+  float targetDepth = evalHopperDepthUV(uv, hopperAmt, rot, faceId, outStepIdx, outEdgeDist);
+  return (targetDepth - wNorm) * fScale;
+}
+
+// Fast register-only 3D raymarcher for a crystal's stepped Greek-key Bismuth Hopper faces:
+// Precomputes local ray coordinates (q0, dq) ONCE per crystal (6 UBO reads total, zero UBO reads inside loop).
+bool intersectBismuthHopper(int row, vec3 ro, vec3 rd, float hopperAmt, float tHitMax, inout float tn, float tf, inout int kn, out vec3 outHopperN) {
+  outHopperN = (kn < CP) ? body(row, PA + kn).xyz : vec3(0.0, 1.0, 0.0);
+  float tStart = max(tn, 0.0);
+  if (tStart >= tHitMax) return false;
+
+  vec3 ax = body(row, 1).xyz;
+  float L = max(body(row, 1).w, 0.08);
+  vec3 rt = body(row, 3).xyz;
+  vec3 cMid = rt + ax * (0.52 * L);
+  vec3 p0 = body(row, PA).xyz;
+  vec3 sx = p0 - ax * dot(p0, ax);
+  float sxLen = length(sx);
+  sx = sxLen > 1e-4 ? (sx / sxLen) : normalize(cross(ax, vec3(0.577, 0.577, 0.577)));
+  vec3 sz = cross(ax, sx);
+
+  float hx = max(0.035, 0.5 * ((body(row, PA + 0).w - dot(body(row, PA + 0).xyz, cMid)) + (body(row, PA + 4).w - dot(body(row, PA + 4).xyz, cMid))));
+  float hz = max(0.035, 0.5 * ((body(row, PA + 2).w - dot(body(row, PA + 2).xyz, cMid)) + (body(row, PA + 6).w - dot(body(row, PA + 6).xyz, cMid))));
+  float hy = max(0.035, 0.5 * ((body(row, PA + 17).w - dot(body(row, PA + 17).xyz, cMid)) + (body(row, PA + 16).w - dot(body(row, PA + 16).xyz, cMid))));
+  vec3 invHalf = 1.0 / vec3(hx, hy, hz);
+
+  vec3 rel0 = (ro + rd * tStart) - cMid;
+  vec3 q0 = vec3(dot(rel0, sx), dot(rel0, ax), dot(rel0, sz)) * invHalf;
+  vec3 dq = vec3(dot(rd, sx), dot(rd, ax), dot(rd, sz)) * invHalf;
+
+  int uidInt = int(max(1.0, body(row, 2).z) + 0.5);
+  float dtMax = min(tf, tHitMax) - tStart;
+  if (dtMax <= 1e-4) return true;
+
+  // March along local ray q(dt) = q0 + dq * dt in 14 fast register-only steps
+  int nSteps = (u_isMobile > 0.5) ? 10 : 14;
+  float dtStep = dtMax / float(nSteps);
+  float dtPrev = 0.0;
+  bool foundHit = false;
+  float dtHit = 0.0;
+
+  for (int ms = 0; ms <= 14; ms++) {
+    if (ms > nSteps) break;
+    float dt = float(ms) * dtStep;
+    vec3 q = q0 + dq * dt;
+    vec3 aq = abs(q);
+    vec2 uv; float wNorm; int faceId;
+    if (aq.x >= aq.y && aq.x >= aq.z) {
+      faceId = (q.x >= 0.0) ? 0 : 1;
+      uv = vec2(q.z * (q.x >= 0.0 ? 1.0 : -1.0), q.y);
+      wNorm = 1.0 - aq.x;
+    } else if (aq.y >= aq.x && aq.y >= aq.z) {
+      faceId = (q.y >= 0.0) ? 2 : 3;
+      uv = vec2(q.x * (q.y >= 0.0 ? 1.0 : -1.0), q.z);
+      wNorm = 1.0 - aq.y;
+    } else {
+      faceId = (q.z >= 0.0) ? 4 : 5;
+      uv = vec2(-q.x * (q.z >= 0.0 ? 1.0 : -1.0), q.y);
+      wNorm = 1.0 - aq.z;
+    }
+    int rot = (uidInt + faceId) & 3;
+    float sIdx, sEdge;
+    float targetD = evalHopperDepthUV(uv, hopperAmt, rot, faceId, sIdx, sEdge);
+    if (wNorm >= targetD - 1e-4) {
+      dtHit = dt;
+      foundHit = true;
+      break;
+    }
+    dtPrev = dt;
+  }
+
+  if (!foundHit) return false;
+
+  if (dtHit > 1e-4) {
+    float tLo = dtPrev, tHi = dtHit;
+    for (int bs = 0; bs < 4; bs++) {
+      float tMid = 0.5 * (tLo + tHi);
+      vec3 q = q0 + dq * tMid;
+      vec3 aq = abs(q);
+      vec2 uv; float wNorm; int faceId;
+      if (aq.x >= aq.y && aq.x >= aq.z) {
+        faceId = (q.x >= 0.0) ? 0 : 1;
+        uv = vec2(q.z * (q.x >= 0.0 ? 1.0 : -1.0), q.y);
+        wNorm = 1.0 - aq.x;
+      } else if (aq.y >= aq.x && aq.y >= aq.z) {
+        faceId = (q.y >= 0.0) ? 2 : 3;
+        uv = vec2(q.x * (q.y >= 0.0 ? 1.0 : -1.0), q.z);
+        wNorm = 1.0 - aq.y;
+      } else {
+        faceId = (q.z >= 0.0) ? 4 : 5;
+        uv = vec2(-q.x * (q.z >= 0.0 ? 1.0 : -1.0), q.y);
+        wNorm = 1.0 - aq.z;
+      }
+      int rot = (uidInt + faceId) & 3;
+      float sIdx, sEdge;
+      if (wNorm >= evalHopperDepthUV(uv, hopperAmt, rot, faceId, sIdx, sEdge)) tHi = tMid;
+      else tLo = tMid;
+    }
+    dtHit = tHi;
+  }
+
+  // Compute exact 3D normal in local face frame (tread normal vs 90° vertical riser wall normal)
+  vec3 qH = q0 + dq * dtHit;
+  vec3 aqH = abs(qH);
+  vec2 uvH; int faceIdH;
+  vec3 uWorld, vWorld, wWorldOut;
+  if (aqH.x >= aqH.y && aqH.x >= aqH.z) {
+    float sg = (qH.x >= 0.0) ? 1.0 : -1.0;
+    faceIdH = (qH.x >= 0.0) ? 0 : 1;
+    uvH = vec2(qH.z * sg, qH.y);
+    uWorld = sz * sg; vWorld = ax; wWorldOut = sx * sg;
+  } else if (aqH.y >= aqH.x && aqH.y >= aqH.z) {
+    float sg = (qH.y >= 0.0) ? 1.0 : -1.0;
+    faceIdH = (qH.y >= 0.0) ? 2 : 3;
+    uvH = vec2(qH.x * sg, qH.z);
+    uWorld = sx * sg; vWorld = sz; wWorldOut = ax * sg;
+  } else {
+    float sg = (qH.z >= 0.0) ? 1.0 : -1.0;
+    faceIdH = (qH.z >= 0.0) ? 4 : 5;
+    uvH = vec2(-qH.x * sg, qH.y);
+    uWorld = -sx * sg; vWorld = ax; wWorldOut = sz * sg;
+  }
+  int rotH = (uidInt + faceIdH) & 3;
+  float eps = 0.004;
+  float s0, e0, sU, eU, sV, eV;
+  float d0 = evalHopperDepthUV(uvH, hopperAmt, rotH, faceIdH, s0, e0);
+  float dU = evalHopperDepthUV(uvH + vec2(eps, 0.0), hopperAmt, rotH, faceIdH, sU, eU);
+  float dV = evalHopperDepthUV(uvH + vec2(0.0, eps), hopperAmt, rotH, faceIdH, sV, eV);
+  float gradU = (dU - d0) / eps;
+  float gradV = (dV - d0) / eps;
+
+  if (dtHit > 1e-4 || abs(gradU) + abs(gradV) > 0.05) {
+    tn = tStart + dtHit;
+    kn = CP + 2000;
+    vec3 nCand = normalize(wWorldOut + uWorld * (gradU * 0.55) + vWorld * (gradV * 0.55));
+    if (dot(nCand, rd) > -0.08) {
+      nCand = normalize(nCand - rd * (dot(nCand, rd) + 0.08));
+    }
+    outHopperN = nCand;
+  }
+  return true;
+}
+
 float crystalSDF_full(vec3 p, int row) {
   float secondD, thirdD, ridgeBevel;
   float d = crystalSDF_fast(p, row, secondD, thirdD, ridgeBevel);
+  if (u_hopper > 0.01) {
+    if (d >= 0.045) return d - 0.008;
+    float hStep, hEdge;
+    float dHopperVoid = evalBismuthHopper(p, row, u_hopper, hStep, hEdge);
+    d = max(d, dHopperVoid);
+    return d;
+  }
   // Skip all 3D CSG edge & basal-cavity noise when far from surface (abs(d) >= 0.045)
   if (abs(d) >= 0.045) {
     return (d > 0.045) ? (d - 0.008) : d;
@@ -635,7 +884,8 @@ float crystalSDF(vec3 p, int row) {
 }
 
 vec3 calcNormal(vec3 p, int row) {
-  vec2 e = vec2(0.0015, -0.0015);
+  float eps = (u_hopper > 0.01) ? 0.00055 : 0.0015;
+  vec2 e = vec2(eps, -eps);
   return normalize(
     e.xyy * crystalSDF_full(p + e.xyy, row) +
     e.yyx * crystalSDF_full(p + e.yyx, row) +
@@ -993,6 +1243,9 @@ bool traceScene(vec3 ro, vec3 rd, int skipMask, out int id, out float tHit, out 
       float candBorder = 1e9, candSeam = 1e9;
       if (u_occlusion > 0.002) {
         if (!applyOcclusionVoidCSG(i, ro, rd, tn, tf, kn, candVoidN, candBorder, candSeam)) continue;
+      }
+      if (u_hopper > 0.01) {
+        if (!intersectBismuthHopper(i, ro, rd, u_hopper, tHit, tn, tf, kn, candVoidN)) continue;
       }
       float tCand = max(tn, 0.0);
       if (tf > tCand + 1e-4 && tCand < tHit) {
@@ -1357,7 +1610,8 @@ void insidePrimaryExtras(int id, vec3 ro, vec3 rd, float len, float travelled, i
   }
 }
 
-// Bend a face's normal: growth ridges across prism faces, stepped hopper terraces, and smooth/Gaussian-dithered/Jack-Bush-druzy mineral frost relief.
+// Bend a face's normal: growth ridges across prism faces (including orthogonal m-3 diploid cube-face striations on Pyrite),
+// stepped hopper terraces, and smooth/Gaussian-dithered/Jack-Bush-druzy mineral frost relief.
 vec3 faceNormal(int id, int k, vec3 n, vec3 p, float rough, float footprint, float dEdge) {
   vec4 ax = body(id, 1);
   float uid = crystalUid(id);
@@ -1366,25 +1620,54 @@ vec3 faceNormal(int id, int k, vec3 n, vec3 p, float rough, float footprint, flo
   float g1 = clamp(glimmer, 0.0, 1.0);
   float rawAmt = clamp(u_rawAmount, 0.0, 2.0);
   float rawSurfScale = mix(0.15, 1.0, clamp(rawAmt / 0.4, 0.0, 1.0)) * mix(1.0, 1.65, max(0.0, (rawAmt - 0.4) / 1.6));
-  if (k < 8 && u_striations > 0.0) {
-    float axialY = dot(p - body(id, 3).xyz, ax.xyz);
+  if (u_striations > 0.0 && (k < 8 || (u_metallic > 0.15 && k < 18))) {
+    vec3 rel = p - body(id, 3).xyz;
+    vec3 p0 = body(id, PA).xyz;
+    vec3 t1 = p0 - ax.xyz * dot(p0, ax.xyz);
+    float t1Len = length(t1);
+    t1 = t1Len > 1e-4 ? (t1 / t1Len) : normalize(cross(ax.xyz, vec3(0.577, 0.577, 0.577)));
+    vec3 t2 = cross(ax.xyz, t1);
+
+    // For metallic cubes (Pyrite FeS2 crystallographic class m-3), adjacent cube faces {100}, {010}, {001}
+    // have mutually perpendicular (90° orthogonal) brushed growth striations!
+    float striCoord = dot(rel, ax.xyz);
+    vec3 striTan = ax.xyz;
+    if (u_metallic > 0.15 && u_hopper < 0.35) {
+      vec3 an = abs(vec3(dot(n, t1), dot(n, ax.xyz), dot(n, t2)));
+      if (an.x >= an.y && an.x >= an.z) {
+        striCoord = dot(rel, ax.xyz);
+        striTan = ax.xyz;
+      } else if (an.z >= an.x && an.z >= an.y) {
+        striCoord = dot(rel, t1);
+        striTan = t1;
+      } else {
+        striCoord = dot(rel, t2);
+        striTan = t2;
+      }
+    }
     float fFine = u_striationScale * 0.30;
     float fCoarse = u_striationScale * 0.10;
     float aaFine = clamp(1.0 - (footprint * fFine) * 5.8, 0.0, 1.0);
     float aaCoarse = clamp(1.0 - (footprint * fCoarse) * 5.8, 0.0, 1.0);
-    float amp = 0.38 + 0.72 * texture(u_incl, vec3(axialY * 1.8, uid * 0.37, 0.5)).b;
-    float ridge = aaCoarse * 0.68 * sin(TAU * axialY * fCoarse + 1.5 * sin(axialY * 11.0))
-                + aaFine * 0.32 * sin(TAU * axialY * fFine);
-    n = normalize(n + ax.xyz * (u_striations * rawSurfScale * (1.0 - 0.35 * dither) * mix(0.042, 0.088, g1) * amp * ridge));
+    float amp = 0.38 + 0.72 * texture(u_incl, vec3(striCoord * 1.8, uid * 0.37, 0.5)).b;
+    float ridge = aaCoarse * 0.68 * sin(TAU * striCoord * fCoarse + 1.5 * sin(striCoord * 11.0))
+                + aaFine * 0.32 * sin(TAU * striCoord * fFine);
+    if (u_metallic > 0.15) {
+      float fBrush = u_striationScale * 0.55;
+      float aaBrush = clamp(1.0 - (footprint * fBrush) * 4.5, 0.0, 1.0);
+      ridge += aaBrush * 0.48 * sin(TAU * striCoord * fBrush + 2.3 * cos(striCoord * 23.0));
+      amp *= 1.45;
+    }
+    n = normalize(n + striTan * (u_striations * rawSurfScale * (1.0 - 0.35 * dither) * mix(0.055, 0.125, g1) * amp * ridge));
   }
   float effHopper = u_hopper * pow(1.0 - dither, 1.5);
-  if (effHopper > 0.0) {
+  if (effHopper > 0.0 && k < 18) {
     float r = max(body(id, 2).w, 0.02);
     float u = dEdge / (r * 0.22);
     float riser = smoothstep(0.72, 0.96, fract(u)) - smoothstep(0.0, 0.18, fract(u));
     float mask = smoothstep(0.06, 0.22, dEdge / r) * (1.0 - smoothstep(0.85, 1.15, dEdge / r));
     vec3 tangent = normalize(cross(n, ax.xyz) + ax.xyz * 0.35);
-    n = normalize(n + tangent * (effHopper * 0.28 * riser * mask));
+    n = normalize(n + tangent * (effHopper * 0.14 * riser * mask));
   }
   if (rough > 0.0) {
     float L = max(ax.w, 0.1);
@@ -1777,6 +2060,138 @@ vec3 crystalBloomGlint(int id, int k, vec3 p, vec3 rd, vec3 nSmooth, float dEdge
   return rawGlint / (1.0 + (1.6 - 0.85 * glare) * max(rawGlint.r, max(rawGlint.g, rawGlint.b)));
 }
 
+// Physical Thin-Film Bi2O3 Oxide Interference Palette (post-015895, post-015896):
+// Maps optical path difference opd across the exact 5-zone Bismuth oxide interference spectrum:
+// warm metallic gold -> hot magenta/rose -> royal violet -> electric peacock cyan -> emerald/chartreuse green.
+vec3 evalBismuthOxidePalette(float opd) {
+  float t = fract(opd);
+  vec3 cGold    = vec3(1.00, 0.80, 0.16);
+  vec3 cMagenta = vec3(0.96, 0.18, 0.64);
+  vec3 cViolet  = vec3(0.42, 0.22, 0.96);
+  vec3 cCyan    = vec3(0.06, 0.82, 0.96);
+  vec3 cEmerald = vec3(0.18, 0.92, 0.36);
+
+  float s = t * 5.0;
+  vec3 Stops = (s < 1.0) ? mix(cGold, cMagenta, smoothstep(0.0, 1.0, s))
+             : (s < 2.0) ? mix(cMagenta, cViolet, smoothstep(0.0, 1.0, s - 1.0))
+             : (s < 3.0) ? mix(cViolet, cCyan, smoothstep(0.0, 1.0, s - 2.0))
+             : (s < 4.0) ? mix(cCyan, cEmerald, smoothstep(0.0, 1.0, s - 3.0))
+                         : mix(cEmerald, cGold, smoothstep(0.0, 1.0, s - 4.0));
+
+  vec3 cosFilm = 0.5 + 0.5 * cos(6.28318 * (opd * vec3(1.0, 0.86, 0.72) + vec3(0.0, 0.20, 0.45)));
+  return mix(Stops, cosFilm, 0.28) * 1.08;
+}
+
+// Opaque Metallic Conductor & Thin-Film Oxide Surface Shader (Pyrite Cubes FeS2 + Bismuth Hopper Bi/Bi2O3):
+// Evaluates conductor Fresnel reflectance, studio softbox diffuser dome, GGX metallic specular lobes,
+// and inter-crystal + intra-hopper multi-bounce metallic reflections.
+vec3 shadeMetallicCrystal(int id, int k, vec3 pEntry, vec3 rd, vec3 nRefl, float reflRough, float dEdge, float footprint) {
+  float cosTheta = clamp(-dot(rd, nRefl), 0.02, 1.0);
+  float hgt = crystalHeight01(id, pEntry);
+  float uid = crystalUid(id);
+
+  float hopperStepIdx = 0.0, hopperEdgeDist = 1.0;
+  if (u_hopper > 0.01) {
+    evalBismuthHopper(pEntry, id, u_hopper, hopperStepIdx, hopperEdgeDist);
+  }
+
+  // 1. Conductor normal-incidence reflectance F0:
+  //    - Pyrite Cubes (FeS2, low iridescence): mirror-polished brass-gold F0 = vec3(0.92, 0.80, 0.48)
+  //    - Bismuth Hopper (Bi2O3 oxide film, high iridescence): thin-film interference varying by step depth, height & angle
+  vec3 pyriteF0 = vec3(0.92, 0.78, 0.42);
+  float sin2Theta = max(0.0, 1.0 - cosTheta * cosTheta);
+  float cosFilm = sqrt(max(0.22, 1.0 - sin2Theta / (2.42 * 2.42)));
+  // Smooth thin-film Bi2O3 oxide thickness sweeping across the ziggurat cluster & Greek-key terrace steps:
+  // Outer rims & raised G-bars gleam in Gold -> Hot Magenta, stepping through Violet -> Peacock Cyan -> Emerald Green
+  float spatialGrad = (1.0 - hgt) * 0.46 + (pEntry.x * 0.65 - pEntry.y * 0.35) * 0.36 + float(id) * 0.11;
+  float opd = (0.94 + hopperStepIdx * 0.22 + spatialGrad) * cosFilm;
+  vec3 biOxideCol = evalBismuthOxidePalette(opd);
+  vec3 biGrazingCol = evalBismuthOxidePalette(opd + 0.18 * (1.0 - cosTheta));
+
+  float iridW = clamp((u_iridescence - 0.08) / 0.78, 0.0, 1.0);
+  vec3 F0 = mix(pyriteF0, biOxideCol, iridW);
+  vec3 F90 = mix(vec3(1.0, 0.94, 0.76), mix(biGrazingCol, biOxideCol * 1.15, 0.55), iridW);
+  vec3 F_cond = mix(F0, F90, pow(1.0 - cosTheta, 3.8));
+
+  // 2. High-contrast studio photo-tent reflection (dark studio shadows + bright overhead key softbox + rim strips)
+  vec3 reflDir = reflect(rd, nRefl);
+  vec3 wN = normalize(f_toWorld * nRefl);
+  vec3 wRefl = normalize(f_toWorld * reflDir);
+  float metalRough = clamp(reflRough * 0.42 + 0.018, 0.012, 0.26);
+
+  vec3 baseEnv = env(reflDir, metalRough);
+  float topSoftbox = pow(smoothstep(-0.05, 0.82, wRefl.y), 1.6) * (0.55 + 0.45 * smoothstep(-0.3, 0.7, wRefl.x));
+  float sideRimTent = pow(smoothstep(0.10, 0.85, abs(wRefl.x)), 1.8) * smoothstep(-0.25, 0.55, wRefl.z);
+  float darkHorizonBand = 1.0 - 0.65 * exp(-pow((wRefl.y + 0.12) * 3.8, 2.0));
+  float baseAmbFloor = mix(0.04, 0.14, iridW);
+  vec3 studioDome = f_ambient * (baseAmbFloor + mix(0.62, 0.44, iridW) * topSoftbox + 0.26 * sideRimTent) * darkHorizonBand;
+  vec3 reflLight = baseEnv * mix(0.48, 0.34, iridW) + studioDome;
+
+  // 3. Multi-bounce metallic inter-reflections (analytical intra-hopper 90° corner reflection + neighboring crystal bounce)
+  vec3 roBounce = pEntry + nRefl * 0.003;
+  bool hitNeighbor = false;
+  vec3 neighborCol = vec3(0.0);
+  float seamAO = 1.0;
+
+  if (u_hopper > 0.15 && hopperStepIdx > 0.4) {
+    // 90° Greek-key step walls reflect adjacent terrace colors into each other
+    float cornerBounceW = smoothstep(0.3, 3.5, hopperStepIdx) * (0.42 + 0.45 * (1.0 - cosTheta));
+    vec3 bounceOxide = evalBismuthOxidePalette(opd + 0.22);
+    reflLight += bounceOxide * f_ambient * (0.26 * cornerBounceW);
+  }
+
+  int nc = clamp(int(f_crystals + 0.5), 0, MAX_CRYSTALS);
+  float bestBT = 1e9;
+  int bestBId = 0, bestBK = 0;
+  for (int bi = 0; bi < nc; bi++) {
+    if (bi == id || !sphereHit(roBounce, reflDir, body(bi, 0), bestBT)) continue;
+    float bTn, bTf; int bKn, bKf;
+    if (convexHit(bi, roBounce, reflDir, bTn, bTf, bKn, bKf)) {
+      float tC = max(bTn, 0.0);
+      if (bTf > tC + 1e-4 && tC < bestBT) {
+        bestBT = tC; bestBId = bi; bestBK = bKn;
+        hitNeighbor = true;
+      }
+    }
+  }
+  if (hitNeighbor) {
+    vec3 pB = roBounce + reflDir * bestBT;
+    vec3 nB = body(bestBId, PA + bestBK).xyz;
+    float sIdxB = (u_hopper > 0.01) ? (hopperStepIdx + 0.8) : 0.0;
+    float opdB = (0.08 + sIdxB * 0.17 + (1.0 - crystalHeight01(bestBId, pB)) * 0.52 + float(bestBId) * 0.14) * 0.82;
+    vec3 colB = mix(pyriteF0, evalBismuthOxidePalette(opdB), iridW);
+    vec3 reflDir2 = reflect(reflDir, nB);
+    vec3 wRefl2 = normalize(f_toWorld * reflDir2);
+    seamAO = smoothstep(0.002, 0.065, bestBT);
+    neighborCol = colB * (f_ambient * 0.22 + lights(wRefl2, 0.05) * 0.48 + env(reflDir2, 0.05) * 0.36);
+    reflLight = mix(reflLight * seamAO, neighborCol * (0.35 + 0.85 * seamAO), 0.68);
+  }
+
+  // 4. Broad & sharp GGX conductor specular lobes from the 4 studio area lights
+  vec3 specBroad = vec3(0.0);
+  vec3 specSharp = vec3(0.0);
+  for (int i = 0; i < LIGHTS; i++) {
+    int o = i * LS;
+    vec3 lDir = normalize(vec3(f_lights[o], f_lights[o + 1], f_lights[o + 2]));
+    vec3 lCol = vec3(f_lights[o + 9], f_lights[o + 10], f_lights[o + 11]);
+    float cR = max(0.0, dot(wRefl, lDir));
+    float cN = max(0.0, dot(wN, lDir));
+    specBroad += lCol * (0.11 * pow(cN, 3.0) + 0.46 * pow(cR, 14.0));
+    specSharp += lCol * pow(cR, 84.0);
+  }
+
+  // 5. Crisp metallic catch-light along 90° hopper step rims & cube facet edges
+  float stepRimGlow = (u_hopper > 0.01)
+    ? smoothstep(0.032, 0.002, hopperEdgeDist) * (0.42 + 0.48 * u_hopper)
+    : smoothstep(0.024, 0.0, dEdge / max(body(id, 2).w, 0.04)) * 0.28;
+
+  vec3 highlightTint = mix(mix(F_cond, vec3(1.0, 0.96, 0.84), 0.32), F_cond * 1.15, iridW * 0.78);
+  vec3 metalCol = F_cond * (reflLight + specBroad * mix(0.16, 0.12, iridW) * seamAO)
+                + highlightTint * (specSharp * mix(0.18, 0.11, iridW) + stepRimGlow * f_ambient * mix(0.32, 0.24, iridW))
+                + crystalBloomGlint(id, k, pEntry, rd, nRefl, dEdge, metalRough) * F_cond * mix(0.55, 0.35, iridW);
+  return metalCol;
+}
+
 // Secondary continuation ray for GPU mirrored backgrounds (single-pass, zero nested hop loop)
 vec3 shadeBehindRay(vec3 roIn, vec3 rdIn, int skipIn, float travIn, float jitter, out float firstHitMask) {
   firstHitMask = 0.0;
@@ -1803,6 +2218,10 @@ vec3 shadeBehindRay(vec3 roIn, vec3 rdIn, int skipIn, float travIn, float jitter
   float bRough = effFrost * smoothstep(bFrostRoll - 0.15, bFrostRoll + 0.15, effFrostShare);
   vec3 bRawN = (bK < CP) ? body(bId, PA + bK).xyz : bVoidN;
   vec3 bN = faceNormal(bId, bK < CP ? bK : 18, bRawN, bP, bRough, travB * f_pixAngle, 1.0);
+  if (u_metallic >= 0.98) {
+    vec3 mCol = shadeMetallicCrystal(bId, bK, bP, rdIn, bN, bRough, 1.0, travB * f_pixAngle);
+    return mix(bEnvCol, mCol, bAlpha);
+  }
   float bF = fresnel(-dot(rdIn, bN), 1.0 / u_ior);
   vec3 bEntryRefl = facetIridescence(bId, bK, bP, rdIn, bN, 1.0, softFacetRefl(env(reflect(rdIn, bN), bRough)));
   float bIridBoost = clamp(bF + (u_iridescence * u_rainbow) * 0.06, 0.0, 0.42) * (0.15 + 0.85 * glare);
@@ -2120,15 +2539,18 @@ void main() {
     float rough = effFrost * frostW;
     bool isTinyEdgeChip = (k >= CP + 5000 && k < CP + 10000);
     bool isCornerVertexChip = (k >= CP + 10000);
-    bool isOcclusionVoid = (k >= CP && k < CP + 5000);
-    bool isEdgeIncursion = isTinyEdgeChip || isCornerVertexChip || isOcclusionVoid;
+    bool isHopperTerrace = (k == CP + 2000);
+    bool isOcclusionVoid = (k >= CP && k < CP + 5000 && !isHopperTerrace);
+    bool isEdgeIncursion = isTinyEdgeChip || isCornerVertexChip || isOcclusionVoid || isHopperTerrace;
     bool isCornerNip = (k >= 18 && k < CP);
-    vec3 rawFaceN = isOcclusionVoid
+    vec3 rawFaceN = (isOcclusionVoid || isHopperTerrace)
       ? voidWallN
       : ((isTinyEdgeChip || isCornerVertexChip) ? chipFacetN : body(id, PA + k).xyz);
     if (isOcclusionVoid) {
       // Keep 3D void cavity walls smooth & clear (zero noisy texture, pure 3D geometric delineation)
       rough *= 0.20;
+    } else if (isHopperTerrace) {
+      rough *= 0.25;
     }
 
     vec3 adjN = rawFaceN;
@@ -2176,6 +2598,20 @@ void main() {
 
     vec3 hopCol = vec3(0.0);
     vec3 hopThr = vec3(1.0);
+    float metalW = clamp(u_metallic, 0.0, 1.0);
+    vec3 metalSurfCol = (metalW > 0.005)
+      ? shadeMetallicCrystal(id, k, pEntry, rd, nRefl, reflRough, dEdge, footprint)
+      : vec3(0.0);
+    if (metalW >= 0.98) {
+      col += thr * alpha * metalSurfCol;
+      thr *= (1.0 - alpha);
+      if (alpha >= 0.999) {
+        lastRefracted = false;
+        break;
+      }
+      ro = pEntry;
+      continue;
+    }
     bool isChippedFacet = isTinyEdgeChip || isCornerVertexChip || isCornerNip;
     float effGlare = (isOcclusionVoid ? min(1.0, glare * 1.15 + 0.12) : (isChippedFacet ? (glare * 0.65) : glare)) * (1.0 - 0.30 * dither);
     float cosEntry = mix(max(0.32, -dot(rd, nRefl)), clamp(-dot(rd, nRefl), 0.0, 1.0), g1);
@@ -2328,6 +2764,11 @@ void main() {
     float exitReflW = mix(0.42 * (1.0 - 0.28 * dither) * (0.15 + 0.85 * glare), 0.5 * (1.0 - 0.85 * isRootCut), g1);
     hopCol += hopThr * (Fo * exitRefl * exitReflW + exitFlash);
     hopThr *= mix(1.0 - Fo * (0.3 + 0.7 * glare * (1.0 - 0.35 * dither)), 1.0 - Fo, g1);
+
+    if (metalW > 0.005) {
+      hopCol = mix(hopCol, metalSurfCol, metalW);
+      hopThr *= (1.0 - metalW);
+    }
 
     if (alpha < 0.999) {
       // Partial transparency / occlusion void feather: blend refracted crystal contribution and continue straight behind!
