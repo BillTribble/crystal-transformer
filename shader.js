@@ -101,7 +101,9 @@ export default {
     mul(M, A, M);
     for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) f.f_toWorld[c * 3 + r] = M[r * 3 + c];
 
-    const fov = P.fov.value * DEG, focal = 0.5 / Math.tan(fov / 2);
+    const fov = P.fov.value * DEG;
+    const portraitZoom = width < height ? Math.min(1.36, Math.pow(height / Math.max(1, width), 0.38)) : 1.0;
+    const focal = (0.5 / Math.tan(fov / 2)) * portraitZoom;
     const D = P.distance.value, R = cluster.radius;
     f.f_focal[0] = focal;
     f.f_pixAngle[0] = 1 / (focal * Math.min(width, height));

@@ -58,7 +58,7 @@ export default [
       { key: 'defaultZoom', label: 'Default zoom level', type: 'range', value: 1, default: 1, min: 0.4, max: 2.5, step: 0.05, uniform: false, desc: 'Baseline camera zoom level persisted across presets, randomizations, and page loads (1.0 = standard framing, >1 = zoomed in closer, <1 = zoomed out).' },
       { key: 'fov', label: 'Lens °', value: 21, min: 8, max: 70, step: 1, uniform: false, desc: 'Field of view: low = flat telephoto, high = wide. With Distance: zoom in from far, or go wide and close.' },
       { key: 'tilt', label: 'Height °', value: 6, min: -75, max: 75, step: 0.5, uniform: false, desc: 'Camera elevation (drag vertically on canvas to orbit).' },
-      { key: 'distance', label: 'Distance', value: 2.9, min: 1, max: 18, step: 0.05, uniform: false, desc: 'Camera distance from the middle of the cluster (scroll or pinch on canvas to zoom).' },
+      { key: 'distance', label: 'Distance', value: 2.15, min: 1, max: 18, step: 0.05, uniform: false, desc: 'Camera distance from the middle of the cluster (scroll or pinch on canvas to zoom).' },
     ],
   },
   {

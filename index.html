@@ -3534,12 +3534,14 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
   const vh = viewportH > 0 ? viewportH : (typeof window !== 'undefined' && window.innerHeight > 0 ? window.innerHeight : 800);
   const aspect = vw / Math.max(1, vh);
   const growSideways = aspect >= 1.0;
+  const portraitBlend = Math.max(0, Math.min(1, (1.0 - aspect) / 0.55));
   cluster.aspect = aspect;
   cluster.growDirection = growSideways ? 'sideways' : 'upwards';
 
   const fovDeg = P.fov ? Number(P.fov.value) : 21;
-  const D = P.distance ? Number(P.distance.value) : 2.9;
-  const focal = 0.5 / Math.tan((fovDeg * DEG) / 2);
+  const D = P.distance ? Number(P.distance.value) : 2.15;
+  const portraitZoom = vw < vh ? Math.min(1.36, Math.pow(vh / Math.max(1, vw), 0.38)) : 1.0;
+  const focal = (0.5 / Math.tan((fovDeg * DEG) / 2)) * portraitZoom;
   const minDim = Math.max(1, Math.min(vw, vh));
   const halfFrustumMin = D / (2 * focal);
   const halfFrustumX = halfFrustumMin * (vw / minDim);
@@ -3674,11 +3676,13 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
 
     if (growSideways) {
       if (i > 0) {
-        const targetSideLean = Math.min(84 * DEG, Math.max(lean0, (56 + 26 * rho0) * DEG));
-        lean0 = lean0 + (targetSideLean - lean0) * dirProgress * Math.min(1, 0.45 + 0.55 * rho0);
+        const baseSideLean = Math.min(78 * DEG, lean0 * 1.24 + 6 * DEG * rho0);
+        const targetSideLean = Math.min(84 * DEG, Math.max(baseSideLean, (56 + 26 * rho0) * DEG));
+        lean0 = baseSideLean + (targetSideLean - baseSideLean) * dirProgress * Math.min(1, 0.45 + 0.55 * rho0);
       }
     } else {
-      lean0 = lean0 * (1 - 0.58 * dirProgress);
+      const portraitFanScale = 1 - 0.38 * portraitBlend;
+      lean0 = lean0 * portraitFanScale * (1 - 0.58 * dirProgress);
     }
 
     const leanAz0 = az0 + 0.35 * node.uLeanAz;
@@ -3757,10 +3761,21 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
     if (growSideways) {
       primBaseL *= 1 + dirProgress * (0.78 * horizComp * Math.min(1.9, aspect) - 0.16 * vertComp);
     } else {
-      primBaseL *= 1 + dirProgress * (0.85 * vertComp * Math.min(1.9, 1 / aspect) - 0.16 * horizComp);
+      primBaseL *= 1 + (dirProgress + 0.18 * portraitBlend) * (0.85 * vertComp * Math.min(1.9, 1 / aspect) - 0.16 * horizComp);
     }
 
     const primBaseR = P.thickness.value * Math.pow(primBaseL, 0.65) * Math.max(0.25, 1 + P.thicknessJitter.value * 0.55 * node.uRadSym) * radMod;
+
+    // Softly bound extreme vertical projection of single nearly-upright outlier spikes so the camera
+    // can sit ~25-30% closer without a lone vertical tip clipping the top/bottom viewport edge,
+    // while keeping full prism thickness `primBaseR` and full horizontal reach on angled crystals.
+    const vertSpanFactor = vertComp * (isDoubleTerm ? 1.42 : 1.04) * (1 - 0.45 * cubicBlend);
+    const spikeCap = growSideways ? 0.64 : 0.88;
+    if (primBaseL * vertSpanFactor > spikeCap) {
+      const rawVS = primBaseL * vertSpanFactor;
+      const cappedVS = spikeCap + 0.12 * Math.tanh((rawVS - spikeCap) / 0.12);
+      primBaseL *= cappedVS / rawVS;
+    }
 
     let baseL = primBaseL;
     let baseR = primBaseR;
@@ -3836,9 +3851,10 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
     // Pull emerging/shrinking crystals smoothly into the heart of the cluster core (0, 0, 0)
     // so disappearing crystals retract inside the permanent core (crystals 0..2) before vanishing.
     const corePull = i < 3 ? 1.0 : smooth01(Math.min(1.0, presence / 0.42));
-    root[0] *= corePull;
+    const latPull = corePull * (1 - 0.28 * portraitBlend);
+    root[0] *= latPull;
     root[1] *= corePull;
-    root[2] *= corePull;
+    root[2] *= latPull;
 
     // Apply procedural growth scaling and continuous crystal count presence to L and r
     const L = Math.max(1e-4, baseL * gScale * presence);
@@ -4108,18 +4124,27 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
     writeCornerNipPlane(rowIdx, 20, kt0, kt1, tipHoriz, tipVert, nipDepth3, 0.90, 1.10, vertCount, L, r);
 
     const half = (isDoubleTerm ? 0.72 : 0.51) * L;
-    const midFrac = isDoubleTerm ? 0.29 : 0.49;
+    const midFrac = cubicBlend * 0.52 + (1 - cubicBlend) * (isDoubleTerm ? 0.29 : 0.49);
     const nodeAlpha = Math.max(0.0, Math.min(1.0, node.alpha * smooth01(Math.min(1.0, presence / 0.55))));
     const scx = root[0] + ax[0] * midFrac * L;
     const scy = root[1] + ax[1] * midFrac * L;
     const scz = root[2] + ax[2] * midFrac * L;
     let maxVertDist2 = 0;
     for (let v = 0; v < vertCount; v++) {
-      const dvx = POLY_V[v * 3] - scx;
-      const dvy = POLY_V[v * 3 + 1] - scy;
-      const dvz = POLY_V[v * 3 + 2] - scz;
+      const vx = POLY_V[v * 3];
+      const vy = POLY_V[v * 3 + 1];
+      const vz = POLY_V[v * 3 + 2];
+      const dvx = vx - scx;
+      const dvy = vy - scy;
+      const dvz = vz - scz;
       const d2 = dvx * dvx + dvy * dvy + dvz * dvz;
       if (d2 > maxVertDist2) maxVertDist2 = d2;
+      if (nodeAlpha > 0.05) {
+        if (vy < minY) minY = vy;
+        if (vy > maxY) maxY = vy;
+        const r2 = vx * vx + vz * vz;
+        if (r2 > maxR2) maxR2 = r2;
+      }
     }
     const sr = Math.max(Math.hypot(half + r * 0.65, rc), Math.sqrt(maxVertDist2)) * 1.05;
     sphereCentres[rowIdx * 4] = scx;
@@ -4139,22 +4164,83 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
     weightedSumZ += scz * w;
     weightTotal += w;
 
-    const tipY = root[1] + ax[1] * L;
-    const botReach = isDoubleTerm ? 0.44 * L : 0.04 * L;
-    const botY = root[1] - ax[1] * botReach;
-    const effPad = r * (0.1 + 0.35 * nodeAlpha);
-    minY = Math.min(minY, Math.min(botY, tipY) - effPad);
-    maxY = Math.max(maxY, Math.max(botY, tipY) + effPad);
-    const rTip = Math.hypot(root[0] + ax[0] * L, root[2] + ax[2] * L) + effPad;
-    const rRoot = Math.hypot(root[0] - ax[0] * botReach, root[2] - ax[2] * botReach) + effPad;
-    maxR2 = Math.max(maxR2, rTip * rTip, rRoot * rRoot);
+    if (vertCount === 0) {
+      const tipY = root[1] + ax[1] * L;
+      const botReach = (1 - cubicBlend) * (isDoubleTerm ? 0.44 * L : 0.04 * L);
+      const botY = root[1] - ax[1] * botReach;
+      const effPad = r * (0.1 + 0.35 * nodeAlpha);
+      minY = Math.min(minY, Math.min(botY, tipY) - effPad);
+      maxY = Math.max(maxY, Math.max(botY, tipY) + effPad);
+      const rTip = Math.hypot(root[0] + ax[0] * L, root[2] + ax[2] * L) + effPad;
+      const rRoot = Math.hypot(root[0] - ax[0] * botReach, root[2] - ax[2] * botReach) + effPad;
+      maxR2 = Math.max(maxR2, rTip * rTip, rRoot * rRoot);
+    }
+  }
+
+  // Smooth 3D bounding-box auto-fit normalization so every preset fills ~68-76% of viewport height
+  // on both desktop and mobile without clipping termination tips during 360° rotation.
+  const rawSpanY = Number.isFinite(minY) && maxY > minY ? (maxY - minY) : 0.58;
+  const rawRadiusXZ = Math.max(0.12, Math.sqrt(maxR2));
+  const targetSpanY = (growSideways ? 0.59 : 0.80) * overScale;
+  const maxSafeSpanY = (growSideways ? 0.62 : 0.84) * overScale;
+  const minSafeSpanY = (growSideways ? 0.55 : 0.76) * overScale;
+  const maxSafeRadiusXZ = (growSideways ? 0.58 : 0.265) * overScale;
+  let desiredFitScale = 1.0;
+  if (rawSpanY > maxSafeSpanY) {
+    desiredFitScale = maxSafeSpanY / rawSpanY;
+  } else if (rawSpanY < minSafeSpanY) {
+    desiredFitScale = Math.min(1.45, targetSpanY / rawSpanY);
+  }
+  if (rawRadiusXZ * desiredFitScale > maxSafeRadiusXZ) {
+    desiredFitScale = Math.min(desiredFitScale, maxSafeRadiusXZ / rawRadiusXZ);
+  }
+  desiredFitScale = Math.max(0.42, Math.min(1.45, desiredFitScale));
+  if (!cluster.centerInit || !Number.isFinite(cluster.fitScale)) {
+    cluster.fitScale = desiredFitScale;
+  } else {
+    const aFit = nodeDt > 0 ? (1 - Math.exp(-2.4 * nodeDt)) : (!evolveOn ? 0.15 : 0.04);
+    cluster.fitScale += (desiredFitScale - cluster.fitScale) * aFit;
+  }
+  const fitScale = cluster.fitScale;
+  if (Math.abs(fitScale - 1.0) > 1e-4) {
+    const d = cluster.data;
+    for (let rowIdx = 0; rowIdx < activeCount; rowIdx++) {
+      const rBase = rowIdx * ROW_W * 4;
+      d[rBase] *= fitScale;
+      d[rBase + 1] *= fitScale;
+      d[rBase + 2] *= fitScale;
+      d[rBase + 3] *= fitScale;
+      d[rBase + 4 + 3] *= fitScale; // L
+      d[rBase + 8 + 3] *= fitScale; // r
+      d[rBase + 12] *= fitScale;    // root.x
+      d[rBase + 13] *= fitScale;    // root.y
+      d[rBase + 14] *= fitScale;    // root.z
+      const pBase = (rowIdx * ROW_W + PLANES_AT) * 4;
+      for (let k = 0; k < CRYSTAL_PLANES; k++) {
+        d[pBase + k * 4 + 3] *= fitScale;
+      }
+      sphereCentres[rowIdx * 4] *= fitScale;
+      sphereCentres[rowIdx * 4 + 1] *= fitScale;
+      sphereCentres[rowIdx * 4 + 2] *= fitScale;
+      sphereCentres[rowIdx * 4 + 3] *= fitScale;
+    }
+    weightedSumX *= fitScale;
+    weightedSumY *= fitScale;
+    weightedSumZ *= fitScale;
+    if (Number.isFinite(minY)) {
+      minY *= fitScale;
+      maxY *= fitScale;
+    }
+    maxR2 *= fitScale * fitScale;
   }
 
   cluster.crystals = Math.max(1, activeCount);
   cluster.activeVectors = cluster.crystals * CRYSTAL_PLANES;
 
   const targetCx = weightTotal > 1e-6 ? weightedSumX / weightTotal : 0;
-  const targetCy = weightTotal > 1e-6 ? weightedSumY / weightTotal : (Number.isFinite(minY) ? 0.5 * (minY + maxY) : 0);
+  const midY = Number.isFinite(minY) ? 0.5 * (minY + maxY) : 0;
+  const volCy = weightTotal > 1e-6 ? weightedSumY / weightTotal : midY;
+  const targetCy = Number.isFinite(minY) ? (0.42 * volCy + 0.58 * midY) : volCy;
   const targetCz = weightTotal > 1e-6 ? weightedSumZ / weightTotal : 0;
   cluster.targetCentreX = targetCx;
   cluster.targetCentreY = targetCy;
@@ -6278,7 +6364,7 @@ const __default_params = [
       { key: 'defaultZoom', label: 'Default zoom level', type: 'range', value: 1, default: 1, min: 0.4, max: 2.5, step: 0.05, uniform: false, desc: 'Baseline camera zoom level persisted across presets, randomizations, and page loads (1.0 = standard framing, >1 = zoomed in closer, <1 = zoomed out).' },
       { key: 'fov', label: 'Lens °', value: 21, min: 8, max: 70, step: 1, uniform: false, desc: 'Field of view: low = flat telephoto, high = wide. With Distance: zoom in from far, or go wide and close.' },
       { key: 'tilt', label: 'Height °', value: 6, min: -75, max: 75, step: 0.5, uniform: false, desc: 'Camera elevation (drag vertically on canvas to orbit).' },
-      { key: 'distance', label: 'Distance', value: 2.9, min: 1, max: 18, step: 0.05, uniform: false, desc: 'Camera distance from the middle of the cluster (scroll or pinch on canvas to zoom).' },
+      { key: 'distance', label: 'Distance', value: 2.15, min: 1, max: 18, step: 0.05, uniform: false, desc: 'Camera distance from the middle of the cluster (scroll or pinch on canvas to zoom).' },
     ],
   },
   {
@@ -7436,7 +7522,7 @@ function run(slug, { manifest, params, presets, randomize, sketch }) {
     }
   }
 
-  const baseDist = P.distance ? P.distance.default : 2.9;
+  const baseDist = P.distance ? P.distance.default : 2.15;
   function distanceForZoom(zoomVal) {
     const z = Math.max(0.4, Math.min(2.5, Number(zoomVal) || 1));
     const minD = P.distance ? P.distance.min : 1;
@@ -8475,7 +8561,9 @@ const __default_shader = {
     mul(M, A, M);
     for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) f.f_toWorld[c * 3 + r] = M[r * 3 + c];
 
-    const fov = P.fov.value * DEG, focal = 0.5 / Math.tan(fov / 2);
+    const fov = P.fov.value * DEG;
+    const portraitZoom = width < height ? Math.min(1.36, Math.pow(height / Math.max(1, width), 0.38)) : 1.0;
+    const focal = (0.5 / Math.tan(fov / 2)) * portraitZoom;
     const D = P.distance.value, R = cluster.radius;
     f.f_focal[0] = focal;
     f.f_pixAngle[0] = 1 / (focal * Math.min(width, height));

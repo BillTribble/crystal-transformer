@@ -94,7 +94,7 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
     }
   }
 
-  const baseDist = P.distance ? P.distance.default : 2.9;
+  const baseDist = P.distance ? P.distance.default : 2.15;
   function distanceForZoom(zoomVal) {
     const z = Math.max(0.4, Math.min(2.5, Number(zoomVal) || 1));
     const minD = P.distance ? P.distance.min : 1;
