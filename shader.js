@@ -1400,47 +1400,149 @@ vec3 insideVolume(int id, vec3 ro, vec3 rd, float len, float jitter, int maxStep
     T *= (1.0 - a) * exp(-sigma * effAbsorbDt);
   }
 
-  // Deep internal iridescent cleavage plane (blends glossy f50bae4 rainbow pipeline with transparent 555e23b cleavage via u_ditherBlend, and Jack Bush thin-film rainbow cracks via u_glimmer)
-  float crackRainbowGate = max(u_rainbow, g1);
-  if ((u_fractures > 0.01 || u_iridescence > 0.01 || u_flash > 0.01) && crackRainbowGate > 0.001) {
+  // Warped 3D internal fracture / cleavage-crack sheets (replaces 1D wire-line rutilations & flat cleavage discs)
+  // Subtle translucent hairline fracture planes (~6% veil) when off-angle; flares with golden/silvery/iridescent
+  // specular reflection and thin-film Newton-ring glints when 3D crack normal catches the light as crystal rotates.
+  float effHairline = clamp(u_hairlineFractures * u_patinaMacro * u_surfaceMacro, 0.0, 2.0);
+  float effNeedles = clamp(u_needles / 6.0, 0.0, 2.0);
+  float effCrackDrive = clamp(u_fractures * 1.35 + effNeedles * 0.65 + effHairline * 0.55 + (u_iridescence * 0.16 + u_flash * 0.18) * max(u_rainbow, g1), 0.0, 2.2);
+  if (effCrackDrive > 0.01 && len > 1e-4) {
     float uid = crystalUid(id);
-    float bounceCleaveW = isPrimaryVol ? 1.0 : mix(1.0 - 0.88 * dither, 1.0, g1);
-    float effFractures = mix(clamp(u_fractures + u_iridescence * 0.22 + u_flash * 0.25, 0.0, 1.0), u_fractures, g1);
-    float fracRoll = mix(hash(vec3(uid, f_seed, 91.0)), hash(vec3(float(id), f_seed, 91.0)), g1);
-    float fracW = mix(smoothstep(fracRoll - 0.14, fracRoll + 0.14, effFractures), step(fracRoll, effFractures), g1) * bounceCleaveW;
-    if (fracW > 1e-4) {
-      vec3 hj = mix(vec3(uid, f_seed, 93.0), vec3(float(id), f_seed, 93.0), g1);
-      vec3 fn = normalize(vec3(hash(hj), hash(hj + 1.0), hash(hj + 2.0)) - 0.5);
-      vec3 fc = root + axis * L * (0.25 + 0.4 * hash(hj + 3.0));
-      float dn = dot(fn, rd);
-      if (abs(dn) > 1e-4) {
-        float t = dot(fn, fc - ro) / dn;
-        if (t > 0.0 && t < len) {
-          vec3 hp = ro + rd * t;
-          vec4 v = texture(u_incl, hp * 2.5 + off);
-          float extent = length(hp - fc) / (r * (1.6 + 0.35 * u_iridescence * (1.0 - g1)));
-          float mask = fracW * (1.0 - smoothstep(0.55, mix(0.78, 0.75, g1), extent + 0.45 * (v.b - 0.5) + 0.25 * v.r));
-          if (mask > 0.0) {
-            float filmGloss = v.b * 2.5 + length(hp - fc) * 6.0 + (hueOff + abs(dn) * 2.2) * (1.0 - g1);
-            float filmDither = v.b * 0.85 + length(hp - fc) * 1.4 + hueOff + abs(dn) * 1.2 + (hash(floor((hp - root) * 520.0)) - 0.5) * 0.32;
-            float film = mix(filmGloss, filmDither, dither);
-            vec3 jbIrid = 0.5 + 0.5 * cos(TAU * (film + vec3(0.0, 0.33, 0.67)));
-            vec3 baseIrid = mix(spectralRainbow(film), mix(vec3(0.96, 0.97, 1.0), spectralRainbow(film), clamp(u_iridescence * 0.72, 0.0, 0.85)), dither);
-            vec3 irid = mix(baseIrid, jbIrid, g1);
-            float fr = mix(0.18 + 0.82 * pow(1.0 - abs(dn), 3.2), 0.12 + 0.78 * pow(1.0 - abs(dn), 3.4), dither);
-            fr = mix(fr, 0.15 + 0.85 * pow(1.0 - abs(dn), 4.0), g1);
-            vec3 rawRefl = env(reflect(rd, fn), mix(0.03, 0.05, dither));
-            vec3 reflGloss = rawRefl + f_ambient * (0.35 * u_flash + 0.2 * u_iridescence) * (1.0 - g1);
-            vec3 reflDither = (rawRefl / (1.0 + 1.1 * max(rawRefl.r, max(rawRefl.g, rawRefl.b)))) + f_ambient * (0.16 * u_flash + 0.18 * u_iridescence);
-            vec3 refl = mix(reflGloss, reflDither, dither);
-            float glowGloss = mix(u_fractureGlow * (1.0 + u_iridescence * 1.2 + u_flash * 1.45) * u_rainbow, u_fractureGlow * glimmer, g1);
-            float glowDither = min(u_fractureGlow, 2.2) * 0.65 * mix(u_rainbow, glimmer, g1);
-            float glowBoost = mix(glowGloss, glowDither, dither);
-            scat += T * mask * glowBoost * fr * irid * refl;
-            T *= 1.0 - mix(mix(0.55, 0.26, dither), 0.6, g1) * mask * fr * clamp(mix(u_rainbow, glimmer, g1), 0.0, 1.0);
-          }
-        }
+    float bounceCleaveW = isPrimaryVol ? 1.0 : mix(0.42 * (1.0 - 0.65 * dither), 0.70, g1);
+
+    // Studio key, rim, and fill light directions transformed into crystal space
+    vec3 lightDir1 = normalize(vec3(f_lights[0], f_lights[1], f_lights[2]) * f_toWorld);
+    vec3 lightDir2 = normalize(vec3(f_lights[2 * LS], f_lights[2 * LS + 1], f_lights[2 * LS + 2]) * f_toWorld);
+    vec3 lightDir3 = normalize(vec3(f_lights[3 * LS], f_lights[3 * LS + 1], f_lights[3 * LS + 2]) * f_toWorld);
+    vec3 lightDir4 = normalize(vec3(f_lights[LS], f_lights[LS + 1], f_lights[LS + 2]) * f_toWorld);
+
+    float needleTintAmt = clamp(u_needles * 0.15, 0.0, 0.88);
+    vec3 rutileGold = normalize(lin(u_needleColour) + vec3(0.08)) * 1.38;
+    vec3 baseCrackTint = mix(vec3(0.95, 0.97, 1.0), rutileGold, needleTintAmt);
+    float widthScale = clamp(u_needleWidth / 0.0025, 0.55, 2.2);
+    float crackRainbowGate = max(u_rainbow, g1);
+    float invPatchScale = 1.0 / max(r * 1.45, 0.045);
+
+    int maxCrackFamilies = isPrimaryVol
+      ? ((u_isMobile > 0.5) ? 2 : ((u_needles >= 3.0 || u_fractures >= 0.30) ? 4 : 3))
+      : 1;
+
+    for (int k = 0; k < maxCrackFamilies; k++) {
+      vec3 hSeed = vec3(uid * 19.3 + float(k) * 37.7, f_seed + float(k) * 17.1, 93.0 + float(k) * 23.0);
+      float famRoll = hash(hSeed + 0.7);
+      float famWeight = smoothstep(famRoll * 0.42 - 0.06, famRoll * 0.42 + 0.24, effCrackDrive) * bounceCleaveW;
+      if (famWeight <= 1e-4) continue;
+
+      // Rhombohedral / conchoidal 3D cleavage plane orientation in crystal space
+      float azK = hash(hSeed) * TAU + float(k) * 2.094395;
+      float tiltK = mix(0.42, 1.15, hash(hSeed + 1.3));
+      float axialSign = ((k & 1) == 0) ? 1.0 : -1.0;
+      vec3 nLocal0 = normalize(vec3(cos(azK) * sin(tiltK), axialSign * cos(tiltK), sin(azK) * sin(tiltK)));
+      vec3 crackNormal_k = normalize(t1 * nLocal0.x + axis * nLocal0.y + t2 * nLocal0.z);
+      vec3 crackTan = normalize(cross(crackNormal_k, axis + t1 * 0.35));
+      vec3 crackBit = cross(crackNormal_k, crackTan);
+
+      // Anchor point fc_k of this 3D internal fracture sheet inside the crystal body
+      float hgtAnchor = mix(0.20, 0.78, (float(k) + 0.22 + 0.55 * hash(hSeed + 3.1)) / float(max(maxCrackFamilies, 2)));
+      vec3 fc_k = root + axis * (L * hgtAnchor);
+      vec3 seed = vec3(uid * 5.7 + float(k) * 19.1, f_seed * 0.73 + float(k) * 8.3, 41.7 + float(k) * 13.3);
+      float offset_k = -dot(fc_k - root, crackNormal_k) - 0.05 * r;
+
+      // Exact ray intersection with gently curved, monotone 3D cleavage-crack sheet (zero closed-loop bullseyes!)
+      float dn = dot(rd, crackNormal_k);
+      float signedDn = (dn >= 0.0 ? 1.0 : -1.0) * max(abs(dn), 0.08);
+      float t = dot(fc_k - ro, crackNormal_k) / signedDn;
+      if (t < -0.12 * len || t > 1.12 * len) continue;
+
+      // 2-step Newton refinement on the gently warped 3D crack surface:
+      // crackPlane = abs(dot(q, crackNormal_k) + offset_k + 0.18 * n3(q * 3.5))
+      for (int it = 0; it < 2; it++) {
+        vec3 hpIt = ro + rd * clamp(t, 0.0, len);
+        vec3 qIt = hpIt - root;
+        float uIt = dot(hpIt - fc_k, crackTan) * invPatchScale;
+        float vIt = dot(hpIt - fc_k, crackBit) * invPatchScale;
+        float gentleArc = r * (0.07 * (uIt * uIt - 0.30) + 0.04 * sin(vIt * 1.9 + seed.x));
+        float signedSurface = dot(qIt, crackNormal_k) + offset_k + gentleArc + 0.10 * r * n3(qIt * 3.5 + seed);
+        t -= signedSurface / signedDn;
       }
+      if (t <= 0.005 * len || t >= 0.995 * len) continue;
+
+      vec3 hp = ro + rd * t;
+      vec3 q = hp - root;
+      float u = dot(hp - fc_k, crackTan) * invPatchScale;
+      float v = dot(hp - fc_k, crackBit) * invPatchScale;
+      float gentleArc = r * (0.07 * (u * u - 0.30) + 0.04 * sin(v * 1.9 + seed.x));
+      float crackPlane = abs(dot(q, crackNormal_k) + offset_k + gentleArc + 0.10 * r * n3(q * 3.5 + seed));
+      float sheetHit = 1.0 - smoothstep(0.004 * r, 0.024 * r, crackPlane);
+      if (sheetHit <= 1e-4) continue;
+
+      // Monotone wall-anchored 3D fracture patch envelope (zero closed loops, zero 1D painted lines!)
+      // Each crack is a true 2D curved cleavage sheet inside the 3D crystal that feathers out organically.
+      float uSign = ((k & 1) == 0) ? 1.0 : -1.0;
+      float uCoord = u * uSign;
+      float patchNoise = n3(q * 2.2 + seed);
+      float patchFine = n3(q * 5.8 + seed * 1.73);
+      float patchMicro = n3(q * 12.5 + seed * 2.41);
+      float uFront = mix(-0.02, 0.42, hash(hSeed + 5.3))
+                   + 0.24 * sin(v * 2.1 + seed.x)
+                   + 0.12 * cos(v * 4.3 + seed.y)
+                   + 0.22 * (patchNoise - 0.5)
+                   + 0.10 * (patchFine - 0.5);
+      float frontDist = uFront - uCoord;
+      float patchField = frontDist + 0.14 + 0.12 * (patchFine - 0.5);
+      float patchEnv = smoothstep(0.08, 0.45, patchField);
+      float vSpan = 1.0 - smoothstep(0.52, 0.94, abs(v + 0.18 * (patchNoise - 0.5)));
+      float endTaper = smoothstep(0.008 * len, 0.05 * len, t) * smoothstep(0.008 * len, 0.05 * len, len - t);
+      // Feathery crystalline cleavage sheet texture (internal air-film pockets & stepped cleavage terraces)
+      float featherSheet = smoothstep(0.22, 0.76, patchFine * 0.62 + patchMicro * 0.38) * (0.55 + 0.45 * widthScale);
+      float mask = famWeight * sheetHit * patchEnv * vSpan * endTaper;
+      if (mask <= 1e-4) continue;
+
+      // 3D crack sheet normal nCrack (gently curved conchoidal surface + fine feathery step-fracture facets)
+      float epsP = 0.028;
+      float dU = n3((q + crackTan * epsP) * 5.2 + seed) - n3((q - crackTan * epsP) * 5.2 + seed);
+      float dV = n3((q + crackBit * epsP) * 5.2 + seed) - n3((q - crackBit * epsP) * 5.2 + seed);
+      float terraceStep = floor(patchFine * 5.0) * 0.025 + (patchMicro - 0.5) * 0.08;
+      vec3 nCrack = normalize(
+        crackNormal_k
+        + crackTan * (0.10 * uCoord + dU * 0.22 + terraceStep)
+        + crackBit * (0.07 * cos(v * 1.9 + seed.x) + dV * 0.22 - terraceStep * 0.7)
+      );
+      if (dot(rd, nCrack) > 0.0) nCrack = -nCrack;
+
+      // View-dependent light-catching specular glint:
+      // Almost invisible (~5-8% faint ghostly veil) when viewed off-angle;
+      // flashes brilliantly when reflCrack = reflect(rd, nCrack) aligns with studio lights or grazing TIR.
+      vec3 reflCrack = reflect(rd, nCrack);
+      float catchLight = pow(max(0.0, dot(reflCrack, lightDir1)), 18.0)
+                       + 0.8 * pow(max(0.0, dot(reflCrack, lightDir2)), 14.0)
+                       + 0.5 * pow(1.0 - abs(dot(rd, nCrack)), 6.0);
+      catchLight += 0.65 * pow(max(0.0, dot(reflCrack, lightDir3)), 16.0)
+                  + 0.45 * pow(max(0.0, dot(reflCrack, lightDir4)), 14.0);
+
+      // Modulate crack brightness by (0.06 + 2.8 * catchLight):
+      // Off-angle: subtle translucent feathery fracture plane; On-angle: bright specular cleavage flash!
+      float crackMod = (0.06 * (0.45 + 0.65 * featherSheet) + 2.8 * catchLight * (0.65 + 0.55 * featherSheet));
+
+      // Subtle thin-film Newton-ring rainbow interference across the crack face when it catches the light
+      float cosCrack = abs(dot(rd, nCrack));
+      float filmPhase = (frontDist * 0.85 + v * 0.35 + patchNoise * 0.45 + patchFine * 0.25) * (0.45 + 0.55 * cosCrack) + hueOff + float(k) * 0.31;
+      vec3 newtonRings = 0.5 + 0.5 * cos(TAU * (filmPhase + vec3(0.0, 0.33, 0.67)));
+      vec3 thinFilmCol = mix(spectralRainbow(filmPhase), newtonRings, mix(0.42, 0.78, g1));
+      float iridWeight = clamp((0.34 + 0.50 * u_iridescence + 0.22 * u_fractures) * crackRainbowGate * (1.0 - 0.40 * needleTintAmt), 0.0, 0.86);
+      float glintIrid = iridWeight * smoothstep(0.05, 0.55, catchLight + 0.20 * (1.0 - cosCrack));
+      vec3 crackCol = mix(baseCrackTint, thinFilmCol * (baseCrackTint + vec3(0.26)), glintIrid);
+
+      vec3 rawRefl = env(reflCrack, mix(0.03, 0.05, dither));
+      vec3 reflComp = rawRefl / (1.0 + 0.85 * max(rawRefl.r, max(rawRefl.g, rawRefl.b)));
+      vec3 envIllum = mix(
+        f_ambient * 0.48 + vec3(0.22),
+        reflComp * 0.85 + f_ambient * 0.52 + vec3(0.58),
+        clamp(catchLight * 1.6, 0.0, 1.0)
+      );
+      float glowScale = mix(max(u_fractureGlow, 1.15) * 0.64, min(max(u_fractureGlow, 1.15), 2.2) * 0.48, dither) * (1.0 + 0.20 * effNeedles);
+      scat += T * mask * crackMod * glowScale * crackCol * envIllum;
+      T *= 1.0 - clamp(mask * (0.025 * featherSheet + 0.24 * clamp(catchLight, 0.0, 1.5)), 0.0, 0.48);
     }
   }
   trans = T;
@@ -1496,114 +1598,6 @@ void insidePrimaryExtras(int id, vec3 ro, vec3 rd, float len, float travelled, i
             : phLightIn;
           scat += T * sheet * phCol * 1.45;
           T *= 1.0 - 0.45 * sheet;
-        }
-      }
-    }
-  }
-
-  // Rutile needles (evaluated once on primary ray outside bounce loop)
-  if (u_needles > 0.01) {
-    int maxNeedles = clamp(int(ceil(u_needles)), 0, (u_isMobile > 0.5) ? 4 : 12);
-    for (int j = 0; j < maxNeedles; j++) {
-      float needleWeight = clamp(u_needles - float(j), 0.0, 1.0);
-      if (needleWeight <= 1e-4) break;
-      vec3 hj = vec3(uid, float(j), f_seed);
-      vec3 h3 = vec3(hash(hj + 0.5), hash(hj + 1.5), hash(hj + 2.5));
-      vec3 h4 = vec3(hash(hj + 3.5), hash(hj + 4.5), hash(hj + 5.5));
-      vec3 u = normalize(h4 - 0.5 + axis * 0.15);
-      float nl = L * (0.25 + 0.5 * hash(hj + 6.5));
-      vec3 radial = (h3 - 0.5) * 1.4 * r;
-      radial -= axis * dot(radial, axis);
-      vec3 a = root + axis * L * (0.15 + 0.6 * h3.y) + radial - u * nl * 0.5;
-      vec3 w0 = ro - a;
-      float b = dot(rd, u), d = dot(rd, w0), e = dot(u, w0);
-      float den = max(1.0 - b * b, 1e-6);
-      float s = clamp((b * e - d) / den, 0.0, len);
-      float tq = clamp(e + b * s, 0.0, nl);
-      s = clamp(b * tq - d, 0.0, len);
-      vec3 dv = w0 + rd * s - u * tq;
-      float dist = length(dv);
-      float fp = (travelled + s) * f_pixAngle;
-      float cov = needleWeight * (1.0 - smoothstep(u_needleWidth - fp, u_needleWidth + fp, dist));
-      cov *= min(1.0, u_needleWidth / max(fp, 1e-6));
-      if (cov > 0.001) {
-        vec3 cn = dv / max(dist, 1e-6);
-        vec3 gold = lin(u_needleColour);
-        vec3 shade = gold * (lightIn * 0.4 + lights(f_toWorld * reflect(rd, cn), 0.05) * (0.8 + u_bloom * 1.4));
-        scat += T * cov * shade;
-        T *= 1.0 - cov;
-      }
-    }
-  }
-
-  // Occasional razor-thin internal & sub-surface hairline fractures (u_hairlineFractures)
-  // Monotone single-valued gently curved cleavage traces near terminations & edges (zero closed-loop bullseye rings!)
-  float effHairline = clamp(u_hairlineFractures * u_patinaMacro * u_surfaceMacro, 0.0, 2.0);
-  if (effHairline > 0.005) {
-    vec3 p0 = body(id, PA).xyz;
-    vec3 t1 = p0 - axis * dot(p0, axis);
-    float t1Len = length(t1);
-    t1 = t1Len > 1e-4 ? (t1 / t1Len) : normalize(cross(axis, vec3(0.577, 0.577, 0.577)));
-    vec3 t2 = cross(axis, t1);
-    float invScale = 1.0 / max(r * 1.35, 0.04);
-    float fp = max(travelled * f_pixAngle, 0.0008);
-
-    int maxFracPlanes = (u_isMobile > 0.5) ? 1 : 2;
-    int maxFracSlices = (u_isMobile > 0.5) ? 1 : 2;
-    for (int fIdx = 0; fIdx < maxFracPlanes; fIdx++) {
-      vec3 hSeed = vec3(uid * 19.0 + float(fIdx) * 37.0, f_seed + 71.0, 103.0);
-      float azF = hash(hSeed) * TAU;
-      float tiltF = mix(0.38, 0.68, hash(hSeed + 1.1));
-      vec3 fracN = normalize(vec3(cos(azF) * sin(tiltF), cos(tiltF), sin(azF) * sin(tiltF)));
-      vec3 fracTan = normalize(cross(fracN, vec3(-sin(azF), 0.25, cos(azF))));
-      vec3 fracBit = cross(fracN, fracTan);
-      vec3 fracWorldN = normalize(t1 * fracN.x + axis * fracN.y + t2 * fracN.z);
-      float anchorH = mix(0.52, 0.86, hash(hSeed + 2.3));
-      vec2 rimDir = vec2(cos(azF + 0.4), sin(azF + 0.4));
-      vec3 lpAnchor = vec3(rimDir.x * r * 0.82 * invScale, anchorH * L * invScale, rimDir.y * r * 0.82 * invScale);
-      vec3 seedOff = vec3(uid * 3.7 + float(fIdx) * 11.3, float(fIdx) * 7.1, f_seed * 0.29);
-
-      // Sub-surface & shallow internal monotone hairline cleavage traces
-      for (int sl = 0; sl < maxFracSlices; sl++) {
-        float tSlice = (sl == 0) ? min(len * 0.04, r * 0.028) : min(len * 0.16, r * 0.10);
-        vec3 hp = ro + rd * tSlice;
-        vec3 rel = hp - root;
-        float axial = dot(rel, axis);
-        float hgt = clamp(axial / max(L, 1e-3), 0.0, 1.0);
-        float radFrac = clamp(length(rel - axis * axial) / max(r, 1e-3), 0.0, 1.2);
-        vec3 lp = vec3(dot(rel, t1), axial, dot(rel, t2)) * invScale;
-
-        vec3 dLp = lp - lpAnchor;
-        float uAlong = dot(dLp, fracTan);
-        float wAcross = dot(dLp, fracBit);
-        // Natural conchoidal feather arc that is strictly monotone in dot(dLp, fracN) (df/dv == 1 -> never forms closed bullseye loops!)
-        float gentleBend = 0.12 * sin(uAlong * 3.6 + seedOff.x)
-                         + 0.045 * cos(uAlong * 7.2 + wAcross * 2.2 + seedOff.y)
-                         + 0.28 * uAlong * uAlong;
-        float fVal = dot(dLp, fracN) + gentleBend;
-
-        float spanAlong = mix(0.32, 0.52, fract(hash(hSeed + 3.1) * 13.7));
-        float uNorm = length(vec2(uAlong, wAcross * 0.75)) / spanAlong;
-        float endTaper = 1.0 - smoothstep(0.25, 1.0, uNorm);
-        float edgeBias = smoothstep(0.42, 0.85, radFrac * 0.72 + hgt * 0.48);
-        float crystalGate = smoothstep(0.32, 0.56, hash(hSeed + 4.7) + 0.22 * min(effHairline, 1.2));
-        float pocket = endTaper * edgeBias * crystalGate;
-
-        if (pocket > 0.005) {
-          float fwF = max(fp * invScale * 1.4, 0.006);
-          float targetW = (0.0075 + 0.0035 * min(effHairline, 1.2)) * (sl == 1 ? 1.25 : 1.0);
-          float effW = max(targetW, fwF);
-          float aaScale = clamp(targetW / effW, 0.18, 1.0);
-          float lineMask = (1.0 - smoothstep(effW * 0.20, effW, abs(fVal))) * aaScale * pocket;
-          if (lineMask > 0.001) {
-            float slWeight = (sl == 0) ? 0.82 : 0.42;
-            float graze = 0.35 + 0.65 * pow(1.0 - abs(dot(rd, fracWorldN)), 2.2);
-            vec3 tirRefl = env(reflect(rd, fracWorldN), 0.03);
-            vec3 silvCol = vec3(0.95, 0.97, 1.0) * (0.42 + 0.40 * f_ambient + 0.55 * (tirRefl / (1.0 + max(tirRefl.r, max(tirRefl.g, tirRefl.b)))));
-            float strength = clamp(lineMask * slWeight * graze * effHairline * 0.72, 0.0, 0.65);
-            scat += T * strength * silvCol;
-            T *= 1.0 - 0.15 * strength;
-          }
         }
       }
     }
