@@ -307,11 +307,12 @@ const cubeLx = new Float32Array(18), cubeLy = new Float32Array(18), cubeLz = new
 const cubeOffR = new Float32Array(18), cubeOffL = new Float32Array(18);
 
 /**
- * Orthogonal / pseudo-cubic block planes (`prismSides = 4`, `aspect = 1.0`, `tipSlope = 0.0` flat top/bottom)
- * used for Spanish Navajún Pyrite Cubes (`FeS2`) and stepped Bismuth Hopper blocks (`Bi`).
+ * Orthogonal / pseudo-cubic & non-cubic Bismuth Hopper block planes (`prismSides = 4`, flat top/bottom)
+ * used for Spanish Navajún Pyrite Cubes (`FeS2`, equant 1:1:1 cubes) and varied 3D Bismuth Hopper
+ * morphologies (`Bi`, cantilevered wings, tall pagoda spires, L-brackets, parallel-ribbed slabs & fin bars).
  */
 function computeCubeBlockPlanes(
-  hopperBlend, chamfer, faceJitterAmt, fs, L, r,
+  hopperBlend, morphType, chamfer, faceJitterAmt, fs, L, r,
   outLx, outLy, outLz, outOffR, outOffL
 ) {
   const isoScale = Math.max(1.05, Math.min(2.15, (0.36 * L) / Math.max(r, 1e-4)));
@@ -319,19 +320,40 @@ function computeCubeBlockPlanes(
   const sinOct = 0.81649658;
   const cos45 = 0.70710678;
   const cubeHalf = isoScale * 0.92;
-  // Keep octahedral {111} and dodecahedral {110} planes out near the cube vertices/edges (sqrt(3)=1.732, sqrt(2)=1.414)
-  // so all 6 {100} cube faces are full orthogonal squares with only tiny mineral edge/corner micro-bevels.
-  const octDist = cubeHalf * (1.70 - 0.14 * chamfer);
-  const dodDist = cubeHalf * (1.395 - 0.08 * chamfer);
+
+  // Non-cubic 3D aspect ratios (scaleX, scaleY, scaleZ) & trapezoidal flare per Bismuth morphology (0..4):
+  //   0: Broad Cantilevered BGS Hopper Wing (wide horizontal span, shallower depth, upward trapezoidal flare)
+  //   1: Tall Stepped Pagoda Spire / Ziggurat Tower (elongated vertical column tapering upward)
+  //   2: Open-Sided L-Bracket / Greek-Key Tower (tall rectangular plate)
+  //   3: Wide Parallel-Ribbed Terrace Slab ("Rainbow Metal" flat cantilevered comb plate)
+  //   4: Stepped Rhombohedral Fin Bar / Twin Bracket (narrow front, deep side profile)
+  const mType = ((morphType | 0) % 5 + 5) % 5;
+  const biScaleX = mType === 0 ? 1.46 : mType === 1 ? 0.78 : mType === 2 ? 1.16 : mType === 3 ? 1.44 : 0.68;
+  const biScaleY = mType === 0 ? 1.02 : mType === 1 ? 1.56 : mType === 2 ? 1.30 : mType === 3 ? 0.70 : 1.34;
+  const biScaleZ = mType === 0 ? 0.62 : mType === 1 ? 0.76 : mType === 2 ? 0.66 : mType === 3 ? 0.54 : 1.12;
+  const biTrapY  = mType === 0 ? 0.085 : mType === 1 ? -0.095 : mType === 2 ? 0.045 : mType === 3 ? -0.055 : 0.065;
+
+  const scaleX = 1.0 + (biScaleX - 1.0) * hopperBlend;
+  const scaleY = 1.0 + (biScaleY - 1.0) * hopperBlend;
+  const scaleZ = 1.0 + (biScaleZ - 1.0) * hopperBlend;
+  const hx = cubeHalf * scaleX;
+  const hy = cubeHalf * scaleY;
+  const hz = cubeHalf * scaleZ;
+
+  // Keep octahedral {111} and dodecahedral {110} planes out near the true (hx, hy, hz) vertices/edges
+  // so non-cubic spires, wings, and flat slabs retain crisp 90-degree corners without 45-degree clipping.
+  const octDist = (hx + hy + hz) * cosOct * (0.985 - 0.08 * chamfer);
   const fCubeVar = (k, scale = 0.07) => Math.max(0.88, Math.min(1.12, 1 + faceJitterAmt * scale * fs[k]));
   for (let m = 0; m < 4; m++) {
     const aCube = m * 0.5 * Math.PI;
     const kCube = m * 2;
-    const rhoShear = 0.042 * hopperBlend * ((m & 1) === 0 ? 1 : -1);
+    const isXFace = (m & 1) === 0;
+    const faceHalf = isXFace ? hx : hz;
+    const rhoShear = (isXFace ? biTrapY : -0.042) * hopperBlend;
     setLocalPlane(
       outLx, outLy, outLz, outOffR, outOffL, kCube,
       Math.cos(aCube), rhoShear, Math.sin(aCube),
-      cubeHalf * fCubeVar(kCube, 0.08), 0.52 * rhoShear
+      faceHalf * fCubeVar(kCube, 0.08), 0.52 * rhoShear
     );
     const aOct = (m + 0.5) * 0.5 * Math.PI;
     const kBotOct = m * 2 + 1;
@@ -347,13 +369,14 @@ function computeCubeBlockPlanes(
       octDist * fCubeVar(kTopOct, 0.05), 0.52 * cosOct
     );
     const kDod = 8 + m * 2 + 1;
+    const dodDist = (faceHalf + hy) * cos45 * (0.988 - 0.056 * chamfer);
     setLocalPlane(
       outLx, outLy, outLz, outOffR, outOffL, kDod,
       cos45 * Math.cos(aCube), cos45, cos45 * Math.sin(aCube),
       dodDist * fCubeVar(kDod, 0.05), 0.52 * cos45
     );
   }
-  const topBotHalf = cubeHalf * (1.0 - 0.06 * hopperBlend) * fCubeVar(16, 0.06);
+  const topBotHalf = hy * fCubeVar(16, 0.06);
   setLocalPlane(outLx, outLy, outLz, outOffR, outOffL, 16, 0, -1, 0, topBotHalf, -0.52);
   setLocalPlane(outLx, outLy, outLz, outOffR, outOffL, 17, 0, 1, 0, topBotHalf, 0.52);
 }
@@ -1361,18 +1384,33 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
       node.branchRadial0[0] = rx; node.branchRadial0[1] = ry; node.branchRadial0[2] = rz;
     }
 
+    const seedInt = Math.floor(Math.abs(P.seed ? Number(P.seed.value) : 64));
+    const nodeUidInt = Math.max(1, Math.round(node.uid || (i + 1)));
+    const hopperMorph = (nodeUidInt - 1 + (seedInt % 5)) % 5;
+    node.hopperMorph = hopperMorph;
+
     if (hopperBlend > 1e-4) {
-      // Parallel / stepped ziggurat Bismuth Hopper block orientation: all sub-crystals share a
-      // coherent crystallographic frame (tilted ~16°–24° toward the camera) so sub-crystals step
-      // cleanly around the hero block without slicing diagonally across its Greek-key hopper wells.
-      const zigAz = (0.22 + 0.08 * ((i % 3) - 1)) * Math.PI;
-      const zigLean = (i === 0 ? 16 : (18 + 5 * (i % 3))) * DEG;
-      const zAx0 = Math.sin(zigLean) * Math.cos(zigAz);
+      // Varied 3D Bismuth Hopper cluster architectures (post-015966):
+      // Combine upright stepped pagoda spires (morph 1), broad cantilevered BGS wings (morph 0),
+      // angled rhombohedral L-brackets (morph 2), parallel-ribbed terrace slabs (morph 3), and
+      // jutting corner fin bars (morph 4) at distinct crystallographic tilts and azimuths.
+      const archMode = seedInt % 3;
+      const azSpread = (i === 0)
+        ? (0.18 + 0.08 * archMode) * Math.PI
+        : (0.20 * Math.PI + i * (TAU / 5.4) + 0.42 * (seedInt % 7));
+      const leanDeg = (i === 0)
+        ? (archMode === 1 ? 10 : 18)
+        : (hopperMorph === 1 ? 11 + 5 * (i % 2)
+          : hopperMorph === 0 ? 24 + 8 * (i % 2)
+          : hopperMorph === 3 ? 46 + 10 * (i % 2)
+          : 34 + 14 * (i % 3));
+      const zigLean = leanDeg * DEG;
+      const zAx0 = Math.sin(zigLean) * Math.cos(azSpread);
       const zAx1 = Math.cos(zigLean);
-      const zAx2 = Math.sin(zigLean) * Math.sin(zigAz);
-      ax[0] = ax[0] * (1 - 0.88 * hopperBlend) + zAx0 * (0.88 * hopperBlend);
-      ax[1] = ax[1] * (1 - 0.88 * hopperBlend) + zAx1 * (0.88 * hopperBlend);
-      ax[2] = ax[2] * (1 - 0.88 * hopperBlend) + zAx2 * (0.88 * hopperBlend);
+      const zAx2 = Math.sin(zigLean) * Math.sin(azSpread);
+      ax[0] = ax[0] * (1 - 0.86 * hopperBlend) + zAx0 * (0.86 * hopperBlend);
+      ax[1] = ax[1] * (1 - 0.86 * hopperBlend) + zAx1 * (0.86 * hopperBlend);
+      ax[2] = ax[2] * (1 - 0.86 * hopperBlend) + zAx2 * (0.86 * hopperBlend);
       const zal = Math.hypot(ax[0], ax[1], ax[2]) || 1;
       ax[0] /= zal; ax[1] /= zal; ax[2] /= zal;
     }
@@ -1403,8 +1441,9 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
       sx[k] = node.u0[k];
       sz[k] = node.v0[k];
     }
-    const quantTwist = Math.round(node.rot0 / (0.5 * Math.PI)) * (0.5 * Math.PI) + 0.18;
-    const tw = node.rot0 * (1 - 0.88 * hopperBlend) + quantTwist * (0.88 * hopperBlend);
+    const twistStep = (hopperMorph === 3 || hopperMorph === 4) ? (0.25 * Math.PI) : (0.5 * Math.PI);
+    const quantTwist = Math.round(node.rot0 / twistStep) * twistStep + 0.16 * ((nodeUidInt % 3) - 1);
+    const tw = node.rot0 * (1 - 0.86 * hopperBlend) + quantTwist * (0.86 * hopperBlend);
     const rho = node.rho;
     const az = node.az0 || (i * GOLDEN + 0.38 * node.uAz);
     const isDoubleTerm = true;
@@ -1419,7 +1458,15 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
       primBaseL *= 1 + (dirProgress + 0.18 * portraitBlend) * (0.85 * vertComp * Math.min(1.9, 1 / aspect) - 0.16 * horizComp);
     }
 
-    const primBaseR = P.thickness.value * Math.pow(primBaseL, 0.65) * Math.max(0.25, 1 + P.thicknessJitter.value * 0.55 * node.uRadSym) * radMod;
+    let primBaseR = P.thickness.value * Math.pow(primBaseL, 0.65) * Math.max(0.25, 1 + P.thicknessJitter.value * 0.55 * node.uRadSym) * radMod;
+    if (hopperBlend > 1e-4) {
+      // Scale sub-crystal axial length & radial span by morphology so pagoda spires tower above
+      // while cantilevered BGS wings and parallel-ribbed slabs span wide horizontally.
+      const biLenMult = hopperMorph === 1 ? 1.24 : hopperMorph === 2 ? 1.12 : hopperMorph === 3 ? 0.86 : 1.04;
+      const biRadMult = hopperMorph === 0 ? 1.20 : hopperMorph === 3 ? 1.16 : hopperMorph === 1 ? 0.88 : 1.02;
+      primBaseL *= 1.0 + (biLenMult - 1.0) * hopperBlend;
+      primBaseR *= 1.0 + (biRadMult - 1.0) * hopperBlend;
+    }
 
     // Softly bound extreme vertical projection of single nearly-upright outlier spikes so the camera
     // can sit ~25-30% closer without a lone vertical tip clipping the top/bottom viewport edge,
@@ -1504,14 +1551,17 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
     }
 
     if (hopperBlend > 1e-4 && i > 0) {
-      // Terraced ziggurat stair-step offsets around the primary hopper block (like the BGS & Wikipedia specimens)
+      // Architectural 3D Bismuth cluster offsets (spires rising above, cantilevered wings spreading out,
+      // and stepped L-brackets / fin bars cascading around the flanks like the BGS, Wikipedia & Encyclopedia specimens)
       const tierIdx = i - 1;
-      const tierRing = (0.28 + 0.08 * Math.floor(tierIdx / 2)) * baseL;
-      const tierAng = tierIdx * (TAU / 5.0) + 0.35;
-      const tierY = (0.22 - 0.11 * (tierIdx % 4)) * baseL * gScale * presence;
-      root[0] = root[0] * (1 - 0.75 * hopperBlend) + Math.cos(tierAng) * tierRing * gScale * presence * hopperBlend;
-      root[1] = root[1] * (1 - 0.75 * hopperBlend) + tierY * hopperBlend;
-      root[2] = root[2] * (1 - 0.75 * hopperBlend) + Math.sin(tierAng) * tierRing * gScale * presence * hopperBlend;
+      const archMode = seedInt % 3;
+      const tierRing = (0.30 + 0.09 * Math.floor(tierIdx / 2) + (hopperMorph === 0 || hopperMorph === 3 ? 0.08 : 0.0)) * baseL;
+      const tierAng = tierIdx * (TAU / 5.2) + 0.35 + 0.52 * archMode;
+      const spireLift = hopperMorph === 1 ? 0.24 : (hopperMorph === 2 ? 0.10 : -0.06);
+      const tierY = (0.20 - 0.12 * (tierIdx % 4) + spireLift) * baseL * gScale * presence;
+      root[0] = root[0] * (1 - 0.78 * hopperBlend) + Math.cos(tierAng) * tierRing * gScale * presence * hopperBlend;
+      root[1] = root[1] * (1 - 0.78 * hopperBlend) + tierY * hopperBlend;
+      root[2] = root[2] * (1 - 0.78 * hopperBlend) + Math.sin(tierAng) * tierRing * gScale * presence * hopperBlend;
     }
 
     // Pull emerging/shrinking crystals smoothly into the heart of the cluster core (0, 0, 0)
@@ -1691,7 +1741,7 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
 
     if (cubeBlockBlend > 1e-4) {
       computeCubeBlockPlanes(
-        hopperBlend, dynChamfer, faceJitterAmt, fs, L, r,
+        hopperBlend, node.hopperMorph || 0, dynChamfer, faceJitterAmt, fs, L, r,
         cubeLx, cubeLy, cubeLz, cubeOffR, cubeOffL
       );
       for (let k = 0; k < 18; k++) {

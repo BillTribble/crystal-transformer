@@ -609,59 +609,103 @@ float crystalSDF_fast(vec3 p, int row, out float secondD, out float thirdD, out 
   return d;
 }
 
-// 3D Skeletal Bismuth Hopper & Greek-Key Stepped Terrace Algorithm (post-015895, post-015896):
-// Pure register-only O(1) evaluation in face-local (u, v) in [-1, 1]^2 coordinates (zero UBO reads inside loops).
-// Models a chunky 6-bar G / Greek-key rectangular spiral ridge over a 3-tier stepped ziggurat hopper well.
-float sdBox2D(vec2 p, vec2 b) {
-  vec2 d = abs(p) - b;
-  return length(max(d, 0.0)) + min(max(d.x, d.y), 0.0);
+// 3D Architectural Bismuth Hopper & Ziggurat Morphological Carver (post-015895, post-015966):
+// Pure branchless register-only O(1) evaluation in crystal-local q in [-1, 1]^3 coordinates.
+// Precomputes per-crystal morphP once outside the march loop to model 5 distinct Bismuth morphologies:
+//   0: Broad Open-Sided Cantilevered Hopper Wing (BGS specimen: 3-step bottom-left cutout, 6 nested steps)
+//   1: 5-Tier Aztec Ziggurat Pyramid & Stepped Pagoda Spire (Encyclopedia & Wikipedia stepped pyramid/tower)
+//   2: Open-Sided L-Bracket / U-Channel Greek-Key Tower (RSC Education opposite L-notches + open U-channel)
+//   3: Diagonal Stair-Stepped Parallel-Ribbed Terrace ("Rainbow Metal" 8 parallel metallic comb ribs)
+//   4: Asymmetric Cantilevered Stepped Fin Bar / Twin Hopper Bracket
+vec4 getBismuthMorphParams(int uidInt) {
+  int seedShift = int(mod(floor(abs(f_seed)), 5.0));
+  int m = (uidInt - 1 + seedShift) % 5;
+  return (m == 0) ? vec4(0.36, -0.44, -6.0,  1.0)
+       : (m == 1) ? vec4(0.46,  0.35,  5.0,  0.6)
+       : (m == 2) ? vec4(0.44, -0.34,  4.0,  1.2)
+       : (m == 3) ? vec4(0.45, -0.45, -7.0, -1.0)
+                  : vec4(0.46,  0.24, -4.0,  0.8);
 }
 
-float evalHopperDepthUV(vec2 uv, float hopperAmt, int rot, int faceId, out float outStepIdx, out float outEdgeDist) {
-  vec2 uvRot = (rot == 0) ? uv
-             : (rot == 1) ? vec2(-uv.y, uv.x)
-             : (rot == 2) ? vec2(-uv.x, -uv.y)
-                          : vec2(uv.y, -uv.x);
+float quantStairFast(float t, float nSteps) {
+  float s = clamp(t, 0.0, 0.9999) * nSteps;
+  float idx = floor(s);
+  return (idx + smoothstep(0.74, 0.95, s - idx)) / nSteps;
+}
 
-  // Subtle natural hopper asymmetry so one side of the terrace staircase is wider than the opposite
-  vec2 uv0 = uvRot - vec2(0.025, -0.020);
-  float outerCheb = max(abs(uv0.x), abs(uv0.y));
+float evalBismuthFast(vec3 pQ, vec4 morphP, float hopperAmt, out float outStepIdx, out float outEdgeDist) {
+  float nSt = abs(morphP.z);
+  // 1. External 3D 90-degree stair-stepped silhouette across ALL 3 AXES (X, Y, Z) with per-step jump <= rimWidth (0.135)
+  //    so every ziggurat step ledge is 100% water-tight while every internal terrace ridge is 100% straight & orthogonal.
+  float yUp = clamp((pQ.y + 0.90) * 0.54, 0.0, 1.0);
+  float yDn = clamp((0.90 - pQ.y) * 0.54, 0.0, 1.0);
+  float xPos = clamp((pQ.x + 0.85) * 0.56, 0.0, 1.0);
+  float zPos = clamp((pQ.z + 0.85) * 0.56, 0.0, 1.0);
+  float stairA = quantStairFast(morphP.z > 0.0 ? yUp : yDn, 4.0);
+  float stairB = quantStairFast(morphP.y >= 0.0 ? yUp : yDn, 3.0);
+  float stairC = quantStairFast(xPos, 3.0);
+  float stairZ = quantStairFast(zPos, 3.0);
 
-  // Solid outer perimeter frame rim (outerCheb >= 0.78): in real Bismuth hopper growth, the outer
-  // cube edges solidify first at full height (targetDepth = 0.0), guaranteeing 100% razor-sharp outer silhouettes!
-  float insideWell = 1.0 - smoothstep(0.76, 0.79, outerCheb);
+  float maxPosX =  1.002 - morphP.x * stairA * hopperAmt;
+  float minNegX = -1.002 + abs(morphP.y) * stairB * hopperAmt;
+  float minNegY = -1.002 + 0.33 * stairC * hopperAmt;
+  float maxPosY =  1.002 - 0.28 * stairZ * hopperAmt;
+  float maxPosZ =  1.002 - 0.36 * stairA * hopperAmt;
+  float minNegZ = -1.002 + 0.32 * stairB * hopperAmt;
+
+  float wX = min(maxPosX - pQ.x, pQ.x - minNegX);
+  float wY = min(maxPosY - pQ.y, pQ.y - minNegY);
+  float wZ = min(maxPosZ - pQ.z, pQ.z - minNegZ);
+
+  float wFace = min(wX, min(wY, wZ));
+  float dContour = max(min(wX, wY), min(max(wX, wY), wZ));
+
+  float insideWell = smoothstep(0.12, 0.15, dContour);
   if (insideWell <= 1e-4) {
-    outStepIdx = 0.0;
-    outEdgeDist = abs(outerCheb - 0.78);
-    return 0.0;
+    outStepIdx = 0.9 * stairA + 0.6 * stairB + 0.5 * stairZ;
+    outEdgeDist = abs(dContour - 0.135);
+    return wFace;
   }
 
-  // Chunky 6-bar G-shaped / Greek-key rectangular spiral ridge inside [-0.78, 0.78]^2
-  float th = 0.064;
-  float dBar1 = sdBox2D(uv0 - vec2( 0.00,  0.54), vec2(0.60, th)); // Top horizontal bar
-  float dBar2 = sdBox2D(uv0 - vec2(-0.54,  0.02), vec2(th, 0.56)); // Left vertical bar
-  float dBar3 = sdBox2D(uv0 - vec2(-0.02, -0.48), vec2(0.56, th)); // Bottom horizontal bar
-  float dBar4 = sdBox2D(uv0 - vec2( 0.48, -0.14), vec2(th, 0.38)); // Right vertical bar (leaving doorway at y in [0.24, 0.48])
-  float dBar5 = sdBox2D(uv0 - vec2( 0.14,  0.18), vec2(0.38, th)); // Inward horizontal G-hook bar
-  float dBar6 = sdBox2D(uv0 - vec2(-0.18, -0.02), vec2(th, 0.24)); // Central vertical inner hook
-  float dGreek = min(min(dBar1, dBar2), min(min(dBar3, dBar4), min(dBar5, dBar6)));
+  // Active 2D face coordinates for internal Greek-key / parallel-rib / L-bracket walls
+  vec2 uv = (wZ <= wX && wZ <= wY) ? pQ.xy
+          : (wX <= wY)             ? vec2(pQ.z, pQ.y)
+                                   : vec2(pQ.x, pQ.z);
 
-  // Smooth C1 wall profile (dGreek < 0 is on top of the raised Greek-key spiral ridge)
-  float greekWallMask = 1.0 - smoothstep(-0.014, 0.014, dGreek);
+  // 2. Contour-following stepped hopper tiers (4..8 steps) + morphology-specific internal ridges on all 6 faces
+  float normContour = clamp((dContour - 0.11) / 0.72, 0.0, 1.0);
+  float wellStair = quantStairFast(normContour, nSt);
+  float sWell = normContour * nSt;
+  float fWell = fract(sWell);
 
-  // 3 stepped rectangular ziggurat floor tiers descending toward the heart of the face
-  float tier1 = 1.0 - smoothstep(0.58, 0.61, outerCheb);
-  float tier2 = 1.0 - smoothstep(0.34, 0.37, outerCheb);
-  float tier3 = 1.0 - smoothstep(0.14, 0.17, outerCheb);
+  // Open-sided L-bracket / U-channel doorway on one quadrant of the internal ridges
+  float openGap = smoothstep(0.08, 0.18, uv.x * sign(morphP.w)) * (1.0 - smoothstep(0.22, 0.34, abs(uv.y - 0.14)));
 
-  float channelFloorDepth = (0.20 + 0.14 * tier1 + 0.14 * tier2 + 0.12 * tier3) * hopperAmt;
-  float greekTopDepth = (0.07 + 0.05 * tier1 + 0.05 * tier2) * hopperAmt;
-  float wellDepth = mix(channelFloorDepth, greekTopDepth, greekWallMask);
+  float ridgePhase = abs(fWell - 0.38);
+  float concentricRidge = (1.0 - smoothstep(0.14, 0.21, ridgePhase)) * (1.0 - 0.88 * openGap);
 
-  float targetDepth = wellDepth * insideWell;
-  outStepIdx = (0.65 + 0.85 * tier1 + 0.85 * tier2 + 0.80 * tier3 - 0.55 * greekWallMask) * insideWell + float(faceId) * 0.14;
-  outEdgeDist = min(abs(dGreek), min(abs(outerCheb - 0.78), min(abs(outerCheb - 0.60), abs(outerCheb - 0.36))));
-  return targetDepth;
+  // Parallel comb ribs (active when morphP.w < 0, like the "Rainbow Metal" parallel-ribbed specimen)
+  float parCoord = (uv.x - uv.y * 0.18) * 3.5;
+  float parWave = abs(fract(parCoord) - 0.5);
+  float parallelRibs = 1.0 - smoothstep(0.14, 0.22, parWave);
+
+  // Asymmetric Greek-key inner hook bars (active when morphP.w > 0.7)
+  float dHook1 = max(abs(uv.x - 0.06) - 0.32, abs(uv.y - 0.12) - 0.062);
+  float dHook2 = max(abs(uv.x + 0.18) - 0.062, abs(uv.y + 0.04) - 0.26);
+  float greekHook = (1.0 - smoothstep(-0.012, 0.012, min(dHook1, dHook2))) * step(0.7, morphP.w);
+
+  float wallMask = (morphP.w < 0.0)
+    ? max(parallelRibs * 0.85, concentricRidge * 0.65)
+    : max(concentricRidge, greekHook);
+
+  float floorDepth = (0.18 + 0.46 * wellStair) * hopperAmt;
+  float ridgeTopDepth = (0.06 + 0.14 * wellStair) * hopperAmt;
+  float targetDepth = mix(floorDepth, ridgeTopDepth, wallMask) * insideWell;
+
+  outStepIdx = (0.65 + 2.6 * wellStair + 1.1 * stairA - 0.55 * wallMask) * insideWell + abs(morphP.w) * 0.25;
+  float eWell = min(fWell, 1.0 - fWell) / nSt;
+  outEdgeDist = min(min(eWell, abs(dContour - 0.115)), (morphP.w < 0.0) ? abs(parWave - 0.18) * 0.25 : abs(ridgePhase - 0.16) / nSt);
+  return wFace - targetDepth;
 }
 
 float evalBismuthHopper(vec3 p, int row, float hopperAmt, out float outStepIdx, out float outEdgeDist) {
@@ -679,41 +723,32 @@ float evalBismuthHopper(vec3 p, int row, float hopperAmt, out float outStepIdx, 
   sx = sxLen > 1e-4 ? (sx / sxLen) : normalize(cross(ax, vec3(0.577, 0.577, 0.577)));
   vec3 sz = cross(ax, sx);
 
-  float hx = max(0.035, 0.5 * ((body(row, PA + 0).w - dot(body(row, PA + 0).xyz, cMid)) + (body(row, PA + 4).w - dot(body(row, PA + 4).xyz, cMid))));
-  float hz = max(0.035, 0.5 * ((body(row, PA + 2).w - dot(body(row, PA + 2).xyz, cMid)) + (body(row, PA + 6).w - dot(body(row, PA + 6).xyz, cMid))));
-  float hy = max(0.035, 0.5 * ((body(row, PA + 17).w - dot(body(row, PA + 17).xyz, cMid)) + (body(row, PA + 16).w - dot(body(row, PA + 16).xyz, cMid))));
+  float dxp = body(row, PA + 0).w - dot(body(row, PA + 0).xyz, cMid);
+  float dxn = body(row, PA + 4).w - dot(body(row, PA + 4).xyz, cMid);
+  float dzp = body(row, PA + 2).w - dot(body(row, PA + 2).xyz, cMid);
+  float dzn = body(row, PA + 6).w - dot(body(row, PA + 6).xyz, cMid);
+  float dyp = body(row, PA + 17).w - dot(body(row, PA + 17).xyz, cMid);
+  float dyn = body(row, PA + 16).w - dot(body(row, PA + 16).xyz, cMid);
+  vec3 cBox = cMid + sx * (0.5 * (dxp - dxn)) + ax * (0.5 * (dyp - dyn)) + sz * (0.5 * (dzp - dzn));
+
+  float hx = max(0.035, 0.5 * (dxp + dxn));
+  float hy = max(0.035, 0.5 * (dyp + dyn));
+  float hz = max(0.035, 0.5 * (dzp + dzn));
   vec3 halfExt = vec3(hx, hy, hz);
   float fScale = min(hx, min(hy, hz));
 
-  vec3 rel = p - cMid;
+  vec3 rel = p - cBox;
   vec3 q = vec3(dot(rel, sx), dot(rel, ax), dot(rel, sz)) / halfExt;
-  vec3 aq = abs(q);
-
-  vec2 uv;
-  float wNorm;
-  int faceId;
-  if (aq.x >= aq.y && aq.x >= aq.z) {
-    faceId = (q.x >= 0.0) ? 0 : 1;
-    uv = vec2(q.z * (q.x >= 0.0 ? 1.0 : -1.0), q.y);
-    wNorm = 1.0 - aq.x;
-  } else if (aq.y >= aq.x && aq.y >= aq.z) {
-    faceId = (q.y >= 0.0) ? 2 : 3;
-    uv = vec2(q.x * (q.y >= 0.0 ? 1.0 : -1.0), q.z);
-    wNorm = 1.0 - aq.y;
-  } else {
-    faceId = (q.z >= 0.0) ? 4 : 5;
-    uv = vec2(-q.x * (q.z >= 0.0 ? 1.0 : -1.0), q.y);
-    wNorm = 1.0 - aq.z;
-  }
-
   int uidInt = int(max(1.0, body(row, 2).z) + 0.5);
-  int rot = (uidInt + faceId) & 3;
-  float targetDepth = evalHopperDepthUV(uv, hopperAmt, rot, faceId, outStepIdx, outEdgeDist);
-  return (targetDepth - wNorm) * fScale;
+  float sxSign = ((uidInt & 1) == 0) ? 1.0 : -1.0;
+  vec4 morphP = getBismuthMorphParams(uidInt);
+  float solidMargin = evalBismuthFast(vec3(q.x * sxSign, q.y, q.z), morphP, hopperAmt, outStepIdx, outEdgeDist);
+  return -solidMargin * fScale;
 }
 
-// Fast register-only 3D raymarcher for a crystal's stepped Greek-key Bismuth Hopper faces:
-// Precomputes local ray coordinates (q0, dq) ONCE per crystal (6 UBO reads total, zero UBO reads inside loop).
+// Fast branchless 3D raymarcher for varied Bismuth Hopper morphologies (ziggurat spires, cantilevered
+// BGS wings, open L-brackets, parallel-ribbed plates & twin hoppers):
+// Precomputes local ray coordinates (q0, dq) and morphP ONCE per crystal (zero UBO reads inside loop).
 bool intersectBismuthHopper(int row, vec3 ro, vec3 rd, float hopperAmt, float tHitMax, inout float tn, float tf, inout int kn, out vec3 outHopperN) {
   outHopperN = (kn < CP) ? body(row, PA + kn).xyz : vec3(0.0, 1.0, 0.0);
   float tStart = max(tn, 0.0);
@@ -729,21 +764,35 @@ bool intersectBismuthHopper(int row, vec3 ro, vec3 rd, float hopperAmt, float tH
   sx = sxLen > 1e-4 ? (sx / sxLen) : normalize(cross(ax, vec3(0.577, 0.577, 0.577)));
   vec3 sz = cross(ax, sx);
 
-  float hx = max(0.035, 0.5 * ((body(row, PA + 0).w - dot(body(row, PA + 0).xyz, cMid)) + (body(row, PA + 4).w - dot(body(row, PA + 4).xyz, cMid))));
-  float hz = max(0.035, 0.5 * ((body(row, PA + 2).w - dot(body(row, PA + 2).xyz, cMid)) + (body(row, PA + 6).w - dot(body(row, PA + 6).xyz, cMid))));
-  float hy = max(0.035, 0.5 * ((body(row, PA + 17).w - dot(body(row, PA + 17).xyz, cMid)) + (body(row, PA + 16).w - dot(body(row, PA + 16).xyz, cMid))));
+  float dxp = body(row, PA + 0).w - dot(body(row, PA + 0).xyz, cMid);
+  float dxn = body(row, PA + 4).w - dot(body(row, PA + 4).xyz, cMid);
+  float dzp = body(row, PA + 2).w - dot(body(row, PA + 2).xyz, cMid);
+  float dzn = body(row, PA + 6).w - dot(body(row, PA + 6).xyz, cMid);
+  float dyp = body(row, PA + 17).w - dot(body(row, PA + 17).xyz, cMid);
+  float dyn = body(row, PA + 16).w - dot(body(row, PA + 16).xyz, cMid);
+  vec3 cBox = cMid + sx * (0.5 * (dxp - dxn)) + ax * (0.5 * (dyp - dyn)) + sz * (0.5 * (dzp - dzn));
+
+  float hx = max(0.035, 0.5 * (dxp + dxn));
+  float hy = max(0.035, 0.5 * (dyp + dyn));
+  float hz = max(0.035, 0.5 * (dzp + dzn));
   vec3 invHalf = 1.0 / vec3(hx, hy, hz);
 
-  vec3 rel0 = (ro + rd * tStart) - cMid;
-  vec3 q0 = vec3(dot(rel0, sx), dot(rel0, ax), dot(rel0, sz)) * invHalf;
-  vec3 dq = vec3(dot(rd, sx), dot(rd, ax), dot(rd, sz)) * invHalf;
-
   int uidInt = int(max(1.0, body(row, 2).z) + 0.5);
-  float dtMax = min(tf, tHitMax) - tStart;
-  if (dtMax <= 1e-4) return true;
+  float sxSign = ((uidInt & 1) == 0) ? 1.0 : -1.0;
+  vec4 morphP = getBismuthMorphParams(uidInt);
 
-  // March along local ray q(dt) = q0 + dq * dt in 14 fast register-only steps
-  int nSteps = (u_isMobile > 0.5) ? 10 : 14;
+  vec3 rel0 = (ro + rd * tStart) - cBox;
+  vec3 pQ0 = vec3(dot(rel0, sx) * sxSign, dot(rel0, ax), dot(rel0, sz)) * invHalf;
+  vec3 dpQ = vec3(dot(rd, sx) * sxSign, dot(rd, ax), dot(rd, sz)) * invHalf;
+
+  float dtMax = min(tf, tHitMax) - tStart;
+  if (dtMax <= 1e-4) {
+    float s0, e0;
+    return evalBismuthFast(pQ0, morphP, hopperAmt, s0, e0) >= -1e-4;
+  }
+
+  // March along local ray pQ(dt) = pQ0 + dpQ * dt in 14 fast branchless register-only steps
+  int nSteps = (u_isMobile > 0.5) ? 9 : 14;
   float dtStep = dtMax / float(nSteps);
   float dtPrev = 0.0;
   bool foundHit = false;
@@ -752,26 +801,8 @@ bool intersectBismuthHopper(int row, vec3 ro, vec3 rd, float hopperAmt, float tH
   for (int ms = 0; ms <= 14; ms++) {
     if (ms > nSteps) break;
     float dt = float(ms) * dtStep;
-    vec3 q = q0 + dq * dt;
-    vec3 aq = abs(q);
-    vec2 uv; float wNorm; int faceId;
-    if (aq.x >= aq.y && aq.x >= aq.z) {
-      faceId = (q.x >= 0.0) ? 0 : 1;
-      uv = vec2(q.z * (q.x >= 0.0 ? 1.0 : -1.0), q.y);
-      wNorm = 1.0 - aq.x;
-    } else if (aq.y >= aq.x && aq.y >= aq.z) {
-      faceId = (q.y >= 0.0) ? 2 : 3;
-      uv = vec2(q.x * (q.y >= 0.0 ? 1.0 : -1.0), q.z);
-      wNorm = 1.0 - aq.y;
-    } else {
-      faceId = (q.z >= 0.0) ? 4 : 5;
-      uv = vec2(-q.x * (q.z >= 0.0 ? 1.0 : -1.0), q.y);
-      wNorm = 1.0 - aq.z;
-    }
-    int rot = (uidInt + faceId) & 3;
     float sIdx, sEdge;
-    float targetD = evalHopperDepthUV(uv, hopperAmt, rot, faceId, sIdx, sEdge);
-    if (wNorm >= targetD - 1e-4) {
+    if (evalBismuthFast(pQ0 + dpQ * dt, morphP, hopperAmt, sIdx, sEdge) >= -1e-4) {
       dtHit = dt;
       foundHit = true;
       break;
@@ -785,68 +816,34 @@ bool intersectBismuthHopper(int row, vec3 ro, vec3 rd, float hopperAmt, float tH
     float tLo = dtPrev, tHi = dtHit;
     for (int bs = 0; bs < 4; bs++) {
       float tMid = 0.5 * (tLo + tHi);
-      vec3 q = q0 + dq * tMid;
-      vec3 aq = abs(q);
-      vec2 uv; float wNorm; int faceId;
-      if (aq.x >= aq.y && aq.x >= aq.z) {
-        faceId = (q.x >= 0.0) ? 0 : 1;
-        uv = vec2(q.z * (q.x >= 0.0 ? 1.0 : -1.0), q.y);
-        wNorm = 1.0 - aq.x;
-      } else if (aq.y >= aq.x && aq.y >= aq.z) {
-        faceId = (q.y >= 0.0) ? 2 : 3;
-        uv = vec2(q.x * (q.y >= 0.0 ? 1.0 : -1.0), q.z);
-        wNorm = 1.0 - aq.y;
-      } else {
-        faceId = (q.z >= 0.0) ? 4 : 5;
-        uv = vec2(-q.x * (q.z >= 0.0 ? 1.0 : -1.0), q.y);
-        wNorm = 1.0 - aq.z;
-      }
-      int rot = (uidInt + faceId) & 3;
       float sIdx, sEdge;
-      if (wNorm >= evalHopperDepthUV(uv, hopperAmt, rot, faceId, sIdx, sEdge)) tHi = tMid;
+      if (evalBismuthFast(pQ0 + dpQ * tMid, morphP, hopperAmt, sIdx, sEdge) >= 0.0) tHi = tMid;
       else tLo = tMid;
     }
     dtHit = tHi;
   }
 
-  // Compute exact 3D normal in local face frame (tread normal vs 90° vertical riser wall normal)
-  vec3 qH = q0 + dq * dtHit;
-  vec3 aqH = abs(qH);
-  vec2 uvH; int faceIdH;
-  vec3 uWorld, vWorld, wWorldOut;
-  if (aqH.x >= aqH.y && aqH.x >= aqH.z) {
-    float sg = (qH.x >= 0.0) ? 1.0 : -1.0;
-    faceIdH = (qH.x >= 0.0) ? 0 : 1;
-    uvH = vec2(qH.z * sg, qH.y);
-    uWorld = sz * sg; vWorld = ax; wWorldOut = sx * sg;
-  } else if (aqH.y >= aqH.x && aqH.y >= aqH.z) {
-    float sg = (qH.y >= 0.0) ? 1.0 : -1.0;
-    faceIdH = (qH.y >= 0.0) ? 2 : 3;
-    uvH = vec2(qH.x * sg, qH.z);
-    uWorld = sx * sg; vWorld = sz; wWorldOut = ax * sg;
-  } else {
-    float sg = (qH.z >= 0.0) ? 1.0 : -1.0;
-    faceIdH = (qH.z >= 0.0) ? 4 : 5;
-    uvH = vec2(-qH.x * sg, qH.y);
-    uWorld = -sx * sg; vWorld = ax; wWorldOut = sz * sg;
-  }
-  int rotH = (uidInt + faceIdH) & 3;
-  float eps = 0.004;
-  float s0, e0, sU, eU, sV, eV;
-  float d0 = evalHopperDepthUV(uvH, hopperAmt, rotH, faceIdH, s0, e0);
-  float dU = evalHopperDepthUV(uvH + vec2(eps, 0.0), hopperAmt, rotH, faceIdH, sU, eU);
-  float dV = evalHopperDepthUV(uvH + vec2(0.0, eps), hopperAmt, rotH, faceIdH, sV, eV);
-  float gradU = (dU - d0) / eps;
-  float gradV = (dV - d0) / eps;
-
-  if (dtHit > 1e-4 || abs(gradU) + abs(gradV) > 0.05) {
-    tn = tStart + dtHit;
-    kn = CP + 2000;
-    vec3 nCand = normalize(wWorldOut + uWorld * (gradU * 0.55) + vWorld * (gradV * 0.55));
-    if (dot(nCand, rd) > -0.08) {
-      nCand = normalize(nCand - rd * (dot(nCand, rd) + 0.08));
+  // Compute 3D normal in world space via forward differences of evalBismuthFast(pQ) (only 4 evals total!)
+  vec3 pQH = pQ0 + dpQ * dtHit;
+  float s0, e0;
+  float m0 = evalBismuthFast(pQH, morphP, hopperAmt, s0, e0);
+  if (dtHit > 1e-4 || m0 < 0.016) {
+    float eps = 0.005;
+    float sD, eD;
+    float gx = (evalBismuthFast(pQH + vec3(eps, 0.0, 0.0), morphP, hopperAmt, sD, eD) - m0) * sxSign;
+    float gy =  evalBismuthFast(pQH + vec3(0.0, eps, 0.0), morphP, hopperAmt, sD, eD) - m0;
+    float gz =  evalBismuthFast(pQH + vec3(0.0, 0.0, eps), morphP, hopperAmt, sD, eD) - m0;
+    vec3 gLocal = -vec3(gx, gy, gz) * invHalf;
+    float gLen = length(gLocal);
+    if (gLen > 1e-5) {
+      tn = tStart + dtHit;
+      kn = CP + 2000;
+      vec3 nCand = normalize(sx * gLocal.x + ax * gLocal.y + sz * gLocal.z);
+      if (dot(nCand, rd) > -0.06) {
+        nCand = normalize(nCand - rd * (dot(nCand, rd) + 0.06));
+      }
+      outHopperN = nCand;
     }
-    outHopperN = nCand;
   }
   return true;
 }
