@@ -24,9 +24,17 @@ const NON_MORPH_KEYS = new Set([
   ...SOUND_PARAM_KEYS,
 ]);
 
+export function isMobileDevice() {
+  return Boolean(
+    (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) ||
+    /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent || '') ||
+    Math.min(window.innerWidth, window.innerHeight) < 768
+  );
+}
+
 export function computeDeviceDpr() {
-  const isMobile = window.innerWidth <= 820 || (window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
-  const dpr = Math.min(window.devicePixelRatio || 1, isMobile ? 1.5 : 2);
+  const isMobile = isMobileDevice();
+  const dpr = Math.min(window.devicePixelRatio || 1, isMobile ? 1.0 : 1.5);
   return dpr;
 }
 
@@ -74,6 +82,17 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
   if (!P.complementaryBg && P.graduallyShift) P.complementaryBg = P.graduallyShift;
   if (!P.bgColour && P.studioEdge) P.bgColour = P.studioEdge;
   if (!P.trackName && P.soundTrack) P.trackName = P.soundTrack;
+  if (isMobileDevice()) {
+    if (P.maxDpr && !sp.has('maxDpr')) {
+      P.maxDpr.value = 1.0;
+      P.maxDpr.base = 1.0;
+      P.maxDpr.default = 1.0;
+    }
+    if (P.fxaa && !sp.has('fxaa')) {
+      P.fxaa.value = 1;
+      P.fxaa.base = 1;
+    }
+  }
 
   const baseDist = P.distance ? P.distance.default : 2.9;
   function distanceForZoom(zoomVal) {
@@ -994,6 +1013,8 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
     },
     computeComplementaryBg,
     computeDeviceDpr,
+    isMobileDevice,
+    get isMobile() { return isMobileDevice(); },
     setPresetDrift,
     preset: (name, seconds = 0) => applyPreset(name, seconds),
     randomize: (seconds = 10.0) => doRandomize(seconds),

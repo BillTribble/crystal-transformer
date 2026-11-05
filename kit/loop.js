@@ -25,9 +25,13 @@ export function createLoop(canvas, P, sketch) {
   }
 
   function resizeIfNeeded(s) {
-    const isMobile = window.innerWidth <= 820 || (window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
-    const dpr = Math.min(window.devicePixelRatio || 1, isMobile ? 1.5 : 2);
-    const maxDpr = P_maxDpr ? P_maxDpr.value : 1.5;
+    const isMobile = Boolean(
+      (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) ||
+      /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent || '') ||
+      Math.min(window.innerWidth, window.innerHeight) < 768
+    );
+    const dpr = Math.min(window.devicePixelRatio || 1, isMobile ? 1.0 : 2);
+    const maxDpr = isMobile ? Math.min(P_maxDpr ? P_maxDpr.value : 1.0, 1.0) : (P_maxDpr ? P_maxDpr.value : 1.5);
     const scale = P_renderScale ? P_renderScale.value : 1;
     const ratio = Math.min(dpr, maxDpr) * scale;
     const cw = canvas.clientWidth, ch = canvas.clientHeight;
