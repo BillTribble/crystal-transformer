@@ -151,7 +151,11 @@ export default {
     if (!isNeutralStone && d > 1e-5) {
       h = mx === s[0] ? ((s[1] - s[2]) / d) % 6 : mx === s[1] ? (s[2] - s[0]) / d + 2 : (s[0] - s[1]) / d + 4;
       h = ((h / 6) % 1 + 1) % 1;
-      const shiftDeg = (P.graduallyShift && P.graduallyShift.value === false) ? P.hueShift.value : 180;
+      const isPurpleStone = h >= 0.68 && h <= 0.86;
+      const defaultCompShift = isPurpleStone ? 268 : 180;
+      const shiftDeg = (P.graduallyShift && P.graduallyShift.value === false)
+        ? P.hueShift.value
+        : (Math.abs(P.hueShift.value - 180) > 1 ? P.hueShift.value : defaultCompShift);
       h = (((h + shiftDeg / 360) % 1) + 1) % 1;
     }
     const effBackdropSat = isNeutralStone ? Math.min(P.backdropSat.value, 0.24) : P.backdropSat.value;
@@ -162,7 +166,9 @@ export default {
     let dtR = rt - glowState.rt;
     if (!(dtR >= 0)) dtR = 0.016;
     glowState.rt = rt;
-    const aG = glowState.init ? 1 - Math.exp(-Math.min(dtR, 0.5) / 1.1) : 1;
+    const aG = (glowState.init && (!P.morphPresets || P.morphPresets.value !== false))
+      ? 1 - Math.exp(-Math.min(dtR, 0.5) / 1.1)
+      : 1;
     glowState.init = true;
     for (let c = 0; c < 3; c++) {
       const tg = lin(hslChannel(c === 0 ? 0 : c === 1 ? 8 : 4, h, effBackdropSat, 0.5)) * P.backdropLight.value;
@@ -219,8 +225,8 @@ float glimmerCurve(float g) {
   return smoothstep(0.0, 0.45, g01) * mix(0.85, 1.0, smoothstep(0.45, 1.0, g01)) + max(0.0, g - 1.0);
 }
 // High-contrast analytic refraction strip lights around the refraction cone behind the cluster (active when u_glimmer > 0)
-// Matches Jack Bush's tall studio rim strip geometry (hw ≈ 0.06, hh ≈ 0.60) so wavelength dispersion overlaps
-// adjacent spectral bands into rich electric cyan, sapphire blue, warm golden-amber, and fiery orange-red facets.
+// Narrow, crisp studio rim strips (narrower than the RGB dispersion spread) so refracted wavelengths separate cleanly
+// into focused jewel flashes (cyan, sapphire blue, warm gold, crimson-magenta) inside dark facets without white glare slabs.
 vec3 glimmerStripLights(vec3 d, float rough) {
   float g = clamp(u_glimmer, 0.0, 2.0);
   if (g <= 0.001 || d.z >= -0.05) return vec3(0.0);
@@ -228,12 +234,12 @@ vec3 glimmerStripLights(vec3 d, float rough) {
   vec3 lCol = vec3(f_lights[2 * LS + 9], f_lights[2 * LS + 10], f_lights[2 * LS + 11]);
   vec3 sum = vec3(0.0);
   for (int i = 0; i < 4; i++) {
-    vec3 c = (i == 0) ? vec3(-0.45963856,  0.17985857, -0.86931641)
-           : (i == 1) ? vec3( 0.44136741, -0.16049724, -0.88273483)
-           : (i == 2) ? vec3(-0.28044908, -0.38060946, -0.88141139)
-                      : vec3( 0.30151134,  0.36181361, -0.88191710);
+    vec3 c = (i == 0) ? vec3(-0.51449576,  0.19788302, -0.83424024)
+           : (i == 1) ? vec3( 0.49811675, -0.17828389, -0.84857699)
+           : (i == 2) ? vec3(-0.33864256, -0.41286135, -0.84549780)
+                      : vec3( 0.35486045,  0.39644465, -0.84669103);
     float cs = dot(d, c);
-    if (cs <= 0.25) continue;
+    if (cs <= 0.35) continue;
     vec3 p = d / cs;
     vec3 uAx = normalize(vec3(c.z, 0.0, -c.x));
     vec3 vAx = cross(c, uAx);
@@ -244,17 +250,18 @@ vec3 glimmerStripLights(vec3 d, float rough) {
       vAx = -uAx * sa + vAx * ca;
       uAx = uRot;
     }
-    float hw = (i < 2) ? 0.062 : 0.052;
-    float hh = (i < 2) ? 0.62 : 0.48;
-    float s = max(u_lightSoftness * 0.65 * min(hw, hh) + rough * 0.45, 1e-3);
+    float hw = (i < 2) ? 0.025 : 0.020;
+    float hh = (i < 2) ? 0.44 : 0.34;
+    float s = max(u_lightSoftness * 0.50 * min(hw, hh) + rough * 0.40, 1e-3);
     float au = abs(dot(p, uAx));
     if (au >= hw + s) continue;
     float av = abs(dot(p, vAx));
     if (av >= hh + s) continue;
     float m = (1.0 - smoothstep(hw - s, hw + s, au)) * (1.0 - smoothstep(hh - s, hh + s, av));
-    m *= 1.0 - 0.55 * clamp(dot(vec2(au / hw, av / hh), vec2(au / hw, av / hh)), 0.0, 1.0);
+    float vTaper = 1.0 - 0.65 * clamp((av / hh) * (av / hh), 0.0, 1.0);
+    m *= (1.0 - 0.50 * clamp((au / hw) * (au / hw), 0.0, 1.0)) * vTaper;
     m *= hw * hh / ((hw + s) * (hh + s));
-    sum += m * lCol * 0.72;
+    sum += m * lCol * 0.40;
   }
   return sum * effG;
 }
@@ -663,11 +670,11 @@ float crystalSDF_fast(vec3 p, int row, out float secondD, out float thirdD, out 
 vec4 getBismuthMorphParams(int uidInt) {
   int seedShift = int(mod(floor(abs(f_seed)), 5.0));
   int m = (uidInt <= 3) ? (uidInt - 1) : ((uidInt - 1 + seedShift) % 5);
-  return (m == 0) ? vec4(0.18, -0.22, -5.0,  1.0)
-       : (m == 1) ? vec4(0.22,  0.18,  5.0,  0.6)
-       : (m == 2) ? vec4(0.20, -0.18,  4.0,  1.2)
-       : (m == 3) ? vec4(0.20, -0.20, -5.0, -1.0)
-                  : vec4(0.22,  0.16, -4.0,  0.8);
+  return (m == 0) ? vec4(0.36, -0.44, -6.0,  1.0)
+       : (m == 1) ? vec4(0.46,  0.35,  5.0,  0.6)
+       : (m == 2) ? vec4(0.44, -0.34,  4.0,  1.2)
+       : (m == 3) ? vec4(0.45, -0.45, -7.0, -1.0)
+                  : vec4(0.46,  0.24, -4.0,  0.8);
 }
 
 float quantStairFast(float t, float nSteps) {
@@ -676,62 +683,25 @@ float quantStairFast(float t, float nSteps) {
   return (idx + smoothstep(0.74, 0.95, s - idx)) / nSteps;
 }
 
-// Ultra-fast scalar solid-margin evaluator used inside the raymarch & bisection loops of intersectBismuthHopper.
-// Watertight 3D stepped ziggurat + nested hopper terraces (never punches holes through the block).
-float evalBismuthMargin(vec3 pQ, vec4 morphP, float hopperAmt) {
-  float nSt = abs(morphP.z);
-  float yStep = clamp((morphP.z > 0.0 ? (pQ.y + 0.90) : (0.90 - pQ.y)) * 0.54, 0.0, 1.0);
-  float stairA = quantStairFast(yStep, 3.0);
-  float stairB = quantStairFast(clamp((pQ.z + 0.85) * 0.56, 0.0, 1.0), 3.0);
-
-  float maxPosX =  1.002 - morphP.x * stairA * hopperAmt;
-  float minNegX = -1.002 + abs(morphP.y) * stairB * hopperAmt;
-  float minNegY = -1.002 + 0.16 * stairB * hopperAmt;
-  float maxPosY =  1.002 - 0.14 * stairA * hopperAmt;
-  float maxPosZ =  1.002 - 0.18 * stairA * hopperAmt;
-  float minNegZ = -1.002 + 0.16 * stairB * hopperAmt;
-
-  float wX = min(maxPosX - pQ.x, pQ.x - minNegX);
-  float wY = min(maxPosY - pQ.y, pQ.y - minNegY);
-  float wZ = min(maxPosZ - pQ.z, pQ.z - minNegZ);
-
-  float wFace = min(wX, min(wY, wZ));
-  float dContour = max(min(wX, wY), min(max(wX, wY), wZ));
-  if (dContour <= 0.13) {
-    return wFace;
-  }
-
-  float insideWell = smoothstep(0.13, 0.16, dContour);
-  vec2 uv = (wZ <= wX && wZ <= wY) ? pQ.xy
-          : (wX <= wY)             ? vec2(pQ.z, pQ.y)
-                                   : vec2(pQ.x, pQ.z);
-
-  float normContour = clamp((dContour - 0.13) / 0.72, 0.0, 1.0);
-  float sWell = clamp(normContour, 0.0, 0.9999) * nSt;
-  float idxW = floor(sWell);
-  float fWell = sWell - idxW;
-  float wellStair = (idxW + smoothstep(0.74, 0.95, fWell)) / nSt;
-
-  float openGap = smoothstep(0.08, 0.18, uv.x * sign(morphP.w)) * (1.0 - smoothstep(0.20, 0.32, abs(uv.y - 0.12)));
-  float concentricRidge = (1.0 - smoothstep(0.16, 0.25, abs(fWell - 0.22))) * (1.0 - 0.85 * openGap);
-
-  // Monotone stepped terrace depth with raised rim lips (max depth <= 0.36 so the 3 blocks are 100% solid & watertight)
-  float stepDepth = (0.09 + 0.26 * wellStair - 0.055 * concentricRidge) * hopperAmt * insideWell;
-  return wFace - stepDepth;
-}
-
 float evalBismuthFast(vec3 pQ, vec4 morphP, float hopperAmt, out float outStepIdx, out float outEdgeDist) {
   float nSt = abs(morphP.z);
-  float yStep = clamp((morphP.z > 0.0 ? (pQ.y + 0.90) : (0.90 - pQ.y)) * 0.54, 0.0, 1.0);
-  float stairA = quantStairFast(yStep, 3.0);
-  float stairB = quantStairFast(clamp((pQ.z + 0.85) * 0.56, 0.0, 1.0), 3.0);
+  // 1. External 3D 90-degree stair-stepped silhouette across ALL 3 AXES (X, Y, Z) with per-step jump <= rimWidth (0.135)
+  //    so every ziggurat step ledge is 100% water-tight while every internal terrace ridge is 100% straight & orthogonal.
+  float yUp = clamp((pQ.y + 0.90) * 0.54, 0.0, 1.0);
+  float yDn = clamp((0.90 - pQ.y) * 0.54, 0.0, 1.0);
+  float xPos = clamp((pQ.x + 0.85) * 0.56, 0.0, 1.0);
+  float zPos = clamp((pQ.z + 0.85) * 0.56, 0.0, 1.0);
+  float stairA = quantStairFast(morphP.z > 0.0 ? yUp : yDn, 4.0);
+  float stairB = quantStairFast(morphP.y >= 0.0 ? yUp : yDn, 3.0);
+  float stairC = quantStairFast(xPos, 3.0);
+  float stairZ = quantStairFast(zPos, 3.0);
 
   float maxPosX =  1.002 - morphP.x * stairA * hopperAmt;
   float minNegX = -1.002 + abs(morphP.y) * stairB * hopperAmt;
-  float minNegY = -1.002 + 0.16 * stairB * hopperAmt;
-  float maxPosY =  1.002 - 0.14 * stairA * hopperAmt;
-  float maxPosZ =  1.002 - 0.18 * stairA * hopperAmt;
-  float minNegZ = -1.002 + 0.16 * stairB * hopperAmt;
+  float minNegY = -1.002 + 0.33 * stairC * hopperAmt;
+  float maxPosY =  1.002 - 0.28 * stairZ * hopperAmt;
+  float maxPosZ =  1.002 - 0.36 * stairA * hopperAmt;
+  float minNegZ = -1.002 + 0.32 * stairB * hopperAmt;
 
   float wX = min(maxPosX - pQ.x, pQ.x - minNegX);
   float wY = min(maxPosY - pQ.y, pQ.y - minNegY);
@@ -740,32 +710,52 @@ float evalBismuthFast(vec3 pQ, vec4 morphP, float hopperAmt, out float outStepId
   float wFace = min(wX, min(wY, wZ));
   float dContour = max(min(wX, wY), min(max(wX, wY), wZ));
 
-  float insideWell = smoothstep(0.13, 0.16, dContour);
+  float insideWell = smoothstep(0.12, 0.15, dContour);
   if (insideWell <= 1e-4) {
-    outStepIdx = 0.9 * stairA + 0.6 * stairB;
-    outEdgeDist = abs(dContour - 0.145);
+    outStepIdx = 0.9 * stairA + 0.6 * stairB + 0.5 * stairZ;
+    outEdgeDist = abs(dContour - 0.135);
     return wFace;
   }
 
+  // Active 2D face coordinates for internal Greek-key / parallel-rib / L-bracket walls
   vec2 uv = (wZ <= wX && wZ <= wY) ? pQ.xy
           : (wX <= wY)             ? vec2(pQ.z, pQ.y)
                                    : vec2(pQ.x, pQ.z);
 
-  float normContour = clamp((dContour - 0.13) / 0.72, 0.0, 1.0);
-  float sWell = clamp(normContour, 0.0, 0.9999) * nSt;
-  float idxW = floor(sWell);
-  float fWell = sWell - idxW;
-  float wellStair = (idxW + smoothstep(0.74, 0.95, fWell)) / nSt;
+  // 2. Contour-following stepped hopper tiers (4..8 steps) + morphology-specific internal ridges on all 6 faces
+  float normContour = clamp((dContour - 0.11) / 0.72, 0.0, 1.0);
+  float wellStair = quantStairFast(normContour, nSt);
+  float sWell = normContour * nSt;
+  float fWell = fract(sWell);
 
-  float openGap = smoothstep(0.08, 0.18, uv.x * sign(morphP.w)) * (1.0 - smoothstep(0.20, 0.32, abs(uv.y - 0.12)));
-  float ridgePhase = abs(fWell - 0.22);
-  float concentricRidge = (1.0 - smoothstep(0.16, 0.25, ridgePhase)) * (1.0 - 0.85 * openGap);
+  // Open-sided L-bracket / U-channel doorway on one quadrant of the internal ridges
+  float openGap = smoothstep(0.08, 0.18, uv.x * sign(morphP.w)) * (1.0 - smoothstep(0.22, 0.34, abs(uv.y - 0.14)));
 
-  float stepDepth = (0.09 + 0.26 * wellStair - 0.055 * concentricRidge) * hopperAmt * insideWell;
-  outStepIdx = (0.65 + 2.6 * wellStair + 1.1 * stairA - 0.45 * concentricRidge) * insideWell + abs(morphP.w) * 0.25;
+  float ridgePhase = abs(fWell - 0.38);
+  float concentricRidge = (1.0 - smoothstep(0.14, 0.21, ridgePhase)) * (1.0 - 0.88 * openGap);
+
+  // Parallel comb ribs (active when morphP.w < 0, like the "Rainbow Metal" parallel-ribbed specimen)
+  float parCoord = (uv.x - uv.y * 0.18) * 3.5;
+  float parWave = abs(fract(parCoord) - 0.5);
+  float parallelRibs = 1.0 - smoothstep(0.14, 0.22, parWave);
+
+  // Asymmetric Greek-key inner hook bars (active when morphP.w > 0.7)
+  float dHook1 = max(abs(uv.x - 0.06) - 0.32, abs(uv.y - 0.12) - 0.062);
+  float dHook2 = max(abs(uv.x + 0.18) - 0.062, abs(uv.y + 0.04) - 0.26);
+  float greekHook = (1.0 - smoothstep(-0.012, 0.012, min(dHook1, dHook2))) * step(0.7, morphP.w);
+
+  float wallMask = (morphP.w < 0.0)
+    ? max(parallelRibs * 0.85, concentricRidge * 0.65)
+    : max(concentricRidge, greekHook);
+
+  float floorDepth = (0.18 + 0.46 * wellStair) * hopperAmt;
+  float ridgeTopDepth = (0.06 + 0.14 * wellStair) * hopperAmt;
+  float targetDepth = mix(floorDepth, ridgeTopDepth, wallMask) * insideWell;
+
+  outStepIdx = (0.65 + 2.6 * wellStair + 1.1 * stairA - 0.55 * wallMask) * insideWell + abs(morphP.w) * 0.25;
   float eWell = min(fWell, 1.0 - fWell) / nSt;
-  outEdgeDist = min(min(eWell, abs(dContour - 0.145)), abs(ridgePhase - 0.18) / nSt);
-  return wFace - stepDepth;
+  outEdgeDist = min(min(eWell, abs(dContour - 0.115)), (morphP.w < 0.0) ? abs(parWave - 0.18) * 0.25 : abs(ridgePhase - 0.16) / nSt);
+  return wFace - targetDepth;
 }
 
 float evalBismuthHopper(vec3 p, int row, float hopperAmt, out float outStepIdx, out float outEdgeDist) {
@@ -847,26 +837,22 @@ bool intersectBismuthHopper(int row, vec3 ro, vec3 rd, float hopperAmt, float tH
 
   float dtMax = min(tf, tHitMax) - tStart;
   if (dtMax <= 1e-4) {
-    return evalBismuthMargin(pQ0, morphP, hopperAmt) >= -1e-4;
+    float s0, e0;
+    return evalBismuthFast(pQ0, morphP, hopperAmt, s0, e0) >= -1e-4;
   }
 
-  // Fast check at entry surface (ms = 0): if ray hits outer rim/wall immediately, skip march & bisection
-  float mEntry = evalBismuthMargin(pQ0, morphP, hopperAmt);
-  if (mEntry >= -1e-4) {
-    return true;
-  }
-
-  // March along local ray pQ(dt) = pQ0 + dpQ * dt in 8 fast register-only steps (6 on mobile)
-  int nSteps = (u_isMobile > 0.5) ? 6 : 8;
+  // March along local ray pQ(dt) = pQ0 + dpQ * dt in 10 fast branchless register-only steps (7 on mobile)
+  int nSteps = (u_isMobile > 0.5) ? 7 : 10;
   float dtStep = dtMax / float(nSteps);
   float dtPrev = 0.0;
   bool foundHit = false;
   float dtHit = 0.0;
 
-  for (int ms = 1; ms <= 8; ms++) {
+  for (int ms = 0; ms <= 10; ms++) {
     if (ms > nSteps) break;
     float dt = float(ms) * dtStep;
-    if (evalBismuthMargin(pQ0 + dpQ * dt, morphP, hopperAmt) >= -1e-4) {
+    float sIdx, sEdge;
+    if (evalBismuthFast(pQ0 + dpQ * dt, morphP, hopperAmt, sIdx, sEdge) >= -1e-4) {
       dtHit = dt;
       foundHit = true;
       break;
@@ -876,31 +862,38 @@ bool intersectBismuthHopper(int row, vec3 ro, vec3 rd, float hopperAmt, float tH
 
   if (!foundHit) return false;
 
-  float tLo = dtPrev, tHi = dtHit;
-  for (int bs = 0; bs < 3; bs++) {
-    float tMid = 0.5 * (tLo + tHi);
-    if (evalBismuthMargin(pQ0 + dpQ * tMid, morphP, hopperAmt) >= 0.0) tHi = tMid;
-    else tLo = tMid;
-  }
-  dtHit = tHi;
-
-  // Compute 3D normal in world space via forward differences of evalBismuthMargin(pQ)
-  vec3 pQH = pQ0 + dpQ * dtHit;
-  float m0 = evalBismuthMargin(pQH, morphP, hopperAmt);
-  float eps = 0.006;
-  float gx = (evalBismuthMargin(pQH + vec3(eps, 0.0, 0.0), morphP, hopperAmt) - m0) * sxSign;
-  float gy =  evalBismuthMargin(pQH + vec3(0.0, eps, 0.0), morphP, hopperAmt) - m0;
-  float gz =  evalBismuthMargin(pQH + vec3(0.0, 0.0, eps), morphP, hopperAmt) - m0;
-  vec3 gLocal = -vec3(gx, gy, gz) * invHalf;
-  float gLen = length(gLocal);
-  if (gLen > 1e-5) {
-    tn = tStart + dtHit;
-    kn = CP + 2000;
-    vec3 nCand = normalize(sx * gLocal.x + ax * gLocal.y + sz * gLocal.z);
-    if (dot(nCand, rd) > -0.06) {
-      nCand = normalize(nCand - rd * (dot(nCand, rd) + 0.06));
+  if (dtHit > 1e-4) {
+    float tLo = dtPrev, tHi = dtHit;
+    for (int bs = 0; bs < 3; bs++) {
+      float tMid = 0.5 * (tLo + tHi);
+      float sIdx, sEdge;
+      if (evalBismuthFast(pQ0 + dpQ * tMid, morphP, hopperAmt, sIdx, sEdge) >= 0.0) tHi = tMid;
+      else tLo = tMid;
     }
-    outHopperN = nCand;
+    dtHit = tHi;
+  }
+
+  // Compute 3D normal in world space via forward differences of evalBismuthFast(pQ) (only 4 evals total!)
+  vec3 pQH = pQ0 + dpQ * dtHit;
+  float s0, e0;
+  float m0 = evalBismuthFast(pQH, morphP, hopperAmt, s0, e0);
+  if (dtHit > 1e-4 || m0 < 0.016) {
+    float eps = 0.005;
+    float sD, eD;
+    float gx = (evalBismuthFast(pQH + vec3(eps, 0.0, 0.0), morphP, hopperAmt, sD, eD) - m0) * sxSign;
+    float gy =  evalBismuthFast(pQH + vec3(0.0, eps, 0.0), morphP, hopperAmt, sD, eD) - m0;
+    float gz =  evalBismuthFast(pQH + vec3(0.0, 0.0, eps), morphP, hopperAmt, sD, eD) - m0;
+    vec3 gLocal = -vec3(gx, gy, gz) * invHalf;
+    float gLen = length(gLocal);
+    if (gLen > 1e-5) {
+      tn = tStart + dtHit;
+      kn = CP + 2000;
+      vec3 nCand = normalize(sx * gLocal.x + ax * gLocal.y + sz * gLocal.z);
+      if (dot(nCand, rd) > -0.06) {
+        nCand = normalize(nCand - rd * (dot(nCand, rd) + 0.06));
+      }
+      outHopperN = nCand;
+    }
   }
   return true;
 }
@@ -1339,7 +1332,7 @@ vec3 zonedGemSigma(float hgt) {
   float zWeight = clamp(u_colourZoning, 0.0, 1.0) * raw01;
   float zRamp = smoothstep(0.24, 0.68, hgt);
   float cMix = clamp(u_biColour * (1.0 - zRamp) * zWeight, 0.0, 1.0);
-  float zAtten = mix(1.0, 0.04 + 0.96 * zRamp, zWeight);
+  float zAtten = mix(1.0, 0.22 + 0.78 * zRamp, zWeight);
   return mix(f_sigma, f_sigmaCore, cMix) * zAtten;
 }
 
@@ -1380,8 +1373,9 @@ vec3 insideVolume(int id, vec3 ro, vec3 rd, float len, float jitter, int maxStep
   float rawAmt = clamp(u_rawAmount, 0.0, 2.0);
   float raw01 = clamp(rawAmt / 0.4, 0.0, 1.0);
   float rawScale = mix(0.08, 1.0, clamp(rawAmt, 0.0, 1.0)) * mix(1.0, 1.85, max(0.0, rawAmt - 1.0));
-  float effMilk = u_milk * (1.0 - 0.25 * dither) * rawScale;
-  float effVeils = u_veils * (1.0 - 0.20 * dither) * rawScale;
+  float inclScale = mix(rawScale, max(rawScale, 0.85), g1);
+  float effMilk = u_milk * (1.0 - 0.25 * dither) * inclScale;
+  float effVeils = u_veils * (1.0 - 0.20 * dither) * inclScale;
   float hgtStart = crystalHeight01(id, ro);
   float hgtEnd = crystalHeight01(id, ro + rd * len);
   bool needInclTex = (effMilk > 0.01 || effVeils > 0.01 || u_iridescence > 0.01 || u_colourZoning > 0.01 || g1 > 0.01);
@@ -1448,9 +1442,10 @@ vec3 insideVolume(int id, vec3 ro, vec3 rd, float len, float jitter, int maxStep
     }
     float chevronBand = 1.0 + 0.06 * rawAmt * u_colourZoning * sin((hgt * 10.0 - radFrac * 3.5) * PI) * zRamp;
     float cleanTipZone = 1.0 + 0.35 * u_colourZoning * (2.0 * hgt - 1.0);
-    float rawTipZone = mix(1.0, 0.04 + 1.35 * pow(zRamp, 1.08), u_colourZoning);
+    float rawTipZone = mix(1.0, 0.24 + 1.12 * pow(zRamp, 1.05), u_colourZoning);
     float tipZone = mix(cleanTipZone, rawTipZone, raw01);
-    vec3 sigma = baseSigma * effOpticalScale * tipZone * chevronBand * (0.76 + 0.48 * v.b);
+    vec3 minQuartzSigma = vec3(0.28, 0.32, 0.26) * g1;
+    vec3 sigma = max(baseSigma * effOpticalScale * tipZone * chevronBand * (0.76 + 0.48 * v.b), minQuartzSigma);
     T *= (1.0 - a) * exp(-sigma * effAbsorbDt);
   }
 
@@ -1735,15 +1730,14 @@ vec3 faceNormal(int id, int k, vec3 n, vec3 p, float rough, float footprint, flo
     vec3 patchCell = floor(pRaw * 140.0);
     float patchMod = 0.55 + 0.75 * hash(patchCell + uid * 3.1);
     vec3 hCell = vec3(hash(cell), hash(cell + 1.3), hash(cell + 2.7)) - 0.5;
-    vec3 nDither = rough * 0.068 * patchMod * hCell;
+    vec3 nDither = rough * 0.036 * patchMod * hCell;
     vec3 nJack = vec3(0.0);
     if (glimmer > 0.001) {
       vec3 jbCell = floor(pRaw * 900.0);
       vec3 hJb = vec3(hash(jbCell), hash(jbCell + 1.3), hash(jbCell + 2.7)) - 0.5;
-      float glintSpark = step(0.82, hash(jbCell + 5.1));
-      nJack = rough * (0.062 + 0.12 * glintSpark) * glimmer * hJb;
+      nJack = rough * 0.024 * glimmer * hJb;
     }
-    n = normalize(n + mix(nSmooth, nDither, dither) * (1.0 - 0.65 * g1) + nJack);
+    n = normalize(n + mix(nSmooth, nDither, dither) * (1.0 - 0.72 * g1) + nJack);
   }
   return n;
 }
@@ -1965,9 +1959,9 @@ vec3 softFacetRefl(vec3 rawEnv, float hgt) {
   vec3 gemCol = exp(-zonedGemSigma(hgt) * 0.42);
   float lum = max(rawEnv.r, max(rawEnv.g, rawEnv.b));
   float glare = clamp(u_faceGlare, 0.0, 1.0);
-  vec3 compressed = rawEnv / (1.0 + (1.85 - 1.05 * glare) * lum);
-  vec3 softCol = mix(compressed * (0.22 + 0.78 * gemCol), compressed, 0.32 * glare);
-  return mix(softCol, rawEnv / (1.0 + 0.45 * lum), 0.35 * clamp(u_glimmer, 0.0, 1.0));
+  vec3 compressed = rawEnv / (1.0 + (2.35 - 1.05 * glare) * lum);
+  vec3 softCol = mix(compressed * (0.20 + 0.72 * gemCol), compressed * 0.85, 0.26 * glare);
+  return mix(softCol, rawEnv / (1.0 + 0.65 * lum), 0.42 * clamp(u_glimmer, 0.0, 1.0));
 }
 vec3 softFacetRefl(vec3 rawEnv) {
   return softFacetRefl(rawEnv, 0.75);
@@ -1980,9 +1974,11 @@ vec3 refractedEnv(vec3 dir, float rough, float refAlpha, float hgt) {
   float glare = clamp(u_faceGlare, 0.0, 1.0);
   float ltLum = max(lt.r, max(lt.g, lt.b));
   vec3 gemCol = exp(-zonedGemSigma(hgt) * 0.48);
-  vec3 softLt = (lt / (1.0 + (2.6 - 1.5 * glare) * ltLum)) * mix(gemCol * 0.88, gemCol * 0.55 + vec3(0.45), 0.25 * glare);
+  vec3 softLt = (lt / (1.0 + (2.8 - 1.4 * glare) * ltLum)) * mix(gemCol * 0.76, gemCol * 0.52 + vec3(0.32), 0.20 * glare);
   vec3 curEnv = bg + mix(lt, softLt, refAlpha);
-  vec3 jbEnv = bg + lt + glimmerStripLights(d, rough) * refAlpha;
+  float rearRimMask = smoothstep(0.05, -0.35, d.z);
+  vec3 jbRefrLt = mix(softLt * 0.26, lt * 0.22, rearRimMask) + glimmerStripLights(d, rough);
+  vec3 jbEnv = bg + mix(lt, jbRefrLt, refAlpha);
   float jbBlend = clamp(glimmerCurve(u_glimmer), 0.0, 1.0);
   return mix(curEnv, jbEnv, jbBlend);
 }
@@ -2002,10 +1998,10 @@ vec3 facetIridescence(int id, int k, vec3 p, vec3 rd, vec3 n, float dEdge, vec3 
   float filmT = cosV * 2.4 + hgt * 1.35 + (dEdge / r) * 0.95 + float(k) * 0.19 + genShift;
   vec3 irid1 = spectralRainbow(filmT);
   vec3 irid2 = spectralRainbow(filmT * 1.62 + 0.29);
-  vec3 specCol = normalize(mix(irid1, irid2, mix(0.32, 0.35, dither)) + vec3(1e-4)) * mix(1.35, 1.18, dither);
+  vec3 specCol = normalize(mix(irid1, irid2, mix(0.32, 0.35, dither)) + vec3(1e-4)) * mix(1.22, 1.12, dither);
   float fresRim = pow(1.0 - cosV, 2.0);
-  vec3 tinted = mix(baseRefl, baseRefl * specCol * mix(1.85, 1.25, dither), clamp(s * 0.9, 0.0, mix(1.0, 0.78, dither)));
-  vec3 sheen = specCol * f_ambient * (0.32 + 0.68 * fresRim) * min(s, mix(3.0, 1.4, dither)) * mix(0.5, 0.32, dither);
+  vec3 tinted = mix(baseRefl, baseRefl * specCol * mix(1.32, 1.12, dither), clamp(s * 0.82, 0.0, mix(0.85, 0.68, dither)));
+  vec3 sheen = specCol * f_ambient * (0.28 + 0.72 * fresRim) * min(s, mix(2.2, 1.2, dither)) * mix(0.22, 0.14, dither);
   return tinted + sheen;
 }
 
@@ -2021,7 +2017,7 @@ vec3 iridescentFilm(int id, int k, vec3 p, vec3 rd, vec3 n, float dEdge) {
   vec3 film = spectralRainbow(filmT * 1.18 + 0.11);
   float rim = pow(1.0 - cosV, 1.5);
   float coat = 0.6 + 0.4 * hash(vec3(body(id, 2).z * 3.0, float(k) * 7.0, 61.0));
-  return film * f_ambient * (0.3 + 0.7 * rim) * coat * min(s, 1.5) * 0.4 * (1.0 - 0.38 * dither);
+  return film * f_ambient * (0.25 + 0.75 * rim) * coat * min(s, 1.4) * 0.18 * (1.0 - 0.38 * dither);
 }
 
 // Surface facet catch-lights & bevel glints (governed by u_bloom and u_faceGlare)
@@ -2063,9 +2059,9 @@ vec3 crystalBloomGlint(int id, int k, vec3 p, vec3 rd, vec3 nSmooth, float dEdge
     flashSum += prismTint * (facetHit * 1.15 * glare);
   }
 
-  float overdrive = u_bloom * (0.55 + 0.45 * u_bloom) * (0.22 + 0.78 * glare);
+  float overdrive = u_bloom * (0.30 + 0.28 * u_bloom) * (0.18 + 0.62 * glare);
   vec3 rawGlint = flashSum * polish * overdrive;
-  return rawGlint / (1.0 + (1.6 - 0.85 * glare) * max(rawGlint.r, max(rawGlint.g, rawGlint.b)));
+  return rawGlint / (1.0 + (1.8 - 0.85 * glare) * max(rawGlint.r, max(rawGlint.g, rawGlint.b)));
 }
 
 // Physical Thin-Film Bi2O3 Oxide Interference Palette (post-015895, post-015896):
@@ -2632,13 +2628,13 @@ void main() {
       rawEntryRefl *= mix(vec3(1.0), exp(-zonedGemSigma(hgtEntry) * 0.32), 0.68 * (1.0 - 0.55 * g1));
     }
     vec3 entryRefl = facetIridescence(id, k, p, rd, nRefl, dEdge, rawEntryRefl);
-    vec3 entryFlash = (hop == 0) ? crystalBloomGlint(id, k, p, rd, nRefl, dEdge, reflRough) * (1.0 - 0.25 * dither) : vec3(0.0);
-    float iridReflBoost = clamp(F + (u_iridescence * u_rainbow) * 0.06 + patinaGlint * 0.11 * (1.0 - 0.6 * dither), 0.0, mix(0.58, 0.50, dither)) * (0.18 + 0.82 * effGlare);
-    float entryReflW = mix(iridReflBoost, F, g1);
-    vec3 patinaLight = (0.48 * f_ambient + 0.52 * entryRefl + vec3(0.10)) * vec3(0.96, 0.98, 1.0);
-    float surfFrostSheen = (hop == 0) ? (rough * (0.12 + 0.16 * baseFrost) * (0.40 + 0.60 * pow(1.0 - cosEntry, 1.6))) : 0.0;
-    vec3 frostSheenCol = (0.48 * f_ambient + 0.52 * rawEntryRefl + vec3(0.12)) * mix(vec3(0.92, 0.96, 1.0), exp(-zonedGemSigma(hgtEntry) * 0.22), 0.42);
-    hopCol += (entryReflW * entryRefl + jbChip * 0.12 * f_ambient + patinaGlint * 0.16 * (1.0 - 0.55 * dither) * patinaLight + surfFrostSheen * frostSheenCol + entryFlash);
+    vec3 entryFlash = (hop == 0) ? crystalBloomGlint(id, k, p, rd, nRefl, dEdge, reflRough) * 0.55 * (1.0 - 0.25 * dither) : vec3(0.0);
+    float iridReflBoost = clamp(F + (u_iridescence * u_rainbow) * 0.04 + patinaGlint * 0.08 * (1.0 - 0.6 * dither), 0.0, mix(0.46, 0.38, dither)) * (0.18 + 0.76 * effGlare);
+    float entryReflW = mix(iridReflBoost, F * 0.90, g1);
+    vec3 patinaLight = (0.42 * f_ambient + 0.48 * entryRefl + vec3(0.05)) * vec3(0.96, 0.98, 1.0);
+    float surfFrostSheen = (hop == 0) ? (rough * (0.04 + 0.05 * baseFrost) * (0.35 + 0.65 * pow(1.0 - cosEntry, 1.8))) : 0.0;
+    vec3 frostSheenCol = (0.38 * f_ambient + 0.42 * rawEntryRefl + vec3(0.03)) * mix(vec3(0.88, 0.92, 0.98), exp(-zonedGemSigma(hgtEntry) * 0.28), 0.55);
+    hopCol += (entryReflW * entryRefl + jbChip * 0.08 * f_ambient + patinaGlint * 0.12 * (1.0 - 0.55 * dither) * patinaLight + surfFrostSheen * frostSheenCol + entryFlash);
     hopCol += iridescentFilm(id, k, p, rd, nRefl, dEdge);
     hopThr *= mix(1.0 - F * (0.3 + 0.7 * effGlare), (1.0 - F) * (1.0 - 0.6 * jbChip), g1);
 
@@ -2764,24 +2760,26 @@ void main() {
     float exitHgt = clamp(dot(p - body(id, 3).xyz, body(id, 1).xyz) / max(body(id, 1).w, 0.1), 0.0, 1.0);
     float isRootCut = ((kf == 16 && dot(body(id, PA + 16).xyz, body(id, 1).xyz) < -0.85) ? 1.0 : (1.0 - smoothstep(0.06, 0.20, exitHgt)));
     vec3 reflExitDir = reflect(rdC, -nf);
-    vec3 rawExitEnv = env(reflExitDir, fr) + glimmerStripLights(f_toWorld * reflExitDir, fr) * (1.0 - isRootCut);
+    vec3 baseExitEnv = softFacetRefl(env(reflExitDir, fr), hgtEntry);
+    vec3 stripExitEnv = glimmerStripLights(f_toWorld * reflExitDir, fr) * (1.0 - isRootCut);
     if (u_fire > 0.0) {
       float effGlim = glimmerCurve(glimmer);
       vec3 exitTan = rdC - nf * cosExitI;
-      vec3 rSpread = (reflect(pathDisp, -nf) * 0.45 + exitTan * 0.25) * (u_fire * 0.75 * effGlim);
+      vec3 rSpread = (reflect(pathDisp, -nf) * 0.48 + exitTan * 0.28) * (u_fire * 0.82 * effGlim);
       vec3 dR = normalize(reflExitDir - rSpread);
       vec3 dB = normalize(reflExitDir + rSpread);
-      vec3 envR = env(dR, fr) + glimmerStripLights(f_toWorld * dR, fr) * (1.0 - isRootCut);
-      vec3 envB = env(dB, fr) + glimmerStripLights(f_toWorld * dB, fr) * (1.0 - isRootCut);
-      rawExitEnv = vec3(
-        mix(envR.r, rawExitEnv.r, 0.14),
-        mix(rawExitEnv.g, 0.5 * (envR.g + envB.g), 0.18),
-        mix(envB.b, rawExitEnv.b, 0.14)
+      vec3 sR = glimmerStripLights(f_toWorld * dR, fr) * (1.0 - isRootCut);
+      vec3 sB = glimmerStripLights(f_toWorld * dB, fr) * (1.0 - isRootCut);
+      stripExitEnv = vec3(
+        mix(sR.r, stripExitEnv.r, 0.12),
+        mix(stripExitEnv.g, 0.5 * (sR.g + sB.g), 0.16),
+        mix(sB.b, stripExitEnv.b, 0.12)
       );
     }
-    vec3 exitRefl = facetIridescence(id, kf, p, rdC, -nf, dExit, rawExitEnv / (1.0 + 0.18 * max(rawExitEnv.r, max(rawExitEnv.g, rawExitEnv.b))));
-    vec3 exitFlash = (hop == 0) ? crystalBloomGlint(id, kf, p, rdC, -nf, dExit, fr) * 0.4 * (1.0 - 0.25 * dither) : vec3(0.0);
-    float exitReflW = mix(0.42 * (1.0 - 0.28 * dither) * (0.15 + 0.85 * glare), 0.48 * (1.0 - 0.85 * isRootCut), effG1);
+    vec3 rawExitEnv = baseExitEnv + stripExitEnv;
+    vec3 exitRefl = facetIridescence(id, kf, p, rdC, -nf, dExit, rawExitEnv / (1.0 + 0.24 * max(rawExitEnv.r, max(rawExitEnv.g, rawExitEnv.b))));
+    vec3 exitFlash = (hop == 0) ? crystalBloomGlint(id, kf, p, rdC, -nf, dExit, fr) * 0.25 * (1.0 - 0.25 * dither) : vec3(0.0);
+    float exitReflW = mix(0.36 * (1.0 - 0.28 * dither) * (0.15 + 0.85 * glare), 0.38 * (1.0 - 0.85 * isRootCut), effG1);
     hopCol += hopThr * (Fo * exitRefl * exitReflW + exitFlash);
     hopThr *= mix(1.0 - Fo * (0.3 + 0.7 * glare * (1.0 - 0.35 * dither)), 1.0 - Fo, g1);
 
@@ -2805,7 +2803,7 @@ void main() {
     lastIn = rdC;
     lastN = nf;
     lastPathDisp = pathDisp;
-    lastRough = fr;
+    lastRough = max(fr, rough * 0.45);
     lastFireAlpha = 1.0 - 0.88 * isRootCut * g1;
     lastRefracted = true;
     rd = normalize(o);
@@ -2827,16 +2825,17 @@ void main() {
         float x = (float(i) + 0.5) / float(ns);
         vec3 dw = (x - vec3(0.14, 0.5, 0.86)) / 0.40;
         vec3 w = max(1.0 - dw * dw, 0.0);
-        vec3 inWave = normalize(lastIn + lastPathDisp * (dispFire * (x - 0.5) * 0.42 * effG1));
+        vec3 inWave = normalize(lastIn + lastPathDisp * (dispFire * (x - 0.5) * 0.36 * effG1));
         vec3 o = refract(inWave, -lastN, dispIor + dispFire * (x - 0.5) * 2.0);
         wsum += w;
         if (dot(o, o) > 1e-6) {
+          float tirFeather = smoothstep(0.0, 0.18, abs(dot(o, lastN)));
           vec3 sampleDir = normalize(mix(rd, o, lastFireAlpha));
-          vec3 eCol = refractedEnv(sampleDir, lastRough, lastFireAlpha, lastHgt);
+          vec3 eCol = refractedEnv(sampleDir, lastRough, lastFireAlpha, lastHgt) * mix(0.28, 1.0, tirFeather);
           if (effIrid > 0.0) {
             float defl = length(sampleDir - initialRd);
             vec3 prism = spectralRainbow(defl * 2.4 + x * 0.85);
-            eCol += prism * f_ambient * effIrid * mix(0.42, 0.24, dither) * lastFireAlpha * smoothstep(0.04, 0.45, defl);
+            eCol += prism * f_ambient * effIrid * mix(0.32, 0.18, dither) * lastFireAlpha * smoothstep(0.04, 0.45, defl);
           }
           acc += w * eCol;
         }

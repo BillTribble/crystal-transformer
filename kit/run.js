@@ -55,9 +55,12 @@ export function computeComplementaryBg(stoneHex, colourDepth) {
   }
   const hsl = hexToOkhsl(String(stoneHex || '#a77fe0'));
   const stoneH = Number.isFinite(hsl.h) ? hsl.h : 0.75;
-  const compH = (stoneH + 0.5) % 1.0;
-  const compS = Math.max(0.45, Math.min(0.75, (hsl.s || 0.65) * 0.82));
-  const compL = 0.075;
+  // For violet/amethyst hues (stoneH in 0.70..0.88), shift toward Jack Bush's deep emerald-teal studio backdrop
+  // instead of muddy yellow-olive so dark purple crystals sit against a moody dark-teal void.
+  const isAmethystHue = stoneH >= 0.70 && stoneH <= 0.88;
+  const compH = isAmethystHue ? 0.52 : (stoneH + 0.5) % 1.0;
+  const compS = isAmethystHue ? 0.45 : Math.max(0.45, Math.min(0.75, (hsl.s || 0.65) * 0.82));
+  const compL = isAmethystHue ? 0.055 : 0.075;
   return {
     stoneH,
     compH,
