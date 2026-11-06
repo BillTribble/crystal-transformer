@@ -56,13 +56,20 @@
     /* Top-left preset pill — fixed width so < and > buttons never shift position */
     #hud-preset {
       position: fixed; top: max(14px, env(safe-area-inset-top)); left: max(14px, env(safe-area-inset-left));
-      z-index: 2; height: 38px; width: 304px; display: inline-flex; align-items: center; justify-content: space-between; gap: 2px;
+      z-index: 4; height: 38px; width: 304px; display: inline-flex; align-items: center; justify-content: space-between; gap: 2px;
       background: rgba(0, 0, 0, 0.38); border: 1px solid rgba(255, 255, 255, 0.12);
       border-radius: 19px; padding: 0 6px; color: var(--ink); font: 11px/1 var(--mono);
       backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
       transition: opacity .45s ease, background .2s;
     }
-    #hud-preset button {
+    #hud-preset.dropdown-open {
+      opacity: 1 !important;
+      pointer-events: auto !important;
+      background: rgba(14, 17, 24, 0.72);
+      border-color: rgba(255, 255, 255, 0.24);
+    }
+    #hud-preset > button,
+    #hud-preset .hud-preset-center > button {
       border: 0; background: none; color: var(--ink-dim); font: inherit; cursor: pointer;
       padding: 6px 8px; border-radius: 14px; transition: color .15s, background .15s;
     }
@@ -70,13 +77,78 @@
       width: 28px; min-width: 28px; max-width: 28px; height: 28px; flex: 0 0 28px;
       padding: 0; display: inline-flex; align-items: center; justify-content: center;
     }
-    #hud-preset button:hover { color: var(--ink); background: rgba(255, 255, 255, 0.08); }
-    #hud-preset-name {
-      color: var(--ink) !important; font-weight: 500 !important; letter-spacing: .02em;
+    #hud-preset > button:hover,
+    #hud-preset .hud-preset-center > button:hover { color: var(--ink); background: rgba(255, 255, 255, 0.08); }
+    .hud-preset-center {
+      position: relative;
       width: 230px; min-width: 230px; max-width: 230px; flex: 0 0 230px;
-      padding: 4px 2px; text-align: center; white-space: nowrap; overflow: hidden;
       display: inline-flex; align-items: center; justify-content: center;
     }
+    #hud-preset-name {
+      color: var(--ink) !important; font-weight: 500 !important; letter-spacing: .02em;
+      width: 100%; min-width: 0; max-width: 100%; flex: 1 1 auto;
+      padding: 4px 6px; text-align: center; white-space: nowrap; overflow: hidden;
+      display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+    }
+    .hud-preset-chevron {
+      font-size: 9px; line-height: 1; color: var(--ink-dim); flex: 0 0 auto;
+      transition: transform .2s ease, color .15s;
+    }
+    #hud-preset.dropdown-open .hud-preset-chevron {
+      transform: rotate(180deg); color: var(--ink);
+    }
+    #hud-preset-mobile-select {
+      display: none; pointer-events: none;
+    }
+    @media (pointer: coarse), (max-width: 768px) {
+      #hud-preset-mobile-select {
+        display: block; pointer-events: auto;
+        position: absolute; inset: 0; width: 100%; height: 100%;
+        opacity: 0; cursor: pointer; z-index: 3; border: 0; background: transparent;
+        font-size: 16px; -webkit-appearance: menulist-button; appearance: auto;
+      }
+    }
+    #hud-preset-dropdown {
+      position: absolute; top: calc(100% + 8px); left: 0; width: 100%; min-width: 288px;
+      max-height: min(440px, calc(100dvh - 80px)); overflow-y: auto; z-index: 12;
+      padding: 6px; border-radius: 14px;
+      background: rgba(16, 19, 26, 0.90);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      box-shadow: 0 12px 36px rgba(0, 0, 0, 0.50);
+      backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+    }
+    #hud-preset-dropdown[hidden] { display: none !important; }
+    .hud-preset-group-label {
+      padding: 6px 10px 4px; font: 600 9px/1.2 var(--mono);
+      text-transform: uppercase; letter-spacing: .08em;
+      color: var(--ink-dim); opacity: 0.72;
+    }
+    .hud-preset-item {
+      width: 100%; display: flex; align-items: center; gap: 9px;
+      padding: 7px 10px; border: 0; border-radius: 9px;
+      background: transparent; color: var(--ink); font: 11px/1.3 var(--mono);
+      text-align: left; cursor: pointer; transition: background .14s, color .14s;
+    }
+    .hud-preset-item:hover, .hud-preset-item:focus-visible {
+      background: rgba(255, 255, 255, 0.10); color: #fff; outline: none;
+    }
+    .hud-preset-item.is-active {
+      background: rgba(255, 255, 255, 0.14); color: #fff; font-weight: 600;
+    }
+    .hud-preset-dot {
+      width: 8px; height: 8px; border-radius: 50%; flex: 0 0 8px;
+      box-shadow: 0 0 6px currentColor;
+    }
+    .hud-preset-item-name {
+      flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .hud-preset-item-meta {
+      flex: 0 0 auto; font-size: 9.5px; color: var(--ink-dim); opacity: 0.78;
+    }
+    .hud-preset-item-check {
+      flex: 0 0 12px; text-align: right; font-size: 11px; color: #93c5fd; opacity: 0;
+    }
+    .hud-preset-item.is-active .hud-preset-item-check { opacity: 1; }
     #preset-name {
       position: relative; display: block; width: 100%; max-width: 100%; height: 22px; line-height: 22px;
       white-space: nowrap; overflow: hidden; vertical-align: middle;
@@ -192,6 +264,7 @@
         right: max(14px, env(safe-area-inset-right));
         width: auto;
       }
+      .hud-preset-center,
       #hud-preset-name {
         width: auto; min-width: 0; max-width: none; flex: 1 1 auto;
       }
@@ -389,8 +462,12 @@
 
   <div id="hud-preset" role="group" aria-label="Crystal presets">
     <button id="prev-preset" type="button" title="Previous preset" aria-label="Previous preset">‹</button>
-    <button id="hud-preset-name" type="button" title="Open settings & presets"><span id="preset-name"><span class="preset-name-outgoing">Classic Quartz Prism</span><span class="preset-name-incoming" aria-hidden="true"></span></span></button>
+    <div class="hud-preset-center">
+      <button id="hud-preset-name" type="button" aria-haspopup="listbox" aria-expanded="false" title="Choose crystal preset"><span id="preset-name"><span class="preset-name-outgoing">Classic Quartz Prism</span><span class="preset-name-incoming" aria-hidden="true"></span></span><span class="hud-preset-chevron" aria-hidden="true">▾</span></button>
+      <select id="hud-preset-mobile-select" aria-label="Choose crystal preset"></select>
+    </div>
     <button id="next-preset" type="button" title="Next preset" aria-label="Next preset">›</button>
+    <div id="hud-preset-dropdown" role="listbox" aria-label="Crystal presets" hidden></div>
   </div>
 
   <button id="unmute-center-btn" type="button" aria-label="Unmute ambient sound" title="Unmute Enso ambient soundscape (M)">
@@ -1146,9 +1223,11 @@ function createLoop(canvas, P, sketch) {
 
   function frame(now) {
     raf = requestAnimationFrame(frame);
-    const cap = cappedFps();
+    const s = sketch();
+    const inStartup = s && (!s.shaderReady || s.fillInProgress < 1.0);
+    const cap = inStartup ? 0 : cappedFps();
     if (cap > 0 && last && now - last < 900 / cap) return;
-    const dt = last ? Math.min((now - last) * 0.001, 0.1) : 0;
+    const dt = last ? Math.min((now - last) * 0.001, 0.1) : 0.016;
     last = now;
     render(dt);
   }
@@ -1160,9 +1239,9 @@ function createLoop(canvas, P, sketch) {
     paused: false,
     get frames() { return frames; },
     start() {
-      last = 0;
       cancelAnimationFrame(raf);
       if (frames === 0) render(0);
+      last = performance.now();
       raf = requestAnimationFrame(frame);
     },
     stop() { cancelAnimationFrame(raf); raf = 0; },
@@ -3777,7 +3856,7 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
     const effTwinShare = twinShare * (1.0 - hopperBlend);
     const thrLo = i < 3 ? i : (i <= 5 ? (3.0 + (i - 3) * 0.22) : (i - 0.8));
     const thrHi = i + 1.0;
-    const rawPresence = smooth01(Math.max(0.0, Math.min(1.0, (floatC - thrLo) / Math.max(1.0, thrHi - thrLo)))) * (i >= 3 ? Math.max(0.0, 1.0 - hopperBlend) : 1.0);
+    const rawPresence = smooth01(Math.max(0.0, Math.min(1.0, (floatC - thrLo) / Math.max(1.0, thrHi - thrLo)))) * (i >= 6 ? Math.max(0.0, 1.0 - hopperBlend) : 1.0);
     const rawTwinW = i < 2 ? 0.0 : smooth01(Math.max(0.0, Math.min(1.0, (effTwinShare - node.twinRoll + 0.44) / 0.88))) * (1.0 - hopperBlend);
     if (!node.smoothInit) {
       node.smoothPresence = rawPresence;
@@ -3915,35 +3994,31 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
     //   Block 0: Hero broad cantilevered terraced hopper wing (morph 0)
     //   Block 1: Tall stepped pagoda ziggurat tower interlocking at an angle (morph 1)
     //   Block 2: Open-sided L-bracket / Greek-key sub-block on the opposite flank (morph 2)
-    const hopperMorph = i < 3 ? i : ((nodeUidInt - 1 + (seedInt % 5)) % 5);
+    const hopperMorph = i < 5 ? i : ((nodeUidInt - 1 + (seedInt % 5)) % 5);
     node.hopperMorph = hopperMorph;
 
-    if (hopperBlend > 1e-4 && i < 3) {
-      // Cohesive 3-block Bismuth Hopper sculptural cluster (post-016032):
+    if (hopperBlend > 1e-4 && i < 6) {
+      // Broken-out 6-block cascading Bismuth Hopper cluster (matching reference photo 1dbbb5bc):
+      // Asymmetric stepped orientations forming a jagged diagonal cascade from upper-right crown to lower-left fingers
       const archMode = seedInt % 3;
-      const azBase = (0.18 + 0.08 * archMode) * Math.PI;
-      const azSpread = (i === 0)
-        ? azBase
-        : (i === 1)
-          ? (azBase + 0.68 * Math.PI)
-          : (i === 2)
-            ? (azBase - 0.72 * Math.PI)
-            : (0.20 * Math.PI + i * (TAU / 5.4) + 0.42 * (seedInt % 7));
-      const leanDeg = (i === 0)
-        ? 16
-        : (i === 1)
-          ? 14
-          : (i === 2)
-            ? 32
-            : (hopperMorph === 1 ? 11 + 5 * (i % 2)
-              : hopperMorph === 0 ? 24 + 8 * (i % 2)
-              : hopperMorph === 3 ? 46 + 10 * (i % 2)
-              : 34 + 14 * (i % 3));
+      const azBase = (0.16 + 0.07 * archMode) * Math.PI;
+      const azSpread = (i === 0) ? azBase
+                     : (i === 1) ? (azBase + 0.38 * Math.PI)
+                     : (i === 2) ? (azBase - 0.56 * Math.PI)
+                     : (i === 3) ? (azBase + 0.82 * Math.PI)
+                     : (i === 4) ? (azBase - 0.92 * Math.PI)
+                                 : (azBase - 0.24 * Math.PI);
+      const leanDeg = (i === 0) ? 18
+                    : (i === 1) ? 15
+                    : (i === 2) ? 26
+                    : (i === 3) ? 22
+                    : (i === 4) ? 38
+                                : 44;
       const zigLean = leanDeg * DEG;
       const zAx0 = Math.sin(zigLean) * Math.cos(azSpread);
       const zAx1 = Math.cos(zigLean);
       const zAx2 = Math.sin(zigLean) * Math.sin(azSpread);
-      const hopperFrameW = 0.86 * hopperBlend * smooth01(hopperBlend);
+      const hopperFrameW = 0.88 * hopperBlend * smooth01(hopperBlend);
       ax[0] = ax[0] * (1 - hopperFrameW) + zAx0 * hopperFrameW;
       ax[1] = ax[1] * (1 - hopperFrameW) + zAx1 * hopperFrameW;
       ax[2] = ax[2] * (1 - hopperFrameW) + zAx2 * hopperFrameW;
@@ -3996,10 +4071,9 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
 
     let primBaseR = P.thickness.value * Math.pow(primBaseL, 0.65) * Math.max(0.25, 1 + P.thicknessJitter.value * 0.55 * node.uRadSym) * radMod;
     if (hopperBlend > 1e-4) {
-      // Scale the 3 Bismuth Hopper blocks (0: hero cantilevered wing, 1: tall stepped pagoda tower,
-      // 2: open L-bracket sub-block) so the 3-block cluster has bold sculptural volume.
-      const biLenMult = hopperMorph === 1 ? 1.28 : hopperMorph === 2 ? 1.16 : hopperMorph === 0 ? 1.14 : 1.04;
-      const biRadMult = hopperMorph === 0 ? 1.26 : hopperMorph === 2 ? 1.12 : hopperMorph === 1 ? 0.96 : 1.02;
+      // Varied sub-block scales across the 6 cascading Bismuth Hopper blocks (matching reference photo 1dbbb5bc)
+      const biLenMult = i === 0 ? 1.18 : i === 1 ? 1.12 : i === 2 ? 1.06 : i === 3 ? 0.94 : i === 4 ? 1.02 : 0.86;
+      const biRadMult = i === 0 ? 1.16 : i === 1 ? 0.92 : i === 2 ? 1.04 : i === 3 ? 0.88 : i === 4 ? 0.94 : 0.82;
       primBaseL *= 1.0 + (biLenMult - 1.0) * hopperBlend;
       primBaseR *= 1.0 + (biRadMult - 1.0) * hopperBlend;
     }
@@ -4091,18 +4165,21 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
       }
     }
 
-    if (hopperBlend > 1e-4 && i > 0 && i < 3) {
-      // Architectural 3-block Bismuth Hopper offsets (Block 1: tall pagoda tower rising on upper flank;
-      // Block 2: open L-bracket ziggurat interlocking on opposite lower-front flank)
-      const tierIdx = i - 1;
-      const archMode = seedInt % 3;
-      const tierRing = (i === 1 ? 0.28 : i === 2 ? 0.32 : (0.30 + 0.09 * Math.floor(tierIdx / 2))) * baseL;
-      const tierAng = (i === 1 ? 0.82 : i === 2 ? -1.28 : tierIdx * (TAU / 5.2) + 0.35) + 0.38 * archMode;
-      const tierY = (i === 1 ? 0.22 : i === 2 ? -0.10 : (0.20 - 0.12 * (tierIdx % 4))) * baseL * gScale * presence;
+    if (hopperBlend > 1e-4 && i < 6) {
+      // Broken-out 6-block cascading Bismuth Hopper offsets (matching reference photo 1dbbb5bc):
+      //   i = 0: Broad lower-right multi-chamber G-spiral foundation block
+      //   i = 1: Upper-right G-spiral crown tower rising above Block 0
+      //   i = 2: Mid-center / upper-left protruding G-spiral block
+      //   i = 3: Mid-right cantilevered L-hook step block
+      //   i = 4: Left-flank cascading crenellated stair-stepped block
+      //   i = 5: Lower-left broken-out L-pillar finger outcrop
+      const offX = (i === 0 ?  0.14 : i === 1 ?  0.11 : i === 2 ? -0.10 : i === 3 ?  0.27 : i === 4 ? -0.26 : -0.34) * baseL * gScale * presence;
+      const offY = (i === 0 ? -0.16 : i === 1 ?  0.26 : i === 2 ?  0.08 : i === 3 ?  0.05 : i === 4 ? -0.02 : -0.18) * baseL * gScale * presence;
+      const offZ = (i === 0 ?  0.12 : i === 1 ?  0.04 : i === 2 ?  0.14 : i === 3 ? -0.08 : i === 4 ? -0.04 :  0.08) * baseL * gScale * presence;
       const hopperRootW = hopperBlend * smooth01(hopperBlend);
-      root[0] = root[0] * (1 - 0.78 * hopperRootW) + Math.cos(tierAng) * tierRing * gScale * presence * hopperRootW;
-      root[1] = root[1] * (1 - 0.78 * hopperRootW) + tierY * hopperRootW;
-      root[2] = root[2] * (1 - 0.78 * hopperRootW) + Math.sin(tierAng) * tierRing * gScale * presence * hopperRootW;
+      root[0] = root[0] * (1 - 0.82 * hopperRootW) + offX * hopperRootW;
+      root[1] = root[1] * (1 - 0.82 * hopperRootW) + offY * hopperRootW;
+      root[2] = root[2] * (1 - 0.82 * hopperRootW) + offZ * hopperRootW;
     }
 
     if (meltBlend > 1e-4 && hopperBlend < 0.5) {
@@ -6865,7 +6942,7 @@ const __default_params = [
       { key: 'rainbow', label: 'Rainbow amount', value: 0.1, default: 0.1, min: 0, max: 2, step: 0.01, randomize: false, noPreset: true, desc: 'Master fader for full spectral rainbow interference, internal cleavage rainbows, and prismatic dispersion (0.1 = default subtle rainbow, 1.0 = 100% full rainbow, 0 = off, up to 2.0 = 200%).' },
       { key: 'rainbowGlow', label: 'Prism & cleavage glow', value: 1.3, default: 1.3, min: 0, max: 2, step: 0.01, randomize: false, noPreset: true, desc: 'Soft post-process optical glow halo around bright crystal facets, cleavage planes, and rainbow highlights — independent of Rainbow amount.' },
       { key: 'glimmer', label: 'Glimmer & rainbow sparkle', value: 1.0, default: 1.0, min: 0, max: 2, step: 0.01, desc: 'Jack Bush glimmers/geode rainbow glittery sparkliness: uncrushed HDR studio softbox reflections, critical-angle prismatic fire flourishes, thin-film rainbow cracks, and 900-cell micro-crystalline druzy glitter (0 = smooth/dithered look, 0.45 = Glimmer Diamond balance, 1 = Jack Bush original geode sparkle, up to 2 = hyper-glitter).' },
-      { key: 'ditherBlend', label: 'Transparent dither blend', value: 0.14, default: 0.14, min: 0, max: 1, step: 0.01, desc: 'Universal macro control blending from the glossy rainbow-hued pipeline (0.0) to the transparent, abstract Gaussian-dithered crystal texture (0.48 = Glimmer Diamond balance, 1.0 = full dither).' },
+      { key: 'ditherBlend', label: 'Transparent dither blend', value: 0.24, default: 0.24, min: 0, max: 1, step: 0.01, desc: 'Universal macro control blending from the glossy rainbow-hued pipeline (0.0) to the transparent, abstract Gaussian-dithered crystal texture (0.48 = Glimmer Diamond balance, 1.0 = full dither).' },
       { key: 'iridescence', label: 'Iridescence', value: 0.78, default: 0.78, min: 0, max: 3, step: 0.01, desc: 'Thin-film spectral interference and chromatic rainbow dispersion across crystal facets, bevels, and internal growth zones (crank up to 3 for hyper-prismatic rainbows).' },
       { key: 'flash', label: 'Flash', value: 0.22, default: 0.22, min: 0, max: 2, step: 0.01, desc: 'Subtle, occasional deep internal glow that lights up inside the heart of select crystals as they turn.' },
       { key: 'habit', label: 'Crystal habit', type: 'select', options: HABITS, value: 'Trigonal', uniform: false, desc: 'The 7 crystallographic crystal systems: Trigonal (rhombohedral quartz/tourmaline), Cubic/Isometric (octahedral diamond/fluorite), Hexagonal (beryl/ice pinacoids), Tetragonal (4-fold zircon bipyramids), Orthorhombic (rhombic topaz domes), Monoclinic (oblique slanted spodumene), and Triclinic (asymmetric kyanite blades).' },
@@ -7033,8 +7110,8 @@ const presets = {
     bounces: 7,
     striations: 0.12,
     striationScale: 175,
-    frostShare: 0.22,
-    frost: 0.12,
+    frostShare: 0.26,
+    frost: 0.14,
     edgeChips: 0.14,
     edgeWear: 0.14,
     milk: 0.06,
@@ -7055,11 +7132,11 @@ const presets = {
     lightSize: 0.80,
     lightSoftness: 0.06,
     glimmer: 0.78,
-    ditherBlend: 0.14,
+    ditherBlend: 0.24,
     iridescence: 0.65,
     flash: 0.22,
   },
-  // 2. Bismuth Hopper — iridescent thin-film Bi2O3 oxide metallic skeletal crystal with 3 sculptural Greek-key stepped ziggurat hopper blocks
+  // 2. Bismuth Hopper — iridescent thin-film Bi2O3 oxide metallic skeletal crystal with broken-out cascading G/L-spiral hopper blocks
   'Bismuth Hopper': {
     seed: 64,
     habit: 'Orthorhombic',
@@ -7072,14 +7149,14 @@ const presets = {
     cavityCurve: 0.08,
     hopper: 0.92,
     metallic: 0.98,
-    count: 3,
-    crystals: 3,
-    fan: 34,
+    count: 6,
+    crystals: 6,
+    fan: 38,
     crossAt: 0.46,
-    lengthJitter: 0.24,
-    thickness: 0.36,
-    thicknessJitter: 0.18,
-    faceJitter: 0.10,
+    lengthJitter: 0.34,
+    thickness: 0.32,
+    thicknessJitter: 0.28,
+    faceJitter: 0.18,
     tipAngle: 28,
     tipJitter: 0.08,
     faceDominance: 0.12,
@@ -8601,6 +8678,7 @@ function run(slug, { manifest, params, presets, randomize, sketch }) {
       store.setPresetName(morphState.fromPreset || standardPresetNames[0] || 'Classic Quartz Prism');
     }
     store.applyPreset(name, s, !own && s > 0, Math.min(s, 1.25));
+    if (s > 0) morphState.transitionCount = (morphState.transitionCount || 0) + 1;
     if (own && s > 0) instance.morph(s, store.preset);
     resetMorphFromPreset(store.preset, 2.0);
     setPresetDrift(store.preset || name, morphState.toPreset, 0);
@@ -8673,13 +8751,128 @@ function run(slug, { manifest, params, presets, randomize, sketch }) {
   });
 
   // ---- Top HUD buttons: Preset pill, Sound, Grow, Randomize
+  const hudPresetWrap = document.getElementById('hud-preset');
   const growBtn = document.getElementById('grow-btn');
   const randHudBtn = document.getElementById('rand-btn');
   const prevPresetBtn = document.getElementById('prev-preset');
   const nextPresetBtn = document.getElementById('next-preset');
   const hudPresetNameBtn = document.getElementById('hud-preset-name');
+  const hudMobileSelect = document.getElementById('hud-preset-mobile-select');
+  const hudPresetDropdown = document.getElementById('hud-preset-dropdown');
+  let lastHudMenuKey = '';
+
+  const HABIT_STUDY_NAMES = new Set([
+    'High-Dispersion Diamond',
+    'Imperial Zircon',
+    'Tabular Aquamarine',
+    'Kunzite Spodumene',
+  ]);
+
+  function syncHudPresetDropdown() {
+    const allPresetNames = Object.keys(presets || {});
+    const curatedNames = allPresetNames.filter((n) => !HABIT_STUDY_NAMES.has(n));
+    const habitStudyNames = allPresetNames.filter((n) => HABIT_STUDY_NAMES.has(n));
+    const customNames = Object.keys(store.customPresets || {});
+    const activeName = store.preset || morphState.fromPreset || allPresetNames[0] || 'Classic Quartz Prism';
+    const menuKey = `${activeName}|${allPresetNames.join(',')}|${customNames.join(',')}`;
+    if (menuKey === lastHudMenuKey) return;
+    lastHudMenuKey = menuKey;
+
+    if (hudMobileSelect) {
+      hudMobileSelect.innerHTML = '';
+      const appendOptGroup = (label, names) => {
+        if (!names.length) return;
+        const grp = document.createElement('optgroup');
+        grp.label = label;
+        for (const n of names) {
+          const opt = document.createElement('option');
+          opt.value = n;
+          opt.textContent = n;
+          if (n === activeName) opt.selected = true;
+          grp.appendChild(opt);
+        }
+        hudMobileSelect.appendChild(grp);
+      };
+      appendOptGroup('Curated Gems', curatedNames);
+      appendOptGroup('Habit Studies', habitStudyNames);
+      appendOptGroup('Saved Presets', customNames);
+    }
+
+    if (hudPresetDropdown) {
+      hudPresetDropdown.innerHTML = '';
+      const addGroup = (label, names, sourceObj) => {
+        if (!names.length) return;
+        const hdr = document.createElement('div');
+        hdr.className = 'hud-preset-group-label';
+        hdr.textContent = label;
+        hudPresetDropdown.appendChild(hdr);
+        for (const n of names) {
+          const def = sourceObj[n] || {};
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.role = 'option';
+          btn.className = 'hud-preset-item' + (n === activeName ? ' is-active' : '');
+          btn.setAttribute('aria-selected', String(n === activeName));
+          btn.dataset.preset = n;
+
+          const dot = document.createElement('span');
+          dot.className = 'hud-preset-dot';
+          const col = String(def.stoneColour || '#b4c4dc');
+          dot.style.background = col;
+          dot.style.color = col;
+
+          const nameSpan = document.createElement('span');
+          nameSpan.className = 'hud-preset-item-name';
+          nameSpan.textContent = n;
+
+          const metaSpan = document.createElement('span');
+          metaSpan.className = 'hud-preset-item-meta';
+          const rawHabit = String(def.habit || 'Trigonal').split('/')[0].trim();
+          metaSpan.textContent = rawHabit;
+
+          const checkSpan = document.createElement('span');
+          checkSpan.className = 'hud-preset-item-check';
+          checkSpan.setAttribute('aria-hidden', 'true');
+          checkSpan.textContent = '✓';
+
+          btn.append(dot, nameSpan, metaSpan, checkSpan);
+          btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            closeHudPresetDropdown();
+            applyPreset(n);
+          });
+          hudPresetDropdown.appendChild(btn);
+        }
+      };
+      addGroup('Curated Gems', curatedNames, presets || {});
+      addGroup('Habit Studies', habitStudyNames, presets || {});
+      addGroup('Saved Presets', customNames, store.customPresets || {});
+    }
+  }
+
+  function closeHudPresetDropdown() {
+    if (!hudPresetDropdown) return;
+    hudPresetDropdown.hidden = true;
+    hudPresetWrap?.classList.remove('dropdown-open');
+    hudPresetNameBtn?.setAttribute('aria-expanded', 'false');
+  }
+
+  function toggleHudPresetDropdown() {
+    if (!hudPresetDropdown) return;
+    const willOpen = hudPresetDropdown.hidden;
+    if (willOpen) {
+      lastHudMenuKey = '';
+      syncHudPresetDropdown();
+      hudPresetDropdown.hidden = false;
+      hudPresetWrap?.classList.add('dropdown-open');
+      hudPresetNameBtn?.setAttribute('aria-expanded', 'true');
+    } else {
+      closeHudPresetDropdown();
+    }
+  }
 
   function syncHudButtons() {
+    syncHudPresetDropdown();
     if (growBtn) {
       const surging = growBoost > 0.01;
       growBtn.classList.toggle('active', surging);
@@ -8707,6 +8900,7 @@ function run(slug, { manifest, params, presets, randomize, sketch }) {
   syncSoundFromParams();
 
   function cyclePreset(dir) {
+    closeHudPresetDropdown();
     const names = [...Object.keys(presets || {}), ...Object.keys(store.customPresets || {})];
     if (!names.length) return;
     const curIdx = names.indexOf(store.preset || names[0]);
@@ -8715,7 +8909,25 @@ function run(slug, { manifest, params, presets, randomize, sketch }) {
   }
   prevPresetBtn?.addEventListener('click', () => cyclePreset(-1));
   nextPresetBtn?.addEventListener('click', () => cyclePreset(1));
-  hudPresetNameBtn?.addEventListener('click', () => chrome.togglePane());
+  hudPresetNameBtn?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggleHudPresetDropdown();
+  });
+  hudMobileSelect?.addEventListener('change', () => {
+    if (hudMobileSelect.value) {
+      applyPreset(hudMobileSelect.value);
+    }
+  });
+  document.addEventListener('pointerdown', (e) => {
+    if (hudPresetDropdown && !hudPresetDropdown.hidden && !hudPresetWrap?.contains(e.target)) {
+      closeHudPresetDropdown();
+    }
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && hudPresetDropdown && !hudPresetDropdown.hidden) {
+      closeHudPresetDropdown();
+    }
+  });
 
   // ---- Interactive Mouse / Touch Orbit & Zoom on #stage
   const activePointers = new Map();
@@ -8979,26 +9191,28 @@ function run(slug, { manifest, params, presets, randomize, sketch }) {
             targetOcclusion = 0.0;
           } else if ((occStyle === 'Auto alternate (Ovoids & Invisible Crystals)' || occStyle === 'Auto drift (1/3 time)') && P.evolve?.value) {
             occlusionDriftTime += dt;
-            // Synchronize Ovoid / Crystal-Negative phases strictly to the middle of major structural transitions (post-016227):
-            // - Hold windows and peak-solidity phases (morphAlpha <= 0.18 or morphAlpha >= 0.82) stay at 0.0 (100% solid crystal).
-            // - Rises smoothly to peak (0.92) right at morphAlpha = 0.50 (middle of a major structural transition) and settles
-            //   completely back to 0.0 before the crystal finishes arriving at its new form.
+            // Synchronize Ovoid / Crystal-Negative phases strictly to the middle [0.20, 0.80] of every 4th structural transition (post-016227, post-016555):
+            // - Only 1 out of every 4 transitions ((transitionCount % 4) === 0, i.e. transitions #4, #8, #12, ...) triggers the negative ovoid/crystal phase;
+            //   the other 3 transitions morph directly between solid crystal forms with occlusion = 0.0!
+            // - Hold windows and peak-solidity phases (morphAlpha <= 0.20 or morphAlpha >= 0.80) stay at 0.0 (100% solid crystal).
             const isGliding = state === 'moving' && store.gliding;
             const isMorphing = !isGliding && P.morphPresets?.value && morphState.holdRemaining <= 0;
             const morphAlpha = isGliding
               ? store.glideProgress
               : (isMorphing ? morphState.progress : 0.0);
             const structDelta = isGliding ? 1.0 : (isMorphing ? morphState.structuralDelta : 0.0);
-            const desiredType = ((morphState.transitionCount || 0) % 2 === 1) ? 1.0 : 0.0;
+            const tCount = morphState.transitionCount || 0;
+            const isFourthTransition = tCount > 0 && (tCount % 4) === 0;
+            const desiredType = (Math.floor(tCount / 4) % 2 === 0) ? 1.0 : 0.0;
 
-            if (P.occlusionType && morphAlpha <= 0.18 && smoothOcclusion < 0.02 && Math.abs(Number(P.occlusionType.value) - desiredType) > 1e-3) {
+            if (P.occlusionType && morphAlpha <= 0.20 && smoothOcclusion < 0.02 && Math.abs(Number(P.occlusionType.value) - desiredType) > 1e-3) {
               store.setSmooth(P.occlusionType, desiredType);
               P.occlusionType.base = desiredType;
               needsUiSync = true;
             }
 
-            if (structDelta > 0.01 && morphAlpha > 0.18 && morphAlpha < 0.82) {
-              const u = (morphAlpha - 0.18) / 0.64;
+            if (isFourthTransition && structDelta > 0.01 && morphAlpha > 0.20 && morphAlpha < 0.80) {
+              const u = (morphAlpha - 0.20) / 0.60;
               const transitionBell = Math.pow(Math.sin(Math.PI * u), 2.5);
               targetOcclusion = 0.92 * transitionBell * structDelta;
               smoothOcclusion = targetOcclusion;
@@ -9074,6 +9288,7 @@ function run(slug, { manifest, params, presets, randomize, sketch }) {
     get firstWireframeNavMs() { return instance?.firstWireframeNavMs ?? null; },
     get shaderReadyMs() { return instance?.shaderReadyMs ?? null; },
     get wireframeCanvas() { return instance?.wireframeCanvas ?? null; },
+    drawWireframe: (bgAlpha = 1.0, wfAlpha = 1.0) => instance?.drawWireframe?.(bgAlpha, wfAlpha),
     ensureReadySync: () => instance?.ensureReadySync?.(),
     instance,
     cluster,
@@ -9325,10 +9540,11 @@ ${FILM_GLSL}
 #define LIGHTS ${LIGHTS}
 #define LS ${LIGHT_STRIDE}
 #define u_mirrorMode int(f_mirrorMode + 0.5)
-vec3 lin(vec3 c) { return pow(c, vec3(2.2)); }
+vec3 lin(vec3 c) { return pow(max(c, vec3(0.0)), vec3(2.2)); }
 vec3 backdrop(vec3 d) {
   float ang = acos(clamp(-d.z, -1.0, 1.0));
-  float g = exp(-pow(ang / radians(u_glowSize), 2.0));
+  float gRatio = ang / max(radians(u_glowSize), 1e-4);
+  float g = exp(-gRatio * gRatio);
   return mix(lin(u_studioEdge), f_glow, g);
 }
 vec3 lights(vec3 d, float rough) {
@@ -9839,23 +10055,22 @@ float quantStairFast(float t, float nSteps) {
 
 float evalBismuthFast(vec3 pQ, vec4 morphP, float hopperAmt, out float outStepIdx, out float outEdgeDist) {
   float nSt = abs(morphP.z);
-  // 1. External 3D 90-degree stair-stepped silhouette across ALL 3 AXES (X, Y, Z) with per-step jump <= rimWidth (0.135)
-  //    so every ziggurat step ledge is 100% water-tight while every internal terrace ridge is 100% straight & orthogonal.
+  // 1. Broken-out 3D 90-degree stair-stepped silhouette across ALL 3 AXES (X, Y, Z)
   float yUp = clamp((pQ.y + 0.90) * 0.54, 0.0, 1.0);
   float yDn = clamp((0.90 - pQ.y) * 0.54, 0.0, 1.0);
   float xPos = clamp((pQ.x + 0.85) * 0.56, 0.0, 1.0);
   float zPos = clamp((pQ.z + 0.85) * 0.56, 0.0, 1.0);
-  float stairA = quantStairFast(morphP.z > 0.0 ? yUp : yDn, 4.0);
-  float stairB = quantStairFast(morphP.y >= 0.0 ? yUp : yDn, 3.0);
-  float stairC = quantStairFast(xPos, 3.0);
-  float stairZ = quantStairFast(zPos, 3.0);
+  float stairA = quantStairFast(morphP.z > 0.0 ? yUp : yDn, 5.0);
+  float stairB = quantStairFast(morphP.y >= 0.0 ? yUp : yDn, 4.0);
+  float stairC = quantStairFast(xPos, 4.0);
+  float stairZ = quantStairFast(zPos, 4.0);
 
   float maxPosX =  1.002 - morphP.x * stairA * hopperAmt;
   float minNegX = -1.002 + abs(morphP.y) * stairB * hopperAmt;
-  float minNegY = -1.002 + 0.33 * stairC * hopperAmt;
-  float maxPosY =  1.002 - 0.28 * stairZ * hopperAmt;
-  float maxPosZ =  1.002 - 0.36 * stairA * hopperAmt;
-  float minNegZ = -1.002 + 0.32 * stairB * hopperAmt;
+  float minNegY = -1.002 + 0.36 * stairC * hopperAmt;
+  float maxPosY =  1.002 - 0.32 * stairZ * hopperAmt;
+  float maxPosZ =  1.002 - 0.38 * stairA * hopperAmt;
+  float minNegZ = -1.002 + 0.34 * stairB * hopperAmt;
 
   float wX = min(maxPosX - pQ.x, pQ.x - minNegX);
   float wY = min(maxPosY - pQ.y, pQ.y - minNegY);
@@ -9865,52 +10080,53 @@ float evalBismuthFast(vec3 pQ, vec4 morphP, float hopperAmt, out float outStepId
   float dContour = max(min(wX, wY), min(max(wX, wY), wZ));
   float polyAllow = 0.65 * max(0.0, 1.0 - hopperAmt / 0.88);
 
-  float insideWell = smoothstep(0.12, 0.15, dContour) * (1.0 - smoothstep(0.64, 0.85, abs(pQ.y)));
-  float wellEase = smoothstep(0.02, 0.38, hopperAmt);
-  if (insideWell <= 1e-4) {
-    outStepIdx = (0.9 * stairA + 0.6 * stairB + 0.5 * stairZ) * hopperAmt * wellEase;
-    outEdgeDist = mix(1.0, abs(dContour - 0.135), wellEase);
-    return wFace + polyAllow;
-  }
-
-  // Active 2D face coordinates for internal Greek-key / parallel-rib / L-bracket walls
+  // Active 2D face coordinates for internal G-spiral / L-bracket / parallel-rib walls
   vec2 uv = (wZ <= wX && wZ <= wY) ? pQ.xy
           : (wX <= wY)             ? vec2(pQ.z, pQ.y)
                                    : vec2(pQ.x, pQ.z);
 
-  // 2. Contour-following stepped hopper tiers (4..8 steps) + morphology-specific internal ridges on all 6 faces
-  float normContour = clamp((dContour - 0.11) / 0.72, 0.0, 1.0);
+  // Open-sided L-bracket / G-spiral breach that breaks through both the outer rim and inner terraces (post-016625)
+  float openGap = smoothstep(0.05, 0.14, uv.x * sign(morphP.w)) * (1.0 - smoothstep(0.18, 0.30, abs(uv.y - 0.12 * sign(morphP.z))));
+  float effRim = 0.115 - 0.088 * openGap;
+
+  float insideWell = smoothstep(effRim, effRim + 0.030, dContour) * (1.0 - smoothstep(0.66, 0.86, abs(pQ.y) * (1.0 - 0.30 * openGap)));
+  float wellEase = smoothstep(0.02, 0.38, hopperAmt);
+  if (insideWell <= 1e-4) {
+    outStepIdx = (0.9 * stairA + 0.6 * stairB + 0.5 * stairZ) * hopperAmt * wellEase;
+    outEdgeDist = mix(1.0, abs(dContour - effRim), wellEase);
+    return wFace + polyAllow;
+  }
+
+  // 2. Contour-following stepped hopper tiers + broken G-spiral / sub-chamber divider bars
+  float normContour = clamp((dContour - effRim) / 0.68, 0.0, 1.0);
   float wellStair = quantStairFast(normContour, nSt);
   float sWell = normContour * nSt;
   float fWell = fract(sWell);
 
-  // Open-sided L-bracket / U-channel doorway on one quadrant of the internal ridges
-  float openGap = smoothstep(0.08, 0.18, uv.x * sign(morphP.w)) * (1.0 - smoothstep(0.22, 0.34, abs(uv.y - 0.14)));
+  float ridgePhase = abs(fWell - 0.36);
+  float concentricRidge = (1.0 - smoothstep(0.13, 0.21, ridgePhase)) * (1.0 - 0.92 * openGap);
 
-  float ridgePhase = abs(fWell - 0.38);
-  float concentricRidge = (1.0 - smoothstep(0.14, 0.21, ridgePhase)) * (1.0 - 0.88 * openGap);
-
-  // Parallel comb ribs (active when morphP.w < 0, like the "Rainbow Metal" parallel-ribbed specimen)
-  float parCoord = (uv.x - uv.y * 0.18) * 3.5;
+  // Parallel comb ribs (active when morphP.w < 0)
+  float parCoord = (uv.x - uv.y * 0.16) * 4.0;
   float parWave = abs(fract(parCoord) - 0.5);
   float parallelRibs = 1.0 - smoothstep(0.14, 0.22, parWave);
 
-  // Asymmetric Greek-key inner hook bars (active when morphP.w > 0.7)
-  float dHook1 = max(abs(uv.x - 0.06) - 0.32, abs(uv.y - 0.12) - 0.062);
-  float dHook2 = max(abs(uv.x + 0.18) - 0.062, abs(uv.y + 0.04) - 0.26);
-  float greekHook = (1.0 - smoothstep(-0.012, 0.012, min(dHook1, dHook2))) * step(0.7, morphP.w);
+  // Asymmetric Greek-key inner G-hook bar + sub-chamber partition bar
+  float dHook1 = max(abs(uv.x - 0.05 * sign(morphP.w)) - 0.30, abs(uv.y - 0.10) - 0.052);
+  float dHook2 = max(abs(uv.x + 0.14 * sign(morphP.w)) - 0.052, abs(uv.y + 0.03) - 0.28);
+  float greekHook = 1.0 - smoothstep(-0.012, 0.012, min(dHook1, dHook2));
 
   float wallMask = (morphP.w < 0.0)
-    ? max(parallelRibs * 0.85, concentricRidge * 0.65)
+    ? max(parallelRibs * 0.88, max(concentricRidge * 0.72, greekHook * 0.65))
     : max(concentricRidge, greekHook);
 
-  float floorDepth = (0.18 + 0.46 * wellStair) * hopperAmt * wellEase;
-  float ridgeTopDepth = (0.06 + 0.14 * wellStair) * hopperAmt * wellEase;
+  float floorDepth = (0.22 + 0.50 * wellStair) * hopperAmt * wellEase;
+  float ridgeTopDepth = (0.05 + 0.13 * wellStair) * hopperAmt * wellEase;
   float targetDepth = mix(floorDepth, ridgeTopDepth, wallMask) * insideWell;
 
-  outStepIdx = ((0.65 + 2.6 * wellStair + 1.1 * stairA - 0.55 * wallMask) * insideWell + abs(morphP.w) * 0.25) * hopperAmt * wellEase;
+  outStepIdx = ((0.65 + 2.8 * wellStair + 1.2 * stairA - 0.55 * wallMask) * insideWell + abs(morphP.w) * 0.25) * hopperAmt * wellEase;
   float eWell = min(fWell, 1.0 - fWell) / nSt;
-  float rawEdgeDist = min(min(eWell, abs(dContour - 0.115)), (morphP.w < 0.0) ? abs(parWave - 0.18) * 0.25 : abs(ridgePhase - 0.16) / nSt);
+  float rawEdgeDist = min(min(eWell, abs(dContour - effRim)), (morphP.w < 0.0) ? abs(parWave - 0.18) * 0.25 : abs(ridgePhase - 0.16) / nSt);
   outEdgeDist = mix(1.0, rawEdgeDist, wellEase);
   return (wFace + polyAllow * (1.0 - insideWell)) - targetDepth;
 }
@@ -10136,7 +10352,7 @@ float evalCathedralFace(
 
   // 2. Flanking Buttress Spire Column (|u| >= 0.25 extending cleanly through the prism corner ridges with zero outer excess!)
   float sideEx1 = max(0.0, 0.25 - absU);
-  float inWall1 = smoothstep(0.27, 0.24, absU);
+  float inWall1 = 1.0 - smoothstep(0.24, 0.27, absU);
   float d1, gu1, gax1, edge1, gab1;
   evalCathedralColumn(
     u - sideSign * 0.46, sideEx1, inWall1, 0.032, ly,
@@ -10316,7 +10532,7 @@ bool intersectCathedralSpire(
   // gable terraces seamlessly across the rhombohedral shoulder!
   if (kn >= 7 && dtHit <= 1e-5) {
     if (kn >= 8 && kn <= 13 && ly0 > 0.16 && ly0 < 0.85) {
-      float termFade = smoothstep(0.85, 0.64, ly0) * smoothstep(0.16, 0.28, ly0);
+      float termFade = (1.0 - smoothstep(0.64, 0.85, ly0)) * smoothstep(0.16, 0.28, ly0);
       float guT, gaxT, edT, gabT;
       evalCathedralFace(uA0, ly0, seedA, cathAmt, guT, gaxT, edT, gabT);
       vec3 nTermCath = normalize(origN + (guT * 0.48 * tUA - gaxT * 0.42 * ax) * termFade);
@@ -10347,7 +10563,7 @@ bool intersectCathedralSpire(
     vec3 nCandB = normalize(nB + guB * tUB + gaxB * ax);
     float ridgeDiff = abs(mWin - mB);
     edgeWin = min(min(edgeWin, edB), ridgeDiff * 0.65);
-    float wB = smoothstep(0.012, -0.012, mB - mWin);
+    float wB = 1.0 - smoothstep(-0.012, 0.012, mB - mWin);
     nWin = normalize(mix(nWin, nCandB, wB));
     if (mB < mWin) { kWin = kB; mWin = mB; }
   }
@@ -10358,7 +10574,7 @@ bool intersectCathedralSpire(
     vec3 nCandC = normalize(nC + guC * tUC + gaxC * ax);
     float ridgeDiff = abs(mWin - mC);
     edgeWin = min(min(edgeWin, edC), ridgeDiff * 0.65);
-    float wC = smoothstep(0.012, -0.012, mC - mWin);
+    float wC = 1.0 - smoothstep(-0.012, 0.012, mC - mWin);
     nWin = normalize(mix(nWin, nCandC, wC));
     if (mC < mWin) { kWin = kC; mWin = mC; }
   }
@@ -10818,8 +11034,9 @@ float evalGalliumPuddleSDF(vec3 qGa, float meltAmt, out float outFloorClip, out 
 
   // Compact multi-lobed scalloped liquid basin + drooping bottom-right tongue (matching 372c3f66)
   vec2 pBasin = uv - vec2(-0.016, -0.014);
-  float leftScallop = 0.028 * cos(uv.y * 31.0 + 0.65) * smoothstep(0.03, -0.13, uv.x);
-  float rightPinch = -0.026 * exp(-pow((uv.y - 0.075) * 14.0, 2.0)) * smoothstep(-0.02, 0.11, uv.x);
+  float leftScallop = 0.028 * cos(uv.y * 31.0 + 0.65) * (1.0 - smoothstep(-0.13, 0.03, uv.x));
+  float dyPinch = (uv.y - 0.075) * 14.0;
+  float rightPinch = -0.026 * exp(-dyPinch * dyPinch) * smoothstep(-0.02, 0.11, uv.x);
   float dBasin = (length(pBasin * vec2(0.82, 1.48)) - (0.188 + leftScallop + rightPinch)) * 0.78;
 
   vec2 pa = uv - vec2(0.016, 0.010);
@@ -10858,7 +11075,7 @@ float evalGalliumFastStep(
   float dBase = sminSimple(d0, sminSimple(d1, d2, 0.055), 0.055);
   float kMeniscus = (0.075 + 0.095 * clamp(meltAmt, 0.0, 1.0));
   // C1-smooth 3D capillary meniscus collar that visibly climbs up and fillets the lower crystal walls
-  float uMen = smoothstep(kMeniscus, -0.055, dBase);
+  float uMen = 1.0 - smoothstep(-0.055, kMeniscus, dBase);
   float meniscusLift = 0.58 * kMeniscus * uMen * uMen;
   float dLiquid = dPuddle - meniscusLift;
   outMeltFactor = smoothstep(0.02, 0.35, uMen);
@@ -10984,12 +11201,12 @@ bool intersectGalliumMelt(
       if (t > t1) break;
       float mF = 0.0;
       float d = evalGalliumFastStep(qRo + qRd * t, meltAmt, c0, h0, c1, h1, c2, h2, mF);
-      if (d <= 0.0008) {
+      if (d <= 0.0006) {
         hitPuddle = true;
         break;
       }
       tPrev = t;
-      t += max(0.0030, d * 0.88);
+      t += max(0.0014, d * 0.84);
     }
   }
 
@@ -10999,9 +11216,9 @@ bool intersectGalliumMelt(
     vec3 qPoly = qRo + qRd * polyT;
     float mFPoly = 0.0;
     float dLiqPoly = evalGalliumFastStep(qPoly, meltAmt, c0, h0, c1, h1, c2, h2, mFPoly);
-    float wetW = smoothstep(0.052, -0.006, dLiqPoly) * clamp(meltAmt * 1.35, 0.0, 1.0);
+    float wetW = (1.0 - smoothstep(-0.006, 0.052, dLiqPoly)) * clamp(meltAmt * 1.35, 0.0, 1.0);
     if (wetW > 0.005) {
-      float epsW = 0.0015;
+      float epsW = 0.0018;
       float dm1, dm2, dm3;
       float gxW = evalGalliumFastStep(qPoly + vec3(epsW, 0.0, 0.0), meltAmt, c0, h0, c1, h1, c2, h2, dm1) - dLiqPoly;
       float gyW = evalGalliumFastStep(qPoly + vec3(0.0, epsW, 0.0), meltAmt, c0, h0, c1, h1, c2, h2, dm2) - dLiqPoly;
@@ -11036,7 +11253,7 @@ bool intersectGalliumMelt(
   float d0 = evalGalliumFastStep(qHit, meltAmt, c0, h0, c1, h1, c2, h2, mF0);
 
   // Compute 3D gradient normal in qGa space using 3 forward differences (zero UBO reads!)
-  float eps = 0.0012;
+  float eps = 0.0018;
   float dm1, dm2, dm3;
   float gx = evalGalliumFastStep(qHit + vec3(eps, 0.0, 0.0), meltAmt, c0, h0, c1, h1, c2, h2, dm1) - d0;
   float gy = evalGalliumFastStep(qHit + vec3(0.0, eps, 0.0), meltAmt, c0, h0, c1, h1, c2, h2, dm2) - d0;
@@ -11246,7 +11463,7 @@ vec3 insideVolume(int id, vec3 ro, vec3 rd, float len, float jitter, int maxStep
       float dAxial = (hgt - flashCenterHgt) / 0.095;
       float dRadial = length(radialVec) / max(r * 0.26, 1e-3);
       float singleGlow = exp(-(dAxial * dAxial + dRadial * dRadial));
-      float coreEnvelope = smoothstep(0.92, 0.25, radFrac) * smoothstep(0.08, 0.24, hgt) * smoothstep(0.92, 0.74, hgt);
+      float coreEnvelope = (1.0 - smoothstep(0.25, 0.92, radFrac)) * smoothstep(0.08, 0.24, hgt) * (1.0 - smoothstep(0.74, 0.92, hgt));
       vec3 coreGemGlow = gemBodyNorm;
       vec3 schillerTint = spectralRainbow(hueOff + cosFlashAng * 0.35);
       vec3 deepFlashCol = mix(coreGemGlow, schillerTint * (coreGemGlow + vec3(0.22)), 0.32);
@@ -11564,23 +11781,23 @@ vec3 faceNormal(int id, int k, vec3 n, vec3 p, float rough, float footprint, flo
     }
   }
   if (rough > 0.0) {
-    float frostAa = 1.0 / (1.0 + 65.0 * (footprint / L));
-    // Crystal-locked frost coordinates (scaled in crystal-local frame using trilinear hardware u_incl lookups — zero floor() cellular jumps & zero hash() overhead)
+    float frostAa = 1.0 / (1.0 + 48.0 * (footprint / L));
+    // Crystal-locked frost & fine micro-crystalline dither coordinates (scaled in crystal-local frame using trilinear hardware u_incl lookups — zero floor() cellular jumps & zero hash() overhead)
     vec3 pFrost = vec3(pLoc.x * 0.32, pLoc.y, pLoc.z * 0.32);
     vec4 fTex = texture(u_incl, pFrost * 0.48 + uid * 0.19);
     vec3 fGradLoc = fTex.rgb - 0.5;
     vec3 fGrad = t1 * fGradLoc.x + ax.xyz * fGradLoc.y + t2 * fGradLoc.z;
-    vec3 nSmooth = fGrad * (rough * 0.014 * frostAa);
-    vec4 dTex = texture(u_incl, pFrost * 2.85 + uid * 0.31);
+    vec3 nSmooth = fGrad * (rough * 0.015 * frostAa);
+    vec4 dTex = texture(u_incl, pFrost * 14.5 + uid * 0.31);
     vec3 nCell0 = dTex.rgb - 0.5;
-    float patchMod = 0.55 + 0.75 * fTex.b;
-    vec3 nDitherWorld = (t1 * nCell0.x + ax.xyz * nCell0.y + t2 * nCell0.z) * (rough * 0.036 * patchMod * frostAa);
+    float patchMod = 0.55 + 0.80 * fTex.b;
+    vec3 nDitherWorld = (t1 * nCell0.x + ax.xyz * nCell0.y + t2 * nCell0.z) * (rough * 0.058 * patchMod * frostAa);
     vec3 nJack = vec3(0.0);
     if (glimmer > 0.001) {
-      vec3 hJb = texture(u_incl, pFrost * 3.45 + uid * 0.53 + 0.17).rgb - 0.5;
-      nJack = (t1 * hJb.x + ax.xyz * hJb.y + t2 * hJb.z) * (rough * 0.024 * glimmer * frostAa);
+      vec3 hJb = texture(u_incl, pFrost * 18.5 + uid * 0.53 + 0.17).rgb - 0.5;
+      nJack = (t1 * hJb.x + ax.xyz * hJb.y + t2 * hJb.z) * (rough * 0.038 * glimmer * frostAa);
     }
-    n = normalize(n + mix(nSmooth, nDitherWorld, dither) * (1.0 - 0.72 * g1) + nJack);
+    n = normalize(n + mix(nSmooth, nDitherWorld, dither) * (1.0 - 0.38 * g1) + nJack);
   }
   return n;
 }
@@ -11832,7 +12049,7 @@ vec3 refractedEnv(vec3 dir, float rough, float refAlpha, float hgt) {
   vec3 gemCol = exp(-zonedGemSigma(hgt) * 0.48);
   vec3 softLt = (lt / (1.0 + (2.8 - 1.4 * glare) * ltLum)) * mix(gemCol * 0.76, gemCol * 0.52 + vec3(0.32), 0.20 * glare);
   vec3 curEnv = bg + mix(lt, softLt, refAlpha);
-  float rearRimMask = smoothstep(0.05, -0.35, d.z);
+  float rearRimMask = 1.0 - smoothstep(-0.35, 0.05, d.z);
   vec3 jbRefrLt = mix(softLt * 0.26, lt * 0.22, rearRimMask) + glimmerStripLights(d, rough);
   vec3 jbEnv = bg + mix(lt, jbRefrLt, refAlpha);
   float jbBlend = clamp(glimmerCurve(u_glimmer), 0.0, 1.0);
@@ -11956,8 +12173,8 @@ vec3 evalBismuthOxidePalette(float opd) {
 }
 
 float outerLipCatchLight(vec3 wN, vec3 wRefl, vec3 qGa) {
-  float leftLip = smoothstep(-0.08, -0.22, qGa.x) * smoothstep(-0.55, 0.65, wN.z - 0.35 * wN.x);
-  float botBelly = smoothstep(0.02, -0.22, qGa.y) * smoothstep(-0.65, 0.55, -wN.y + 0.45 * wN.z);
+  float leftLip = (1.0 - smoothstep(-0.22, -0.08, qGa.x)) * smoothstep(-0.55, 0.65, wN.z - 0.35 * wN.x);
+  float botBelly = (1.0 - smoothstep(-0.22, 0.02, qGa.y)) * smoothstep(-0.65, 0.55, -wN.y + 0.45 * wN.z);
   float rightCollar = smoothstep(0.08, 0.22, qGa.x) * smoothstep(-0.45, 0.65, wN.x + 0.35 * wN.z);
   float tipDrip = exp(-length(qGa.xy - vec2(0.085, -0.21)) * 18.0) * smoothstep(-0.3, 0.8, wRefl.z + 0.4 * abs(wRefl.x));
   return clamp(leftLip * 0.85 + botBelly * 0.95 + rightCollar * 0.75 + tipDrip * 1.35, 0.0, 1.5);
@@ -12009,9 +12226,10 @@ vec3 shadeMetallicCrystal(int id, int k, vec3 pEntry, vec3 rd, vec3 nRefl, float
   float metalRough = clamp(reflRough * 0.42 + 0.018, 0.012, 0.26);
 
   vec3 baseEnv = env(reflDir, metalRough);
-  float topSoftbox = pow(smoothstep(-0.05, 0.82, wRefl.y), 1.6) * (0.55 + 0.45 * smoothstep(-0.3, 0.7, wRefl.x));
-  float sideRimTent = pow(smoothstep(0.10, 0.85, abs(wRefl.x)), 1.8) * smoothstep(-0.25, 0.55, wRefl.z);
-  float darkHorizonBand = 1.0 - 0.65 * exp(-pow((wRefl.y + 0.12) * 3.8, 2.0));
+  float topSoftbox = pow(max(0.0, smoothstep(-0.05, 0.82, wRefl.y)), 1.6) * (0.55 + 0.45 * smoothstep(-0.3, 0.7, wRefl.x));
+  float sideRimTent = pow(max(0.0, smoothstep(0.10, 0.85, abs(wRefl.x))), 1.8) * smoothstep(-0.25, 0.55, wRefl.z);
+  float hzDiff = (wRefl.y + 0.12) * 3.8;
+  float darkHorizonBand = 1.0 - 0.65 * exp(-hzDiff * hzDiff);
   float baseAmbFloor = mix(0.04, 0.14, iridW);
   vec3 studioDome = f_ambient * (baseAmbFloor + mix(0.62, 0.44, iridW) * topSoftbox + 0.26 * sideRimTent) * darkHorizonBand;
   vec3 reflLight = baseEnv * mix(0.48, 0.34, iridW) + studioDome;
@@ -12072,8 +12290,8 @@ vec3 shadeMetallicCrystal(int id, int k, vec3 pEntry, vec3 rd, vec3 nRefl, float
 
   // 5. Crisp metallic catch-light along 90° hopper step rims & cube facet edges (smoothly blended across u_hopper)
   float hopRimW = smoothstep(0.02, 0.28, u_hopper);
-  float edgeRimGlow = smoothstep(0.024, 0.0, dEdge / max(body(id, 2).w, 0.04)) * 0.28;
-  float hopRimGlow = smoothstep(0.032, 0.002, hopperEdgeDist) * (0.42 + 0.48 * u_hopper);
+  float edgeRimGlow = (1.0 - smoothstep(0.0, 0.024, dEdge / max(body(id, 2).w, 0.04))) * 0.28;
+  float hopRimGlow = (1.0 - smoothstep(0.002, 0.032, hopperEdgeDist)) * (0.42 + 0.48 * u_hopper);
   float stepRimGlow = mix(edgeRimGlow, hopRimGlow, hopRimW);
 
   vec3 highlightTint = mix(mix(F_cond, vec3(1.0, 0.96, 0.84), 0.32), F_cond * 1.15, iridW * 0.78);
@@ -12131,34 +12349,29 @@ vec3 shadeMetallicCrystal(int id, int k, vec3 pEntry, vec3 rd, vec3 nRefl, float
     float sideSilverAlign = smoothstep(-0.12, 0.50, dot(wNGa, normalize(vec3(0.62, 0.08, 0.78))));
     // 3. Inner & left-facing vertical facets reflect dark metallic pewter, with warm puddle bounce near the base
     float innerPewterAlign = smoothstep(0.02, 0.50, dot(wNGa, normalize(vec3(-0.74, -0.14, 0.65)))) * (1.0 - 0.85 * topGoldAlign);
-    float puddleUpBounce = smoothstep(-0.06, -0.44, wNGa.y) * smoothstep(0.09, -0.06, qGa.y) * clamp(u_melt * 1.35, 0.0, 1.0);
+    float puddleUpBounce = (1.0 - smoothstep(-0.44, -0.06, wNGa.y)) * (1.0 - smoothstep(-0.06, 0.09, qGa.y)) * clamp(u_melt * 1.35, 0.0, 1.0);
 
     // Conductor Fresnel tint per orientation (silver-platinum F0 with warm golden key reflection on top bevels)
     vec3 gaCondTint = mix(coolSilverRim, brightSilverSpec, sideSilverAlign);
     gaCondTint = mix(gaCondTint, pewterShadow * 2.2, innerPewterAlign * (1.0 - 0.75 * puddleUpBounce));
     gaCondTint = mix(gaCondTint, warmGoldKey, topGoldAlign);
     gaCondTint = mix(gaCondTint, mix(brightSilverSpec, warmGoldKey * 1.15, 0.55), puddleUpBounce * 0.80);
-    vec3 gaFresnel = mix(gaCondTint, vec3(1.0, 0.98, 0.95), pow(1.0 - cosGa, 3.8) * 0.55);
+    vec3 gaFresnel = mix(gaCondTint, vec3(1.0, 0.98, 0.95), pow(max(0.0, 1.0 - cosGa), 3.8) * 0.55);
 
     // Real studio environment reflection + brushed normal reflection + multi-light GGX conductor specular lobes
     vec3 gaEnvRefl = env(reflect(rd, nGa), 0.032);
-    float keySoftboxGrad = pow(smoothstep(-0.22, 0.85, wReflGa.y + 0.32 * wReflGa.z - 0.18 * wReflGa.x), 1.35);
-    float rimStripGrad = pow(smoothstep(-0.15, 0.82, wReflGa.x * 0.65 + wReflGa.z * 0.72), 1.45);
+    float keySoftboxGrad = pow(max(0.0, smoothstep(-0.22, 0.85, wReflGa.y + 0.32 * wReflGa.z - 0.18 * wReflGa.x)), 1.35);
+    float rimStripGrad = pow(max(0.0, smoothstep(-0.15, 0.82, wReflGa.x * 0.65 + wReflGa.z * 0.72)), 1.45);
     float darkTentGrad = 0.22 + 0.78 * smoothstep(-0.45, 0.35, wReflGa.y + 0.25 * wReflGa.z);
 
     float subtleBrushMod = 0.95 + 0.06 * grainMicro + 0.04 * brushFine + 0.03 * brushCross;
     vec3 realMetalRefl = reflLight * mix(0.55, 0.92, sideSilverAlign + topGoldAlign * 0.6)
                        + gaEnvRefl * (0.38 + 0.42 * rimStripGrad + 0.35 * keySoftboxGrad);
 
-    // Physical rounded bevels naturally catch crisp metallic specular highlights from the studio lights
-    float bevelCatch = (1.0 - smoothstep(0.0, 0.042, dEdge / max(body(id, 2).w, 0.05))) * (1.0 - liqW);
-    float bevelLight = smoothstep(-0.1, 0.75, wNGa.y + 0.45 * abs(wNGa.x) + 0.35 * wNGa.z);
-
     vec3 solidCol = gaFresnel * realMetalRefl * darkTentGrad * subtleBrushMod
                   + gaCondTint * f_ambient * (0.18 + 0.44 * keySoftboxGrad * topGoldAlign + 0.36 * rimStripGrad * sideSilverAlign) * subtleBrushMod
-                  + min(specBroad, vec3(1.6)) * mix(brightSilverSpec, warmGoldKey * 1.20, topGoldAlign) * 0.16 * seamAO
-                  + min(specSharp, vec3(1.2)) * mix(vec3(1.12, 1.16, 1.22), vec3(1.20, 1.05, 0.78), topGoldAlign) * 0.14
-                  + mix(brightSilverSpec, warmGoldKey * 1.25, topGoldAlign * 0.5) * (bevelCatch * bevelLight * 0.34);
+                  + min(specBroad, vec3(1.6)) * mix(brightSilverSpec, warmGoldKey * 1.20, topGoldAlign) * 0.18 * seamAO
+                  + min(specSharp, vec3(1.2)) * mix(vec3(1.12, 1.16, 1.22), vec3(1.20, 1.05, 0.78), topGoldAlign) * 0.16;
     solidCol = min(solidCol, vec3(1.32, 1.25, 1.14));
 
     // --- (B) Lower Molten Gallium Puddle & Meniscus Collar Shading (100% Mirror Chrome) ---
@@ -12173,17 +12386,19 @@ vec3 shadeMetallicCrystal(int id, int k, vec3 pEntry, vec3 rd, vec3 nRefl, float
     vec3 puddleWarmPool = mix(vec3(0.48, 0.31, 0.12), vec3(0.84, 0.64, 0.33), smoothstep(0.62, 0.95, basinDot));
 
     // 2. Concave meniscus crease right where solid crystal plunges into the molten pool
-    float meniscusCrease = sin(clamp((meltFactor - 0.03) / 0.55, 0.0, 1.0) * PI);
+    float meniscusCrease = max(0.0, sin(clamp((meltFactor - 0.03) / 0.55, 0.0, 1.0) * PI));
     float meniscusDark = 1.0 - 0.78 * pow(meniscusCrease, 1.35);
     float meniscusFilletSpec = pow(meniscusCrease, 2.4) * smoothstep(0.08, 0.72, wReflGa.y + 0.35 * wReflGa.z) * silhouetteDarkEdge;
 
     // 3. High-contrast black-chrome studio horizon band along the bulbous capillary rim & outer grazing edge
-    float rimDarkRing = exp(-pow((basinDot - 0.52) / 0.20, 2.0));
+    float rimDiff = (basinDot - 0.52) / 0.20;
+    float rimDarkRing = exp(-rimDiff * rimDiff);
     float outerGrazingDark = 1.0 - silhouetteDarkEdge;
     float darkBand = clamp(max(rimDarkRing * 0.92, outerGrazingDark * 0.88), 0.0, 0.95);
 
     // 4. Inward-set silver-white liquid-mercury specular highlight tube along the upper-outer curvature of the rim (cosSmooth ~ 0.28..0.68)
-    float inwardRimTube = exp(-pow((cosSmooth - 0.44) / 0.16, 2.0)) * smoothstep(0.10, 0.30, cosSmooth) * (1.0 - 0.75 * basinMask);
+    float tubeDiff = (cosSmooth - 0.44) / 0.16;
+    float inwardRimTube = exp(-tubeDiff * tubeDiff) * smoothstep(0.10, 0.30, cosSmooth) * (1.0 - 0.75 * basinMask);
     float lowerLipCatch = outerLipCatchLight(wNSmooth, wReflGa, qGa);
     float rimSpecHighlight = clamp(inwardRimTube * (0.68 + 0.72 * lowerLipCatch), 0.0, 1.35);
 
@@ -12272,7 +12487,8 @@ vec3 shadeBehindRay(vec3 roIn, vec3 rdIn, int skipIn, float travIn, float jitter
   rdB = dot(bOut, bOut) > 1e-6 ? normalize(bOut) : reflect(rdB, -bNf);
   vec3 endEnv = refractedEnv(rdB, bFr, 1.0);
   float deflAng = acos(clamp(dot(rdB, rdIn), -1.0, 1.0));
-  float glowG = exp(-pow(deflAng / radians(u_glowSize * 1.15), 2.0));
+  float glowRatio = deflAng / max(radians(u_glowSize * 1.15), 1e-4);
+  float glowG = exp(-glowRatio * glowRatio);
   vec3 axisBg = mix(lin(u_studioEdge) * 0.14, f_glow * 1.65 + f_ambient * 0.22, glowG);
   endEnv = max(endEnv, axisBg);
   colB += thrB * endEnv;
@@ -12739,8 +12955,9 @@ void main() {
     travC += len0;
     p = roC + rdC * len0;
     float exitFrostRoll = evalCrystalFrostRoll(id, rawExitN0, uid);
-    float crispExitRough = smoothstep(exitFrostRoll - 0.12, exitFrostRoll + 0.12, u_frostShare * 0.65) * (u_frost * 0.22);
-    fr = mix(effFrost * smoothstep(exitFrostRoll - 0.15, exitFrostRoll + 0.15, effFrostShare), crispExitRough, effG1);
+    float exitRoughBase = effFrost * smoothstep(exitFrostRoll - 0.15, exitFrostRoll + 0.15, effFrostShare);
+    float crispExitRough = smoothstep(exitFrostRoll - 0.12, exitFrostRoll + 0.12, max(u_frostShare * 0.68, effFrostShare * 0.52 * dither)) * (max(u_frost, effFrost * 0.65 * dither) * mix(0.24, 0.36, dither));
+    fr = mix(exitRoughBase, crispExitRough, effG1 * (1.0 - 0.32 * dither));
     float dExit0 = 1.0;
     if (g1 > 0.001 && u_edgeWear > 0.0 && kf < CP) {
       vec3 tmpAdj;
@@ -12781,8 +12998,9 @@ void main() {
       travC += len;
       p = roC + rdC * len;
       exitFrostRoll = evalCrystalFrostRoll(id, rawExitNB, uid);
-      crispExitRough = smoothstep(exitFrostRoll - 0.12, exitFrostRoll + 0.12, u_frostShare * 0.65) * (u_frost * 0.22);
-      fr = mix(effFrost * smoothstep(exitFrostRoll - 0.15, exitFrostRoll + 0.15, effFrostShare), crispExitRough, effG1);
+      exitRoughBase = effFrost * smoothstep(exitFrostRoll - 0.15, exitFrostRoll + 0.15, effFrostShare);
+      crispExitRough = smoothstep(exitFrostRoll - 0.12, exitFrostRoll + 0.12, max(u_frostShare * 0.68, effFrostShare * 0.52 * dither)) * (max(u_frost, effFrost * 0.65 * dither) * mix(0.24, 0.36, dither));
+      fr = mix(exitRoughBase, crispExitRough, effG1 * (1.0 - 0.32 * dither));
       float dExitB = 1.0;
       if (g1 > 0.001 && u_edgeWear > 0.0 && kf < CP) {
         vec3 tmpAdjB;
@@ -13017,7 +13235,7 @@ void main() {
   vec3 jbHalo = bloomCol * (max(u_bloom, 0.35 * effG1) + u_rainbowGlow * 0.18 * (1.0 - 0.55 * dither));
   vec3 haloCol = mix(curHalo, jbHalo, effG1);
   vec3 c = baseCol + haloCol;
-  c = pow(aces(c), vec3(1.0 / 2.2));
+  c = pow(max(aces(c), vec3(0.0)), vec3(1.0 / 2.2));
   vec2 q = (fc - 0.5 * u_res) / u_res;
   c = mix(c, u_studioEdge, clamp(u_vignette * dot(q, q) * 2.6, 0.0, 1.0));
   c = filmDust(c, fc, f_px, f_frame, u_dust);
@@ -13043,13 +13261,13 @@ void main() {
 
 const UNIT_INCL = 0, UNIT_HDR = 1, UNIT_BLOOM_A = 2, UNIT_BLOOM_B = 3;
 const BLOOM_DIVISOR = 4;
-const FILL_IN_DURATION = 0.45;
+const FILL_IN_DURATION = 0.72;
 const COMPLETION_STATUS_KHR = 0x91b1;
 function __default_sketch({ canvas, P, model, degrade }) {
   const sketchStartPerf = performance.now();
   const sp = new URLSearchParams(typeof location !== 'undefined' ? location.search : '');
   const isCapture = sp.has('capture');
-  const holdWireframe = sp.has('wireframe');
+  let holdWireframe = sp.has('wireframe');
   const pinnedFillIn = sp.has('fillin') ? Math.max(0, Math.min(1, parseFloat(sp.get('fillin')))) : null;
 
   // Lightweight 2D overlay canvas for instant (<30ms) 3D Quartz Crystal Wireframe first-paint
@@ -13090,7 +13308,7 @@ function __default_sketch({ canvas, P, model, degrade }) {
   let hdrW = 0, hdrH = 0, bloomW = 0, bloomH = 0, floatTargets = false;
   let clusterVersion = -1, uploadedClusterVer = -1, lastClusterW = 0, lastClusterH = 0, pxRatio = 1;
   let wireframeFrames = 0, fillInProgress = isCapture && !holdWireframe ? 1.0 : 0.0, wireframeAlpha = isCapture && !holdWireframe ? 0.0 : 1.0;
-  let firstWireframeMs = null, firstWireframeNavMs = null, shaderReadyMs = null, fillStartPerfMs = 0;
+  let firstWireframeMs = null, firstWireframeNavMs = null, shaderReadyMs = null, fillStartPerfMs = 0, fillClockStarted = false;
 
   // Preallocated scratch buffers for 60 FPS 3D wireframe projection
   const projX = new Float32Array(128);
@@ -13163,7 +13381,7 @@ function __default_sketch({ canvas, P, model, degrade }) {
     if (bw !== bloomW || bh !== bloomH) { bloomW = bw; bloomH = bh; allocate(UNIT_BLOOM_A, bw, bh); allocate(UNIT_BLOOM_B, bw, bh); }
   }
 
-  function initResourcesAndKickCompile() {
+  function initGlResourcesAndBake() {
     if (buildStage >= 1) return;
     ensureGl();
     ubo = gl.createBuffer();
@@ -13182,6 +13400,7 @@ function __default_sketch({ canvas, P, model, degrade }) {
     gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_R, gl.REPEAT);
     gl.texImage3D(gl.TEXTURE_3D, 0, gl.RGBA8, INCL, INCL, INCL, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
     bakedSeed = NaN;
+    bake();
 
     floatTargets = probeFloatTargets(gl);
     hdrTex = texture2D(UNIT_HDR);
@@ -13210,7 +13429,12 @@ function __default_sketch({ canvas, P, model, degrade }) {
 
     vao = gl.createVertexArray();
     gl.bindVertexArray(vao);
+    buildStage = 1;
+  }
 
+  function kickCompileAsync() {
+    if (buildStage < 1) initGlResourcesAndBake();
+    if (buildStage >= 2) return;
     pendingPrograms = {
       backdrop: startCompileAsync('backdrop', SHADER.backdrop, {}),
       trace: startCompileAsync('trace', SHADER.trace, { u_incl: UNIT_INCL }),
@@ -13219,7 +13443,7 @@ function __default_sketch({ canvas, P, model, degrade }) {
       blurV: startCompileAsync('blurV', SHADER.blur, { u_src: UNIT_BLOOM_B }),
       composite: startCompileAsync('composite', SHADER.composite, { u_hdr: UNIT_HDR, u_bloomTex: UNIT_BLOOM_A }),
     };
-    buildStage = 1;
+    buildStage = 2;
   }
 
   function isParallelCompileComplete() {
@@ -13234,7 +13458,7 @@ function __default_sketch({ canvas, P, model, degrade }) {
   }
 
   function finalizeCompiledPrograms() {
-    if (buildStage >= 2 || !pendingPrograms) return;
+    if (buildStage >= 3 || !pendingPrograms) return;
     passBackdrop = finishPass(pendingPrograms.backdrop);
     passTrace = finishPass(pendingPrograms.trace);
     passBright = finishPass(pendingPrograms.bright);
@@ -13249,29 +13473,32 @@ function __default_sketch({ canvas, P, model, degrade }) {
     gl.uniform2f(passBlurV.uDir, 0, 1);
 
     gl.uniformBlockBinding(passTrace.prog, gl.getUniformBlockIndex(passTrace.prog, 'Bodies'), 0);
-    buildStage = 2;
+    buildStage = 3;
     shaderReady = true;
     if (shaderReadyMs === null) {
       shaderReadyMs = Number(performance.now().toFixed(2));
     }
-    fillStartPerfMs = performance.now();
+    fillClockStarted = false;
   }
 
   function ensureReadySync() {
-    if (buildStage === 0) initResourcesAndKickCompile();
-    if (buildStage === 1) finalizeCompiledPrograms();
-    if (!holdWireframe) {
-      fillInProgress = 1.0;
-      wireframeAlpha = 0.0;
-      if (wfCanvas) wfCanvas.style.display = 'none';
-    }
+    holdWireframe = false;
+    if (buildStage === 0) initGlResourcesAndBake();
+    if (buildStage === 1) kickCompileAsync();
+    if (buildStage === 2) finalizeCompiledPrograms();
+    fillInProgress = 1.0;
+    wireframeAlpha = 0.0;
+    fillClockStarted = true;
+    if (wfCanvas) wfCanvas.style.display = 'none';
   }
 
   function buildAllSync() {
     buildStage = 0;
     shaderReady = false;
-    initResourcesAndKickCompile();
+    initGlResourcesAndBake();
+    kickCompileAsync();
     finalizeCompiledPrograms();
+    fillClockStarted = true;
     ready = true;
   }
 
@@ -13523,6 +13750,7 @@ function __default_sketch({ canvas, P, model, degrade }) {
     get firstWireframeNavMs() { return firstWireframeNavMs; },
     get shaderReadyMs() { return shaderReadyMs; },
     get wireframeCanvas() { return wfCanvas; },
+    drawWireframe: (bgAlpha = 1.0, wfAlpha = 1.0) => drawWireframeOverlay(bgAlpha, wfAlpha),
     ensureReadySync,
     resize(_w, _h, px) {
       pxRatio = px;
@@ -13542,17 +13770,23 @@ function __default_sketch({ canvas, P, model, degrade }) {
       }
       SHADER.perFrame(P, t, rt, canvas.width, canvas.height, pxRatio, frameVals);
 
-      // Frame 1 (<30ms): Immediately draw the 3D Quartz Crystal Wireframe and yield to browser paint
-      // before kicking off WebGL shader compilation on Frame 2!
+      // Staggered non-blocking startup: rotate the 3D Quartz Crystal Wireframe smoothly using the
+      // exact same shared camera state (spinStart, tilt, f_cam, f_camPos, f_focal) & cluster geometry
+      // while WebGL2 resources, 3D noise volume, and async shader compilation progress across frames!
       if (!shaderReady) {
         drawWireframeOverlay(1.0, 1.0);
         wireframeFrames++;
         if (holdWireframe) return;
-        if (buildStage === 0 && wireframeFrames >= 2) {
-          initResourcesAndKickCompile();
+        if (buildStage === 0 && wireframeFrames >= 3) {
+          initGlResourcesAndBake();
           return;
         }
-        if (buildStage === 1 && wireframeFrames >= 3 && isParallelCompileComplete()) {
+        if (buildStage === 1 && wireframeFrames >= 5) {
+          kickCompileAsync();
+          return;
+        }
+        const minWfMs = (isCapture || pinnedFillIn !== null || sp.has('fast')) ? 0 : 420;
+        if (buildStage === 2 && wireframeFrames >= 8 && (performance.now() - sketchStartPerf) >= minWfMs && isParallelCompileComplete()) {
           finalizeCompiledPrograms();
         } else {
           return;
@@ -13578,7 +13812,14 @@ function __default_sketch({ canvas, P, model, degrade }) {
       }
       drawPass(passComposite, null, canvas.width, canvas.height);
 
-      // Smooth 450ms fill-in crossfade from 3D Quartz Wireframe -> full ray-traced crystal
+      // Start the 720ms lockstep cross-fade clock AFTER the first full WebGL2 frame has rendered,
+      // so compile/link/first-draw latency never eats into the smooth wireframe -> filled transition!
+      if (!fillClockStarted) {
+        fillClockStarted = true;
+        fillStartPerfMs = performance.now();
+      }
+
+      // Smooth 720ms lockstep cross-fade from rotating 3D Wireframe -> full ray-traced crystal
       if (holdWireframe) {
         fillInProgress = 0.0;
         wireframeAlpha = 1.0;
@@ -13588,19 +13829,19 @@ function __default_sketch({ canvas, P, model, degrade }) {
         const pBg = Math.min(1.0, fillInProgress / 0.72);
         const bgEase = pBg * pBg * (3.0 - 2.0 * pBg);
         const backdropAlpha = 1.0 - bgEase;
-        const pWf = Math.max(0.0, Math.min(1.0, (fillInProgress - 0.18) / 0.82));
+        const pWf = Math.max(0.0, Math.min(1.0, (fillInProgress - 0.14) / 0.86));
         const wfEase = pWf * pWf * (3.0 - 2.0 * pWf);
         wireframeAlpha = 1.0 - wfEase;
         drawWireframeOverlay(backdropAlpha, wireframeAlpha);
       } else if (fillInProgress < 1.0) {
         const elapsed = Math.max(0, (performance.now() - fillStartPerfMs) * 0.001);
         fillInProgress = Math.min(1.0, elapsed / FILL_IN_DURATION);
-        // Smooth cubic ease-in-out for ray-traced crystal reveal underneath the wireframe
+        // Smooth cubic ease-in-out for ray-traced crystal reveal underneath the rotating wireframe
         const pBg = Math.min(1.0, fillInProgress / 0.72);
         const bgEase = pBg * pBg * (3.0 - 2.0 * pBg);
         const backdropAlpha = 1.0 - bgEase;
-        // Hold wireframe crisp while crystal fills in (0..22%), then smoothly dissolve wireframe out (22%..100%)
-        const pWf = Math.max(0.0, Math.min(1.0, (fillInProgress - 0.18) / 0.82));
+        // Keep rotating wireframe aligned in 100% lockstep over the crystal facets as it dissolves out
+        const pWf = Math.max(0.0, Math.min(1.0, (fillInProgress - 0.14) / 0.86));
         const wfEase = pWf * pWf * (3.0 - 2.0 * pWf);
         wireframeAlpha = 1.0 - wfEase;
         drawWireframeOverlay(backdropAlpha, wireframeAlpha);

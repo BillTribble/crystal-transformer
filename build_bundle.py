@@ -177,7 +177,7 @@ def main():
   html = index_path.read_text(encoding="utf-8")
   html = re.sub(r"<title>.*?</title>", "<title>Crystal Transformer</title>", html, count=1)
   html = re.sub(
-      r'(<span id="preset-name">).*?(</span>)(?=</button>)',
+      r'(<span id="preset-name">).*?(</span>)(?=</button>|<span class="hud-preset-chevron")',
       r'\1<span class="preset-name-outgoing">Classic Quartz Prism</span><span class="preset-name-incoming" aria-hidden="true"></span>\2',
       html,
       count=1,

@@ -8,14 +8,14 @@ import { FULLSCREEN_VERT, frameUniforms, probeFloatTargets, program, shaderHeade
 
 const UNIT_INCL = 0, UNIT_HDR = 1, UNIT_BLOOM_A = 2, UNIT_BLOOM_B = 3;
 const BLOOM_DIVISOR = 4;
-const FILL_IN_DURATION = 0.45;
+const FILL_IN_DURATION = 0.72;
 const COMPLETION_STATUS_KHR = 0x91b1;
 
 export default function create({ canvas, P, model, degrade }) {
   const sketchStartPerf = performance.now();
   const sp = new URLSearchParams(typeof location !== 'undefined' ? location.search : '');
   const isCapture = sp.has('capture');
-  const holdWireframe = sp.has('wireframe');
+  let holdWireframe = sp.has('wireframe');
   const pinnedFillIn = sp.has('fillin') ? Math.max(0, Math.min(1, parseFloat(sp.get('fillin')))) : null;
 
   // Lightweight 2D overlay canvas for instant (<30ms) 3D Quartz Crystal Wireframe first-paint
@@ -56,7 +56,7 @@ export default function create({ canvas, P, model, degrade }) {
   let hdrW = 0, hdrH = 0, bloomW = 0, bloomH = 0, floatTargets = false;
   let clusterVersion = -1, uploadedClusterVer = -1, lastClusterW = 0, lastClusterH = 0, pxRatio = 1;
   let wireframeFrames = 0, fillInProgress = isCapture && !holdWireframe ? 1.0 : 0.0, wireframeAlpha = isCapture && !holdWireframe ? 0.0 : 1.0;
-  let firstWireframeMs = null, firstWireframeNavMs = null, shaderReadyMs = null, fillStartPerfMs = 0;
+  let firstWireframeMs = null, firstWireframeNavMs = null, shaderReadyMs = null, fillStartPerfMs = 0, fillClockStarted = false;
 
   // Preallocated scratch buffers for 60 FPS 3D wireframe projection
   const projX = new Float32Array(128);
@@ -129,7 +129,7 @@ export default function create({ canvas, P, model, degrade }) {
     if (bw !== bloomW || bh !== bloomH) { bloomW = bw; bloomH = bh; allocate(UNIT_BLOOM_A, bw, bh); allocate(UNIT_BLOOM_B, bw, bh); }
   }
 
-  function initResourcesAndKickCompile() {
+  function initGlResourcesAndBake() {
     if (buildStage >= 1) return;
     ensureGl();
     ubo = gl.createBuffer();
@@ -148,6 +148,7 @@ export default function create({ canvas, P, model, degrade }) {
     gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_WRAP_R, gl.REPEAT);
     gl.texImage3D(gl.TEXTURE_3D, 0, gl.RGBA8, INCL, INCL, INCL, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
     bakedSeed = NaN;
+    bake();
 
     floatTargets = probeFloatTargets(gl);
     hdrTex = texture2D(UNIT_HDR);
@@ -176,7 +177,12 @@ export default function create({ canvas, P, model, degrade }) {
 
     vao = gl.createVertexArray();
     gl.bindVertexArray(vao);
+    buildStage = 1;
+  }
 
+  function kickCompileAsync() {
+    if (buildStage < 1) initGlResourcesAndBake();
+    if (buildStage >= 2) return;
     pendingPrograms = {
       backdrop: startCompileAsync('backdrop', SHADER.backdrop, {}),
       trace: startCompileAsync('trace', SHADER.trace, { u_incl: UNIT_INCL }),
@@ -185,7 +191,7 @@ export default function create({ canvas, P, model, degrade }) {
       blurV: startCompileAsync('blurV', SHADER.blur, { u_src: UNIT_BLOOM_B }),
       composite: startCompileAsync('composite', SHADER.composite, { u_hdr: UNIT_HDR, u_bloomTex: UNIT_BLOOM_A }),
     };
-    buildStage = 1;
+    buildStage = 2;
   }
 
   function isParallelCompileComplete() {
@@ -200,7 +206,7 @@ export default function create({ canvas, P, model, degrade }) {
   }
 
   function finalizeCompiledPrograms() {
-    if (buildStage >= 2 || !pendingPrograms) return;
+    if (buildStage >= 3 || !pendingPrograms) return;
     passBackdrop = finishPass(pendingPrograms.backdrop);
     passTrace = finishPass(pendingPrograms.trace);
     passBright = finishPass(pendingPrograms.bright);
@@ -215,29 +221,32 @@ export default function create({ canvas, P, model, degrade }) {
     gl.uniform2f(passBlurV.uDir, 0, 1);
 
     gl.uniformBlockBinding(passTrace.prog, gl.getUniformBlockIndex(passTrace.prog, 'Bodies'), 0);
-    buildStage = 2;
+    buildStage = 3;
     shaderReady = true;
     if (shaderReadyMs === null) {
       shaderReadyMs = Number(performance.now().toFixed(2));
     }
-    fillStartPerfMs = performance.now();
+    fillClockStarted = false;
   }
 
   function ensureReadySync() {
-    if (buildStage === 0) initResourcesAndKickCompile();
-    if (buildStage === 1) finalizeCompiledPrograms();
-    if (!holdWireframe) {
-      fillInProgress = 1.0;
-      wireframeAlpha = 0.0;
-      if (wfCanvas) wfCanvas.style.display = 'none';
-    }
+    holdWireframe = false;
+    if (buildStage === 0) initGlResourcesAndBake();
+    if (buildStage === 1) kickCompileAsync();
+    if (buildStage === 2) finalizeCompiledPrograms();
+    fillInProgress = 1.0;
+    wireframeAlpha = 0.0;
+    fillClockStarted = true;
+    if (wfCanvas) wfCanvas.style.display = 'none';
   }
 
   function buildAllSync() {
     buildStage = 0;
     shaderReady = false;
-    initResourcesAndKickCompile();
+    initGlResourcesAndBake();
+    kickCompileAsync();
     finalizeCompiledPrograms();
+    fillClockStarted = true;
     ready = true;
   }
 
@@ -489,6 +498,7 @@ export default function create({ canvas, P, model, degrade }) {
     get firstWireframeNavMs() { return firstWireframeNavMs; },
     get shaderReadyMs() { return shaderReadyMs; },
     get wireframeCanvas() { return wfCanvas; },
+    drawWireframe: (bgAlpha = 1.0, wfAlpha = 1.0) => drawWireframeOverlay(bgAlpha, wfAlpha),
     ensureReadySync,
     resize(_w, _h, px) {
       pxRatio = px;
@@ -508,17 +518,23 @@ export default function create({ canvas, P, model, degrade }) {
       }
       SHADER.perFrame(P, t, rt, canvas.width, canvas.height, pxRatio, frameVals);
 
-      // Frame 1 (<30ms): Immediately draw the 3D Quartz Crystal Wireframe and yield to browser paint
-      // before kicking off WebGL shader compilation on Frame 2!
+      // Staggered non-blocking startup: rotate the 3D Quartz Crystal Wireframe smoothly using the
+      // exact same shared camera state (spinStart, tilt, f_cam, f_camPos, f_focal) & cluster geometry
+      // while WebGL2 resources, 3D noise volume, and async shader compilation progress across frames!
       if (!shaderReady) {
         drawWireframeOverlay(1.0, 1.0);
         wireframeFrames++;
         if (holdWireframe) return;
-        if (buildStage === 0 && wireframeFrames >= 2) {
-          initResourcesAndKickCompile();
+        if (buildStage === 0 && wireframeFrames >= 3) {
+          initGlResourcesAndBake();
           return;
         }
-        if (buildStage === 1 && wireframeFrames >= 3 && isParallelCompileComplete()) {
+        if (buildStage === 1 && wireframeFrames >= 5) {
+          kickCompileAsync();
+          return;
+        }
+        const minWfMs = (isCapture || pinnedFillIn !== null || sp.has('fast')) ? 0 : 420;
+        if (buildStage === 2 && wireframeFrames >= 8 && (performance.now() - sketchStartPerf) >= minWfMs && isParallelCompileComplete()) {
           finalizeCompiledPrograms();
         } else {
           return;
@@ -544,7 +560,14 @@ export default function create({ canvas, P, model, degrade }) {
       }
       drawPass(passComposite, null, canvas.width, canvas.height);
 
-      // Smooth 450ms fill-in crossfade from 3D Quartz Wireframe -> full ray-traced crystal
+      // Start the 720ms lockstep cross-fade clock AFTER the first full WebGL2 frame has rendered,
+      // so compile/link/first-draw latency never eats into the smooth wireframe -> filled transition!
+      if (!fillClockStarted) {
+        fillClockStarted = true;
+        fillStartPerfMs = performance.now();
+      }
+
+      // Smooth 720ms lockstep cross-fade from rotating 3D Wireframe -> full ray-traced crystal
       if (holdWireframe) {
         fillInProgress = 0.0;
         wireframeAlpha = 1.0;
@@ -554,19 +577,19 @@ export default function create({ canvas, P, model, degrade }) {
         const pBg = Math.min(1.0, fillInProgress / 0.72);
         const bgEase = pBg * pBg * (3.0 - 2.0 * pBg);
         const backdropAlpha = 1.0 - bgEase;
-        const pWf = Math.max(0.0, Math.min(1.0, (fillInProgress - 0.18) / 0.82));
+        const pWf = Math.max(0.0, Math.min(1.0, (fillInProgress - 0.14) / 0.86));
         const wfEase = pWf * pWf * (3.0 - 2.0 * pWf);
         wireframeAlpha = 1.0 - wfEase;
         drawWireframeOverlay(backdropAlpha, wireframeAlpha);
       } else if (fillInProgress < 1.0) {
         const elapsed = Math.max(0, (performance.now() - fillStartPerfMs) * 0.001);
         fillInProgress = Math.min(1.0, elapsed / FILL_IN_DURATION);
-        // Smooth cubic ease-in-out for ray-traced crystal reveal underneath the wireframe
+        // Smooth cubic ease-in-out for ray-traced crystal reveal underneath the rotating wireframe
         const pBg = Math.min(1.0, fillInProgress / 0.72);
         const bgEase = pBg * pBg * (3.0 - 2.0 * pBg);
         const backdropAlpha = 1.0 - bgEase;
-        // Hold wireframe crisp while crystal fills in (0..22%), then smoothly dissolve wireframe out (22%..100%)
-        const pWf = Math.max(0.0, Math.min(1.0, (fillInProgress - 0.18) / 0.82));
+        // Keep rotating wireframe aligned in 100% lockstep over the crystal facets as it dissolves out
+        const pWf = Math.max(0.0, Math.min(1.0, (fillInProgress - 0.14) / 0.86));
         const wfEase = pWf * pWf * (3.0 - 2.0 * pWf);
         wireframeAlpha = 1.0 - wfEase;
         drawWireframeOverlay(backdropAlpha, wireframeAlpha);

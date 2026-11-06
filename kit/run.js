@@ -555,6 +555,7 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
       store.setPresetName(morphState.fromPreset || standardPresetNames[0] || 'Classic Quartz Prism');
     }
     store.applyPreset(name, s, !own && s > 0, Math.min(s, 1.25));
+    if (s > 0) morphState.transitionCount = (morphState.transitionCount || 0) + 1;
     if (own && s > 0) instance.morph(s, store.preset);
     resetMorphFromPreset(store.preset, 2.0);
     setPresetDrift(store.preset || name, morphState.toPreset, 0);
@@ -627,13 +628,128 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
   });
 
   // ---- Top HUD buttons: Preset pill, Sound, Grow, Randomize
+  const hudPresetWrap = document.getElementById('hud-preset');
   const growBtn = document.getElementById('grow-btn');
   const randHudBtn = document.getElementById('rand-btn');
   const prevPresetBtn = document.getElementById('prev-preset');
   const nextPresetBtn = document.getElementById('next-preset');
   const hudPresetNameBtn = document.getElementById('hud-preset-name');
+  const hudMobileSelect = document.getElementById('hud-preset-mobile-select');
+  const hudPresetDropdown = document.getElementById('hud-preset-dropdown');
+  let lastHudMenuKey = '';
+
+  const HABIT_STUDY_NAMES = new Set([
+    'High-Dispersion Diamond',
+    'Imperial Zircon',
+    'Tabular Aquamarine',
+    'Kunzite Spodumene',
+  ]);
+
+  function syncHudPresetDropdown() {
+    const allPresetNames = Object.keys(presets || {});
+    const curatedNames = allPresetNames.filter((n) => !HABIT_STUDY_NAMES.has(n));
+    const habitStudyNames = allPresetNames.filter((n) => HABIT_STUDY_NAMES.has(n));
+    const customNames = Object.keys(store.customPresets || {});
+    const activeName = store.preset || morphState.fromPreset || allPresetNames[0] || 'Classic Quartz Prism';
+    const menuKey = `${activeName}|${allPresetNames.join(',')}|${customNames.join(',')}`;
+    if (menuKey === lastHudMenuKey) return;
+    lastHudMenuKey = menuKey;
+
+    if (hudMobileSelect) {
+      hudMobileSelect.innerHTML = '';
+      const appendOptGroup = (label, names) => {
+        if (!names.length) return;
+        const grp = document.createElement('optgroup');
+        grp.label = label;
+        for (const n of names) {
+          const opt = document.createElement('option');
+          opt.value = n;
+          opt.textContent = n;
+          if (n === activeName) opt.selected = true;
+          grp.appendChild(opt);
+        }
+        hudMobileSelect.appendChild(grp);
+      };
+      appendOptGroup('Curated Gems', curatedNames);
+      appendOptGroup('Habit Studies', habitStudyNames);
+      appendOptGroup('Saved Presets', customNames);
+    }
+
+    if (hudPresetDropdown) {
+      hudPresetDropdown.innerHTML = '';
+      const addGroup = (label, names, sourceObj) => {
+        if (!names.length) return;
+        const hdr = document.createElement('div');
+        hdr.className = 'hud-preset-group-label';
+        hdr.textContent = label;
+        hudPresetDropdown.appendChild(hdr);
+        for (const n of names) {
+          const def = sourceObj[n] || {};
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.role = 'option';
+          btn.className = 'hud-preset-item' + (n === activeName ? ' is-active' : '');
+          btn.setAttribute('aria-selected', String(n === activeName));
+          btn.dataset.preset = n;
+
+          const dot = document.createElement('span');
+          dot.className = 'hud-preset-dot';
+          const col = String(def.stoneColour || '#b4c4dc');
+          dot.style.background = col;
+          dot.style.color = col;
+
+          const nameSpan = document.createElement('span');
+          nameSpan.className = 'hud-preset-item-name';
+          nameSpan.textContent = n;
+
+          const metaSpan = document.createElement('span');
+          metaSpan.className = 'hud-preset-item-meta';
+          const rawHabit = String(def.habit || 'Trigonal').split('/')[0].trim();
+          metaSpan.textContent = rawHabit;
+
+          const checkSpan = document.createElement('span');
+          checkSpan.className = 'hud-preset-item-check';
+          checkSpan.setAttribute('aria-hidden', 'true');
+          checkSpan.textContent = '✓';
+
+          btn.append(dot, nameSpan, metaSpan, checkSpan);
+          btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            closeHudPresetDropdown();
+            applyPreset(n);
+          });
+          hudPresetDropdown.appendChild(btn);
+        }
+      };
+      addGroup('Curated Gems', curatedNames, presets || {});
+      addGroup('Habit Studies', habitStudyNames, presets || {});
+      addGroup('Saved Presets', customNames, store.customPresets || {});
+    }
+  }
+
+  function closeHudPresetDropdown() {
+    if (!hudPresetDropdown) return;
+    hudPresetDropdown.hidden = true;
+    hudPresetWrap?.classList.remove('dropdown-open');
+    hudPresetNameBtn?.setAttribute('aria-expanded', 'false');
+  }
+
+  function toggleHudPresetDropdown() {
+    if (!hudPresetDropdown) return;
+    const willOpen = hudPresetDropdown.hidden;
+    if (willOpen) {
+      lastHudMenuKey = '';
+      syncHudPresetDropdown();
+      hudPresetDropdown.hidden = false;
+      hudPresetWrap?.classList.add('dropdown-open');
+      hudPresetNameBtn?.setAttribute('aria-expanded', 'true');
+    } else {
+      closeHudPresetDropdown();
+    }
+  }
 
   function syncHudButtons() {
+    syncHudPresetDropdown();
     if (growBtn) {
       const surging = growBoost > 0.01;
       growBtn.classList.toggle('active', surging);
@@ -661,6 +777,7 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
   syncSoundFromParams();
 
   function cyclePreset(dir) {
+    closeHudPresetDropdown();
     const names = [...Object.keys(presets || {}), ...Object.keys(store.customPresets || {})];
     if (!names.length) return;
     const curIdx = names.indexOf(store.preset || names[0]);
@@ -669,7 +786,25 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
   }
   prevPresetBtn?.addEventListener('click', () => cyclePreset(-1));
   nextPresetBtn?.addEventListener('click', () => cyclePreset(1));
-  hudPresetNameBtn?.addEventListener('click', () => chrome.togglePane());
+  hudPresetNameBtn?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggleHudPresetDropdown();
+  });
+  hudMobileSelect?.addEventListener('change', () => {
+    if (hudMobileSelect.value) {
+      applyPreset(hudMobileSelect.value);
+    }
+  });
+  document.addEventListener('pointerdown', (e) => {
+    if (hudPresetDropdown && !hudPresetDropdown.hidden && !hudPresetWrap?.contains(e.target)) {
+      closeHudPresetDropdown();
+    }
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && hudPresetDropdown && !hudPresetDropdown.hidden) {
+      closeHudPresetDropdown();
+    }
+  });
 
   // ---- Interactive Mouse / Touch Orbit & Zoom on #stage
   const activePointers = new Map();
@@ -933,26 +1068,28 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
             targetOcclusion = 0.0;
           } else if ((occStyle === 'Auto alternate (Ovoids & Invisible Crystals)' || occStyle === 'Auto drift (1/3 time)') && P.evolve?.value) {
             occlusionDriftTime += dt;
-            // Synchronize Ovoid / Crystal-Negative phases strictly to the middle of major structural transitions (post-016227):
-            // - Hold windows and peak-solidity phases (morphAlpha <= 0.18 or morphAlpha >= 0.82) stay at 0.0 (100% solid crystal).
-            // - Rises smoothly to peak (0.92) right at morphAlpha = 0.50 (middle of a major structural transition) and settles
-            //   completely back to 0.0 before the crystal finishes arriving at its new form.
+            // Synchronize Ovoid / Crystal-Negative phases strictly to the middle [0.20, 0.80] of every 4th structural transition (post-016227, post-016555):
+            // - Only 1 out of every 4 transitions ((transitionCount % 4) === 0, i.e. transitions #4, #8, #12, ...) triggers the negative ovoid/crystal phase;
+            //   the other 3 transitions morph directly between solid crystal forms with occlusion = 0.0!
+            // - Hold windows and peak-solidity phases (morphAlpha <= 0.20 or morphAlpha >= 0.80) stay at 0.0 (100% solid crystal).
             const isGliding = state === 'moving' && store.gliding;
             const isMorphing = !isGliding && P.morphPresets?.value && morphState.holdRemaining <= 0;
             const morphAlpha = isGliding
               ? store.glideProgress
               : (isMorphing ? morphState.progress : 0.0);
             const structDelta = isGliding ? 1.0 : (isMorphing ? morphState.structuralDelta : 0.0);
-            const desiredType = ((morphState.transitionCount || 0) % 2 === 1) ? 1.0 : 0.0;
+            const tCount = morphState.transitionCount || 0;
+            const isFourthTransition = tCount > 0 && (tCount % 4) === 0;
+            const desiredType = (Math.floor(tCount / 4) % 2 === 0) ? 1.0 : 0.0;
 
-            if (P.occlusionType && morphAlpha <= 0.18 && smoothOcclusion < 0.02 && Math.abs(Number(P.occlusionType.value) - desiredType) > 1e-3) {
+            if (P.occlusionType && morphAlpha <= 0.20 && smoothOcclusion < 0.02 && Math.abs(Number(P.occlusionType.value) - desiredType) > 1e-3) {
               store.setSmooth(P.occlusionType, desiredType);
               P.occlusionType.base = desiredType;
               needsUiSync = true;
             }
 
-            if (structDelta > 0.01 && morphAlpha > 0.18 && morphAlpha < 0.82) {
-              const u = (morphAlpha - 0.18) / 0.64;
+            if (isFourthTransition && structDelta > 0.01 && morphAlpha > 0.20 && morphAlpha < 0.80) {
+              const u = (morphAlpha - 0.20) / 0.60;
               const transitionBell = Math.pow(Math.sin(Math.PI * u), 2.5);
               targetOcclusion = 0.92 * transitionBell * structDelta;
               smoothOcclusion = targetOcclusion;
@@ -1028,6 +1165,7 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
     get firstWireframeNavMs() { return instance?.firstWireframeNavMs ?? null; },
     get shaderReadyMs() { return instance?.shaderReadyMs ?? null; },
     get wireframeCanvas() { return instance?.wireframeCanvas ?? null; },
+    drawWireframe: (bgAlpha = 1.0, wfAlpha = 1.0) => instance?.drawWireframe?.(bgAlpha, wfAlpha),
     ensureReadySync: () => instance?.ensureReadySync?.(),
     instance,
     cluster,

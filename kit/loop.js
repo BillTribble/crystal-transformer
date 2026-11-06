@@ -80,9 +80,11 @@ export function createLoop(canvas, P, sketch) {
 
   function frame(now) {
     raf = requestAnimationFrame(frame);
-    const cap = cappedFps();
+    const s = sketch();
+    const inStartup = s && (!s.shaderReady || s.fillInProgress < 1.0);
+    const cap = inStartup ? 0 : cappedFps();
     if (cap > 0 && last && now - last < 900 / cap) return;
-    const dt = last ? Math.min((now - last) * 0.001, 0.1) : 0;
+    const dt = last ? Math.min((now - last) * 0.001, 0.1) : 0.016;
     last = now;
     render(dt);
   }
@@ -94,9 +96,9 @@ export function createLoop(canvas, P, sketch) {
     paused: false,
     get frames() { return frames; },
     start() {
-      last = 0;
       cancelAnimationFrame(raf);
       if (frames === 0) render(0);
+      last = performance.now();
       raf = requestAnimationFrame(frame);
     },
     stop() { cancelAnimationFrame(raf); raf = 0; },

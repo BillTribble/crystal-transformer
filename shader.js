@@ -189,10 +189,11 @@ ${FILM_GLSL}
 #define LIGHTS ${LIGHTS}
 #define LS ${LIGHT_STRIDE}
 #define u_mirrorMode int(f_mirrorMode + 0.5)
-vec3 lin(vec3 c) { return pow(c, vec3(2.2)); }
+vec3 lin(vec3 c) { return pow(max(c, vec3(0.0)), vec3(2.2)); }
 vec3 backdrop(vec3 d) {
   float ang = acos(clamp(-d.z, -1.0, 1.0));
-  float g = exp(-pow(ang / radians(u_glowSize), 2.0));
+  float gRatio = ang / max(radians(u_glowSize), 1e-4);
+  float g = exp(-gRatio * gRatio);
   return mix(lin(u_studioEdge), f_glow, g);
 }
 vec3 lights(vec3 d, float rough) {
@@ -703,23 +704,22 @@ float quantStairFast(float t, float nSteps) {
 
 float evalBismuthFast(vec3 pQ, vec4 morphP, float hopperAmt, out float outStepIdx, out float outEdgeDist) {
   float nSt = abs(morphP.z);
-  // 1. External 3D 90-degree stair-stepped silhouette across ALL 3 AXES (X, Y, Z) with per-step jump <= rimWidth (0.135)
-  //    so every ziggurat step ledge is 100% water-tight while every internal terrace ridge is 100% straight & orthogonal.
+  // 1. Broken-out 3D 90-degree stair-stepped silhouette across ALL 3 AXES (X, Y, Z)
   float yUp = clamp((pQ.y + 0.90) * 0.54, 0.0, 1.0);
   float yDn = clamp((0.90 - pQ.y) * 0.54, 0.0, 1.0);
   float xPos = clamp((pQ.x + 0.85) * 0.56, 0.0, 1.0);
   float zPos = clamp((pQ.z + 0.85) * 0.56, 0.0, 1.0);
-  float stairA = quantStairFast(morphP.z > 0.0 ? yUp : yDn, 4.0);
-  float stairB = quantStairFast(morphP.y >= 0.0 ? yUp : yDn, 3.0);
-  float stairC = quantStairFast(xPos, 3.0);
-  float stairZ = quantStairFast(zPos, 3.0);
+  float stairA = quantStairFast(morphP.z > 0.0 ? yUp : yDn, 5.0);
+  float stairB = quantStairFast(morphP.y >= 0.0 ? yUp : yDn, 4.0);
+  float stairC = quantStairFast(xPos, 4.0);
+  float stairZ = quantStairFast(zPos, 4.0);
 
   float maxPosX =  1.002 - morphP.x * stairA * hopperAmt;
   float minNegX = -1.002 + abs(morphP.y) * stairB * hopperAmt;
-  float minNegY = -1.002 + 0.33 * stairC * hopperAmt;
-  float maxPosY =  1.002 - 0.28 * stairZ * hopperAmt;
-  float maxPosZ =  1.002 - 0.36 * stairA * hopperAmt;
-  float minNegZ = -1.002 + 0.32 * stairB * hopperAmt;
+  float minNegY = -1.002 + 0.36 * stairC * hopperAmt;
+  float maxPosY =  1.002 - 0.32 * stairZ * hopperAmt;
+  float maxPosZ =  1.002 - 0.38 * stairA * hopperAmt;
+  float minNegZ = -1.002 + 0.34 * stairB * hopperAmt;
 
   float wX = min(maxPosX - pQ.x, pQ.x - minNegX);
   float wY = min(maxPosY - pQ.y, pQ.y - minNegY);
@@ -729,52 +729,53 @@ float evalBismuthFast(vec3 pQ, vec4 morphP, float hopperAmt, out float outStepId
   float dContour = max(min(wX, wY), min(max(wX, wY), wZ));
   float polyAllow = 0.65 * max(0.0, 1.0 - hopperAmt / 0.88);
 
-  float insideWell = smoothstep(0.12, 0.15, dContour) * (1.0 - smoothstep(0.64, 0.85, abs(pQ.y)));
-  float wellEase = smoothstep(0.02, 0.38, hopperAmt);
-  if (insideWell <= 1e-4) {
-    outStepIdx = (0.9 * stairA + 0.6 * stairB + 0.5 * stairZ) * hopperAmt * wellEase;
-    outEdgeDist = mix(1.0, abs(dContour - 0.135), wellEase);
-    return wFace + polyAllow;
-  }
-
-  // Active 2D face coordinates for internal Greek-key / parallel-rib / L-bracket walls
+  // Active 2D face coordinates for internal G-spiral / L-bracket / parallel-rib walls
   vec2 uv = (wZ <= wX && wZ <= wY) ? pQ.xy
           : (wX <= wY)             ? vec2(pQ.z, pQ.y)
                                    : vec2(pQ.x, pQ.z);
 
-  // 2. Contour-following stepped hopper tiers (4..8 steps) + morphology-specific internal ridges on all 6 faces
-  float normContour = clamp((dContour - 0.11) / 0.72, 0.0, 1.0);
+  // Open-sided L-bracket / G-spiral breach that breaks through both the outer rim and inner terraces (post-016625)
+  float openGap = smoothstep(0.05, 0.14, uv.x * sign(morphP.w)) * (1.0 - smoothstep(0.18, 0.30, abs(uv.y - 0.12 * sign(morphP.z))));
+  float effRim = 0.115 - 0.088 * openGap;
+
+  float insideWell = smoothstep(effRim, effRim + 0.030, dContour) * (1.0 - smoothstep(0.66, 0.86, abs(pQ.y) * (1.0 - 0.30 * openGap)));
+  float wellEase = smoothstep(0.02, 0.38, hopperAmt);
+  if (insideWell <= 1e-4) {
+    outStepIdx = (0.9 * stairA + 0.6 * stairB + 0.5 * stairZ) * hopperAmt * wellEase;
+    outEdgeDist = mix(1.0, abs(dContour - effRim), wellEase);
+    return wFace + polyAllow;
+  }
+
+  // 2. Contour-following stepped hopper tiers + broken G-spiral / sub-chamber divider bars
+  float normContour = clamp((dContour - effRim) / 0.68, 0.0, 1.0);
   float wellStair = quantStairFast(normContour, nSt);
   float sWell = normContour * nSt;
   float fWell = fract(sWell);
 
-  // Open-sided L-bracket / U-channel doorway on one quadrant of the internal ridges
-  float openGap = smoothstep(0.08, 0.18, uv.x * sign(morphP.w)) * (1.0 - smoothstep(0.22, 0.34, abs(uv.y - 0.14)));
+  float ridgePhase = abs(fWell - 0.36);
+  float concentricRidge = (1.0 - smoothstep(0.13, 0.21, ridgePhase)) * (1.0 - 0.92 * openGap);
 
-  float ridgePhase = abs(fWell - 0.38);
-  float concentricRidge = (1.0 - smoothstep(0.14, 0.21, ridgePhase)) * (1.0 - 0.88 * openGap);
-
-  // Parallel comb ribs (active when morphP.w < 0, like the "Rainbow Metal" parallel-ribbed specimen)
-  float parCoord = (uv.x - uv.y * 0.18) * 3.5;
+  // Parallel comb ribs (active when morphP.w < 0)
+  float parCoord = (uv.x - uv.y * 0.16) * 4.0;
   float parWave = abs(fract(parCoord) - 0.5);
   float parallelRibs = 1.0 - smoothstep(0.14, 0.22, parWave);
 
-  // Asymmetric Greek-key inner hook bars (active when morphP.w > 0.7)
-  float dHook1 = max(abs(uv.x - 0.06) - 0.32, abs(uv.y - 0.12) - 0.062);
-  float dHook2 = max(abs(uv.x + 0.18) - 0.062, abs(uv.y + 0.04) - 0.26);
-  float greekHook = (1.0 - smoothstep(-0.012, 0.012, min(dHook1, dHook2))) * step(0.7, morphP.w);
+  // Asymmetric Greek-key inner G-hook bar + sub-chamber partition bar
+  float dHook1 = max(abs(uv.x - 0.05 * sign(morphP.w)) - 0.30, abs(uv.y - 0.10) - 0.052);
+  float dHook2 = max(abs(uv.x + 0.14 * sign(morphP.w)) - 0.052, abs(uv.y + 0.03) - 0.28);
+  float greekHook = 1.0 - smoothstep(-0.012, 0.012, min(dHook1, dHook2));
 
   float wallMask = (morphP.w < 0.0)
-    ? max(parallelRibs * 0.85, concentricRidge * 0.65)
+    ? max(parallelRibs * 0.88, max(concentricRidge * 0.72, greekHook * 0.65))
     : max(concentricRidge, greekHook);
 
-  float floorDepth = (0.18 + 0.46 * wellStair) * hopperAmt * wellEase;
-  float ridgeTopDepth = (0.06 + 0.14 * wellStair) * hopperAmt * wellEase;
+  float floorDepth = (0.22 + 0.50 * wellStair) * hopperAmt * wellEase;
+  float ridgeTopDepth = (0.05 + 0.13 * wellStair) * hopperAmt * wellEase;
   float targetDepth = mix(floorDepth, ridgeTopDepth, wallMask) * insideWell;
 
-  outStepIdx = ((0.65 + 2.6 * wellStair + 1.1 * stairA - 0.55 * wallMask) * insideWell + abs(morphP.w) * 0.25) * hopperAmt * wellEase;
+  outStepIdx = ((0.65 + 2.8 * wellStair + 1.2 * stairA - 0.55 * wallMask) * insideWell + abs(morphP.w) * 0.25) * hopperAmt * wellEase;
   float eWell = min(fWell, 1.0 - fWell) / nSt;
-  float rawEdgeDist = min(min(eWell, abs(dContour - 0.115)), (morphP.w < 0.0) ? abs(parWave - 0.18) * 0.25 : abs(ridgePhase - 0.16) / nSt);
+  float rawEdgeDist = min(min(eWell, abs(dContour - effRim)), (morphP.w < 0.0) ? abs(parWave - 0.18) * 0.25 : abs(ridgePhase - 0.16) / nSt);
   outEdgeDist = mix(1.0, rawEdgeDist, wellEase);
   return (wFace + polyAllow * (1.0 - insideWell)) - targetDepth;
 }
@@ -1000,7 +1001,7 @@ float evalCathedralFace(
 
   // 2. Flanking Buttress Spire Column (|u| >= 0.25 extending cleanly through the prism corner ridges with zero outer excess!)
   float sideEx1 = max(0.0, 0.25 - absU);
-  float inWall1 = smoothstep(0.27, 0.24, absU);
+  float inWall1 = 1.0 - smoothstep(0.24, 0.27, absU);
   float d1, gu1, gax1, edge1, gab1;
   evalCathedralColumn(
     u - sideSign * 0.46, sideEx1, inWall1, 0.032, ly,
@@ -1180,7 +1181,7 @@ bool intersectCathedralSpire(
   // gable terraces seamlessly across the rhombohedral shoulder!
   if (kn >= 7 && dtHit <= 1e-5) {
     if (kn >= 8 && kn <= 13 && ly0 > 0.16 && ly0 < 0.85) {
-      float termFade = smoothstep(0.85, 0.64, ly0) * smoothstep(0.16, 0.28, ly0);
+      float termFade = (1.0 - smoothstep(0.64, 0.85, ly0)) * smoothstep(0.16, 0.28, ly0);
       float guT, gaxT, edT, gabT;
       evalCathedralFace(uA0, ly0, seedA, cathAmt, guT, gaxT, edT, gabT);
       vec3 nTermCath = normalize(origN + (guT * 0.48 * tUA - gaxT * 0.42 * ax) * termFade);
@@ -1211,7 +1212,7 @@ bool intersectCathedralSpire(
     vec3 nCandB = normalize(nB + guB * tUB + gaxB * ax);
     float ridgeDiff = abs(mWin - mB);
     edgeWin = min(min(edgeWin, edB), ridgeDiff * 0.65);
-    float wB = smoothstep(0.012, -0.012, mB - mWin);
+    float wB = 1.0 - smoothstep(-0.012, 0.012, mB - mWin);
     nWin = normalize(mix(nWin, nCandB, wB));
     if (mB < mWin) { kWin = kB; mWin = mB; }
   }
@@ -1222,7 +1223,7 @@ bool intersectCathedralSpire(
     vec3 nCandC = normalize(nC + guC * tUC + gaxC * ax);
     float ridgeDiff = abs(mWin - mC);
     edgeWin = min(min(edgeWin, edC), ridgeDiff * 0.65);
-    float wC = smoothstep(0.012, -0.012, mC - mWin);
+    float wC = 1.0 - smoothstep(-0.012, 0.012, mC - mWin);
     nWin = normalize(mix(nWin, nCandC, wC));
     if (mC < mWin) { kWin = kC; mWin = mC; }
   }
@@ -1682,8 +1683,9 @@ float evalGalliumPuddleSDF(vec3 qGa, float meltAmt, out float outFloorClip, out 
 
   // Compact multi-lobed scalloped liquid basin + drooping bottom-right tongue (matching 372c3f66)
   vec2 pBasin = uv - vec2(-0.016, -0.014);
-  float leftScallop = 0.028 * cos(uv.y * 31.0 + 0.65) * smoothstep(0.03, -0.13, uv.x);
-  float rightPinch = -0.026 * exp(-pow((uv.y - 0.075) * 14.0, 2.0)) * smoothstep(-0.02, 0.11, uv.x);
+  float leftScallop = 0.028 * cos(uv.y * 31.0 + 0.65) * (1.0 - smoothstep(-0.13, 0.03, uv.x));
+  float dyPinch = (uv.y - 0.075) * 14.0;
+  float rightPinch = -0.026 * exp(-dyPinch * dyPinch) * smoothstep(-0.02, 0.11, uv.x);
   float dBasin = (length(pBasin * vec2(0.82, 1.48)) - (0.188 + leftScallop + rightPinch)) * 0.78;
 
   vec2 pa = uv - vec2(0.016, 0.010);
@@ -1722,7 +1724,7 @@ float evalGalliumFastStep(
   float dBase = sminSimple(d0, sminSimple(d1, d2, 0.055), 0.055);
   float kMeniscus = (0.075 + 0.095 * clamp(meltAmt, 0.0, 1.0));
   // C1-smooth 3D capillary meniscus collar that visibly climbs up and fillets the lower crystal walls
-  float uMen = smoothstep(kMeniscus, -0.055, dBase);
+  float uMen = 1.0 - smoothstep(-0.055, kMeniscus, dBase);
   float meniscusLift = 0.58 * kMeniscus * uMen * uMen;
   float dLiquid = dPuddle - meniscusLift;
   outMeltFactor = smoothstep(0.02, 0.35, uMen);
@@ -1848,12 +1850,12 @@ bool intersectGalliumMelt(
       if (t > t1) break;
       float mF = 0.0;
       float d = evalGalliumFastStep(qRo + qRd * t, meltAmt, c0, h0, c1, h1, c2, h2, mF);
-      if (d <= 0.0008) {
+      if (d <= 0.0006) {
         hitPuddle = true;
         break;
       }
       tPrev = t;
-      t += max(0.0030, d * 0.88);
+      t += max(0.0014, d * 0.84);
     }
   }
 
@@ -1863,9 +1865,9 @@ bool intersectGalliumMelt(
     vec3 qPoly = qRo + qRd * polyT;
     float mFPoly = 0.0;
     float dLiqPoly = evalGalliumFastStep(qPoly, meltAmt, c0, h0, c1, h1, c2, h2, mFPoly);
-    float wetW = smoothstep(0.052, -0.006, dLiqPoly) * clamp(meltAmt * 1.35, 0.0, 1.0);
+    float wetW = (1.0 - smoothstep(-0.006, 0.052, dLiqPoly)) * clamp(meltAmt * 1.35, 0.0, 1.0);
     if (wetW > 0.005) {
-      float epsW = 0.0015;
+      float epsW = 0.0018;
       float dm1, dm2, dm3;
       float gxW = evalGalliumFastStep(qPoly + vec3(epsW, 0.0, 0.0), meltAmt, c0, h0, c1, h1, c2, h2, dm1) - dLiqPoly;
       float gyW = evalGalliumFastStep(qPoly + vec3(0.0, epsW, 0.0), meltAmt, c0, h0, c1, h1, c2, h2, dm2) - dLiqPoly;
@@ -1900,7 +1902,7 @@ bool intersectGalliumMelt(
   float d0 = evalGalliumFastStep(qHit, meltAmt, c0, h0, c1, h1, c2, h2, mF0);
 
   // Compute 3D gradient normal in qGa space using 3 forward differences (zero UBO reads!)
-  float eps = 0.0012;
+  float eps = 0.0018;
   float dm1, dm2, dm3;
   float gx = evalGalliumFastStep(qHit + vec3(eps, 0.0, 0.0), meltAmt, c0, h0, c1, h1, c2, h2, dm1) - d0;
   float gy = evalGalliumFastStep(qHit + vec3(0.0, eps, 0.0), meltAmt, c0, h0, c1, h1, c2, h2, dm2) - d0;
@@ -2110,7 +2112,7 @@ vec3 insideVolume(int id, vec3 ro, vec3 rd, float len, float jitter, int maxStep
       float dAxial = (hgt - flashCenterHgt) / 0.095;
       float dRadial = length(radialVec) / max(r * 0.26, 1e-3);
       float singleGlow = exp(-(dAxial * dAxial + dRadial * dRadial));
-      float coreEnvelope = smoothstep(0.92, 0.25, radFrac) * smoothstep(0.08, 0.24, hgt) * smoothstep(0.92, 0.74, hgt);
+      float coreEnvelope = (1.0 - smoothstep(0.25, 0.92, radFrac)) * smoothstep(0.08, 0.24, hgt) * (1.0 - smoothstep(0.74, 0.92, hgt));
       vec3 coreGemGlow = gemBodyNorm;
       vec3 schillerTint = spectralRainbow(hueOff + cosFlashAng * 0.35);
       vec3 deepFlashCol = mix(coreGemGlow, schillerTint * (coreGemGlow + vec3(0.22)), 0.32);
@@ -2428,23 +2430,23 @@ vec3 faceNormal(int id, int k, vec3 n, vec3 p, float rough, float footprint, flo
     }
   }
   if (rough > 0.0) {
-    float frostAa = 1.0 / (1.0 + 65.0 * (footprint / L));
-    // Crystal-locked frost coordinates (scaled in crystal-local frame using trilinear hardware u_incl lookups — zero floor() cellular jumps & zero hash() overhead)
+    float frostAa = 1.0 / (1.0 + 48.0 * (footprint / L));
+    // Crystal-locked frost & fine micro-crystalline dither coordinates (scaled in crystal-local frame using trilinear hardware u_incl lookups — zero floor() cellular jumps & zero hash() overhead)
     vec3 pFrost = vec3(pLoc.x * 0.32, pLoc.y, pLoc.z * 0.32);
     vec4 fTex = texture(u_incl, pFrost * 0.48 + uid * 0.19);
     vec3 fGradLoc = fTex.rgb - 0.5;
     vec3 fGrad = t1 * fGradLoc.x + ax.xyz * fGradLoc.y + t2 * fGradLoc.z;
-    vec3 nSmooth = fGrad * (rough * 0.014 * frostAa);
-    vec4 dTex = texture(u_incl, pFrost * 2.85 + uid * 0.31);
+    vec3 nSmooth = fGrad * (rough * 0.015 * frostAa);
+    vec4 dTex = texture(u_incl, pFrost * 14.5 + uid * 0.31);
     vec3 nCell0 = dTex.rgb - 0.5;
-    float patchMod = 0.55 + 0.75 * fTex.b;
-    vec3 nDitherWorld = (t1 * nCell0.x + ax.xyz * nCell0.y + t2 * nCell0.z) * (rough * 0.036 * patchMod * frostAa);
+    float patchMod = 0.55 + 0.80 * fTex.b;
+    vec3 nDitherWorld = (t1 * nCell0.x + ax.xyz * nCell0.y + t2 * nCell0.z) * (rough * 0.058 * patchMod * frostAa);
     vec3 nJack = vec3(0.0);
     if (glimmer > 0.001) {
-      vec3 hJb = texture(u_incl, pFrost * 3.45 + uid * 0.53 + 0.17).rgb - 0.5;
-      nJack = (t1 * hJb.x + ax.xyz * hJb.y + t2 * hJb.z) * (rough * 0.024 * glimmer * frostAa);
+      vec3 hJb = texture(u_incl, pFrost * 18.5 + uid * 0.53 + 0.17).rgb - 0.5;
+      nJack = (t1 * hJb.x + ax.xyz * hJb.y + t2 * hJb.z) * (rough * 0.038 * glimmer * frostAa);
     }
-    n = normalize(n + mix(nSmooth, nDitherWorld, dither) * (1.0 - 0.72 * g1) + nJack);
+    n = normalize(n + mix(nSmooth, nDitherWorld, dither) * (1.0 - 0.38 * g1) + nJack);
   }
   return n;
 }
@@ -2696,7 +2698,7 @@ vec3 refractedEnv(vec3 dir, float rough, float refAlpha, float hgt) {
   vec3 gemCol = exp(-zonedGemSigma(hgt) * 0.48);
   vec3 softLt = (lt / (1.0 + (2.8 - 1.4 * glare) * ltLum)) * mix(gemCol * 0.76, gemCol * 0.52 + vec3(0.32), 0.20 * glare);
   vec3 curEnv = bg + mix(lt, softLt, refAlpha);
-  float rearRimMask = smoothstep(0.05, -0.35, d.z);
+  float rearRimMask = 1.0 - smoothstep(-0.35, 0.05, d.z);
   vec3 jbRefrLt = mix(softLt * 0.26, lt * 0.22, rearRimMask) + glimmerStripLights(d, rough);
   vec3 jbEnv = bg + mix(lt, jbRefrLt, refAlpha);
   float jbBlend = clamp(glimmerCurve(u_glimmer), 0.0, 1.0);
@@ -2820,8 +2822,8 @@ vec3 evalBismuthOxidePalette(float opd) {
 }
 
 float outerLipCatchLight(vec3 wN, vec3 wRefl, vec3 qGa) {
-  float leftLip = smoothstep(-0.08, -0.22, qGa.x) * smoothstep(-0.55, 0.65, wN.z - 0.35 * wN.x);
-  float botBelly = smoothstep(0.02, -0.22, qGa.y) * smoothstep(-0.65, 0.55, -wN.y + 0.45 * wN.z);
+  float leftLip = (1.0 - smoothstep(-0.22, -0.08, qGa.x)) * smoothstep(-0.55, 0.65, wN.z - 0.35 * wN.x);
+  float botBelly = (1.0 - smoothstep(-0.22, 0.02, qGa.y)) * smoothstep(-0.65, 0.55, -wN.y + 0.45 * wN.z);
   float rightCollar = smoothstep(0.08, 0.22, qGa.x) * smoothstep(-0.45, 0.65, wN.x + 0.35 * wN.z);
   float tipDrip = exp(-length(qGa.xy - vec2(0.085, -0.21)) * 18.0) * smoothstep(-0.3, 0.8, wRefl.z + 0.4 * abs(wRefl.x));
   return clamp(leftLip * 0.85 + botBelly * 0.95 + rightCollar * 0.75 + tipDrip * 1.35, 0.0, 1.5);
@@ -2873,9 +2875,10 @@ vec3 shadeMetallicCrystal(int id, int k, vec3 pEntry, vec3 rd, vec3 nRefl, float
   float metalRough = clamp(reflRough * 0.42 + 0.018, 0.012, 0.26);
 
   vec3 baseEnv = env(reflDir, metalRough);
-  float topSoftbox = pow(smoothstep(-0.05, 0.82, wRefl.y), 1.6) * (0.55 + 0.45 * smoothstep(-0.3, 0.7, wRefl.x));
-  float sideRimTent = pow(smoothstep(0.10, 0.85, abs(wRefl.x)), 1.8) * smoothstep(-0.25, 0.55, wRefl.z);
-  float darkHorizonBand = 1.0 - 0.65 * exp(-pow((wRefl.y + 0.12) * 3.8, 2.0));
+  float topSoftbox = pow(max(0.0, smoothstep(-0.05, 0.82, wRefl.y)), 1.6) * (0.55 + 0.45 * smoothstep(-0.3, 0.7, wRefl.x));
+  float sideRimTent = pow(max(0.0, smoothstep(0.10, 0.85, abs(wRefl.x))), 1.8) * smoothstep(-0.25, 0.55, wRefl.z);
+  float hzDiff = (wRefl.y + 0.12) * 3.8;
+  float darkHorizonBand = 1.0 - 0.65 * exp(-hzDiff * hzDiff);
   float baseAmbFloor = mix(0.04, 0.14, iridW);
   vec3 studioDome = f_ambient * (baseAmbFloor + mix(0.62, 0.44, iridW) * topSoftbox + 0.26 * sideRimTent) * darkHorizonBand;
   vec3 reflLight = baseEnv * mix(0.48, 0.34, iridW) + studioDome;
@@ -2936,8 +2939,8 @@ vec3 shadeMetallicCrystal(int id, int k, vec3 pEntry, vec3 rd, vec3 nRefl, float
 
   // 5. Crisp metallic catch-light along 90° hopper step rims & cube facet edges (smoothly blended across u_hopper)
   float hopRimW = smoothstep(0.02, 0.28, u_hopper);
-  float edgeRimGlow = smoothstep(0.024, 0.0, dEdge / max(body(id, 2).w, 0.04)) * 0.28;
-  float hopRimGlow = smoothstep(0.032, 0.002, hopperEdgeDist) * (0.42 + 0.48 * u_hopper);
+  float edgeRimGlow = (1.0 - smoothstep(0.0, 0.024, dEdge / max(body(id, 2).w, 0.04))) * 0.28;
+  float hopRimGlow = (1.0 - smoothstep(0.002, 0.032, hopperEdgeDist)) * (0.42 + 0.48 * u_hopper);
   float stepRimGlow = mix(edgeRimGlow, hopRimGlow, hopRimW);
 
   vec3 highlightTint = mix(mix(F_cond, vec3(1.0, 0.96, 0.84), 0.32), F_cond * 1.15, iridW * 0.78);
@@ -2995,34 +2998,29 @@ vec3 shadeMetallicCrystal(int id, int k, vec3 pEntry, vec3 rd, vec3 nRefl, float
     float sideSilverAlign = smoothstep(-0.12, 0.50, dot(wNGa, normalize(vec3(0.62, 0.08, 0.78))));
     // 3. Inner & left-facing vertical facets reflect dark metallic pewter, with warm puddle bounce near the base
     float innerPewterAlign = smoothstep(0.02, 0.50, dot(wNGa, normalize(vec3(-0.74, -0.14, 0.65)))) * (1.0 - 0.85 * topGoldAlign);
-    float puddleUpBounce = smoothstep(-0.06, -0.44, wNGa.y) * smoothstep(0.09, -0.06, qGa.y) * clamp(u_melt * 1.35, 0.0, 1.0);
+    float puddleUpBounce = (1.0 - smoothstep(-0.44, -0.06, wNGa.y)) * (1.0 - smoothstep(-0.06, 0.09, qGa.y)) * clamp(u_melt * 1.35, 0.0, 1.0);
 
     // Conductor Fresnel tint per orientation (silver-platinum F0 with warm golden key reflection on top bevels)
     vec3 gaCondTint = mix(coolSilverRim, brightSilverSpec, sideSilverAlign);
     gaCondTint = mix(gaCondTint, pewterShadow * 2.2, innerPewterAlign * (1.0 - 0.75 * puddleUpBounce));
     gaCondTint = mix(gaCondTint, warmGoldKey, topGoldAlign);
     gaCondTint = mix(gaCondTint, mix(brightSilverSpec, warmGoldKey * 1.15, 0.55), puddleUpBounce * 0.80);
-    vec3 gaFresnel = mix(gaCondTint, vec3(1.0, 0.98, 0.95), pow(1.0 - cosGa, 3.8) * 0.55);
+    vec3 gaFresnel = mix(gaCondTint, vec3(1.0, 0.98, 0.95), pow(max(0.0, 1.0 - cosGa), 3.8) * 0.55);
 
     // Real studio environment reflection + brushed normal reflection + multi-light GGX conductor specular lobes
     vec3 gaEnvRefl = env(reflect(rd, nGa), 0.032);
-    float keySoftboxGrad = pow(smoothstep(-0.22, 0.85, wReflGa.y + 0.32 * wReflGa.z - 0.18 * wReflGa.x), 1.35);
-    float rimStripGrad = pow(smoothstep(-0.15, 0.82, wReflGa.x * 0.65 + wReflGa.z * 0.72), 1.45);
+    float keySoftboxGrad = pow(max(0.0, smoothstep(-0.22, 0.85, wReflGa.y + 0.32 * wReflGa.z - 0.18 * wReflGa.x)), 1.35);
+    float rimStripGrad = pow(max(0.0, smoothstep(-0.15, 0.82, wReflGa.x * 0.65 + wReflGa.z * 0.72)), 1.45);
     float darkTentGrad = 0.22 + 0.78 * smoothstep(-0.45, 0.35, wReflGa.y + 0.25 * wReflGa.z);
 
     float subtleBrushMod = 0.95 + 0.06 * grainMicro + 0.04 * brushFine + 0.03 * brushCross;
     vec3 realMetalRefl = reflLight * mix(0.55, 0.92, sideSilverAlign + topGoldAlign * 0.6)
                        + gaEnvRefl * (0.38 + 0.42 * rimStripGrad + 0.35 * keySoftboxGrad);
 
-    // Physical rounded bevels naturally catch crisp metallic specular highlights from the studio lights
-    float bevelCatch = (1.0 - smoothstep(0.0, 0.042, dEdge / max(body(id, 2).w, 0.05))) * (1.0 - liqW);
-    float bevelLight = smoothstep(-0.1, 0.75, wNGa.y + 0.45 * abs(wNGa.x) + 0.35 * wNGa.z);
-
     vec3 solidCol = gaFresnel * realMetalRefl * darkTentGrad * subtleBrushMod
                   + gaCondTint * f_ambient * (0.18 + 0.44 * keySoftboxGrad * topGoldAlign + 0.36 * rimStripGrad * sideSilverAlign) * subtleBrushMod
-                  + min(specBroad, vec3(1.6)) * mix(brightSilverSpec, warmGoldKey * 1.20, topGoldAlign) * 0.16 * seamAO
-                  + min(specSharp, vec3(1.2)) * mix(vec3(1.12, 1.16, 1.22), vec3(1.20, 1.05, 0.78), topGoldAlign) * 0.14
-                  + mix(brightSilverSpec, warmGoldKey * 1.25, topGoldAlign * 0.5) * (bevelCatch * bevelLight * 0.34);
+                  + min(specBroad, vec3(1.6)) * mix(brightSilverSpec, warmGoldKey * 1.20, topGoldAlign) * 0.18 * seamAO
+                  + min(specSharp, vec3(1.2)) * mix(vec3(1.12, 1.16, 1.22), vec3(1.20, 1.05, 0.78), topGoldAlign) * 0.16;
     solidCol = min(solidCol, vec3(1.32, 1.25, 1.14));
 
     // --- (B) Lower Molten Gallium Puddle & Meniscus Collar Shading (100% Mirror Chrome) ---
@@ -3037,17 +3035,19 @@ vec3 shadeMetallicCrystal(int id, int k, vec3 pEntry, vec3 rd, vec3 nRefl, float
     vec3 puddleWarmPool = mix(vec3(0.48, 0.31, 0.12), vec3(0.84, 0.64, 0.33), smoothstep(0.62, 0.95, basinDot));
 
     // 2. Concave meniscus crease right where solid crystal plunges into the molten pool
-    float meniscusCrease = sin(clamp((meltFactor - 0.03) / 0.55, 0.0, 1.0) * PI);
+    float meniscusCrease = max(0.0, sin(clamp((meltFactor - 0.03) / 0.55, 0.0, 1.0) * PI));
     float meniscusDark = 1.0 - 0.78 * pow(meniscusCrease, 1.35);
     float meniscusFilletSpec = pow(meniscusCrease, 2.4) * smoothstep(0.08, 0.72, wReflGa.y + 0.35 * wReflGa.z) * silhouetteDarkEdge;
 
     // 3. High-contrast black-chrome studio horizon band along the bulbous capillary rim & outer grazing edge
-    float rimDarkRing = exp(-pow((basinDot - 0.52) / 0.20, 2.0));
+    float rimDiff = (basinDot - 0.52) / 0.20;
+    float rimDarkRing = exp(-rimDiff * rimDiff);
     float outerGrazingDark = 1.0 - silhouetteDarkEdge;
     float darkBand = clamp(max(rimDarkRing * 0.92, outerGrazingDark * 0.88), 0.0, 0.95);
 
     // 4. Inward-set silver-white liquid-mercury specular highlight tube along the upper-outer curvature of the rim (cosSmooth ~ 0.28..0.68)
-    float inwardRimTube = exp(-pow((cosSmooth - 0.44) / 0.16, 2.0)) * smoothstep(0.10, 0.30, cosSmooth) * (1.0 - 0.75 * basinMask);
+    float tubeDiff = (cosSmooth - 0.44) / 0.16;
+    float inwardRimTube = exp(-tubeDiff * tubeDiff) * smoothstep(0.10, 0.30, cosSmooth) * (1.0 - 0.75 * basinMask);
     float lowerLipCatch = outerLipCatchLight(wNSmooth, wReflGa, qGa);
     float rimSpecHighlight = clamp(inwardRimTube * (0.68 + 0.72 * lowerLipCatch), 0.0, 1.35);
 
@@ -3136,7 +3136,8 @@ vec3 shadeBehindRay(vec3 roIn, vec3 rdIn, int skipIn, float travIn, float jitter
   rdB = dot(bOut, bOut) > 1e-6 ? normalize(bOut) : reflect(rdB, -bNf);
   vec3 endEnv = refractedEnv(rdB, bFr, 1.0);
   float deflAng = acos(clamp(dot(rdB, rdIn), -1.0, 1.0));
-  float glowG = exp(-pow(deflAng / radians(u_glowSize * 1.15), 2.0));
+  float glowRatio = deflAng / max(radians(u_glowSize * 1.15), 1e-4);
+  float glowG = exp(-glowRatio * glowRatio);
   vec3 axisBg = mix(lin(u_studioEdge) * 0.14, f_glow * 1.65 + f_ambient * 0.22, glowG);
   endEnv = max(endEnv, axisBg);
   colB += thrB * endEnv;
@@ -3603,8 +3604,9 @@ void main() {
     travC += len0;
     p = roC + rdC * len0;
     float exitFrostRoll = evalCrystalFrostRoll(id, rawExitN0, uid);
-    float crispExitRough = smoothstep(exitFrostRoll - 0.12, exitFrostRoll + 0.12, u_frostShare * 0.65) * (u_frost * 0.22);
-    fr = mix(effFrost * smoothstep(exitFrostRoll - 0.15, exitFrostRoll + 0.15, effFrostShare), crispExitRough, effG1);
+    float exitRoughBase = effFrost * smoothstep(exitFrostRoll - 0.15, exitFrostRoll + 0.15, effFrostShare);
+    float crispExitRough = smoothstep(exitFrostRoll - 0.12, exitFrostRoll + 0.12, max(u_frostShare * 0.68, effFrostShare * 0.52 * dither)) * (max(u_frost, effFrost * 0.65 * dither) * mix(0.24, 0.36, dither));
+    fr = mix(exitRoughBase, crispExitRough, effG1 * (1.0 - 0.32 * dither));
     float dExit0 = 1.0;
     if (g1 > 0.001 && u_edgeWear > 0.0 && kf < CP) {
       vec3 tmpAdj;
@@ -3645,8 +3647,9 @@ void main() {
       travC += len;
       p = roC + rdC * len;
       exitFrostRoll = evalCrystalFrostRoll(id, rawExitNB, uid);
-      crispExitRough = smoothstep(exitFrostRoll - 0.12, exitFrostRoll + 0.12, u_frostShare * 0.65) * (u_frost * 0.22);
-      fr = mix(effFrost * smoothstep(exitFrostRoll - 0.15, exitFrostRoll + 0.15, effFrostShare), crispExitRough, effG1);
+      exitRoughBase = effFrost * smoothstep(exitFrostRoll - 0.15, exitFrostRoll + 0.15, effFrostShare);
+      crispExitRough = smoothstep(exitFrostRoll - 0.12, exitFrostRoll + 0.12, max(u_frostShare * 0.68, effFrostShare * 0.52 * dither)) * (max(u_frost, effFrost * 0.65 * dither) * mix(0.24, 0.36, dither));
+      fr = mix(exitRoughBase, crispExitRough, effG1 * (1.0 - 0.32 * dither));
       float dExitB = 1.0;
       if (g1 > 0.001 && u_edgeWear > 0.0 && kf < CP) {
         vec3 tmpAdjB;
@@ -3881,7 +3884,7 @@ void main() {
   vec3 jbHalo = bloomCol * (max(u_bloom, 0.35 * effG1) + u_rainbowGlow * 0.18 * (1.0 - 0.55 * dither));
   vec3 haloCol = mix(curHalo, jbHalo, effG1);
   vec3 c = baseCol + haloCol;
-  c = pow(aces(c), vec3(1.0 / 2.2));
+  c = pow(max(aces(c), vec3(0.0)), vec3(1.0 / 2.2));
   vec2 q = (fc - 0.5 * u_res) / u_res;
   c = mix(c, u_studioEdge, clamp(u_vignette * dot(q, q) * 2.6, 0.0, 1.0));
   c = filmDust(c, fc, f_px, f_frame, u_dust);

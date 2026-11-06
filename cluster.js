@@ -1325,7 +1325,7 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
     const effTwinShare = twinShare * (1.0 - hopperBlend);
     const thrLo = i < 3 ? i : (i <= 5 ? (3.0 + (i - 3) * 0.22) : (i - 0.8));
     const thrHi = i + 1.0;
-    const rawPresence = smooth01(Math.max(0.0, Math.min(1.0, (floatC - thrLo) / Math.max(1.0, thrHi - thrLo)))) * (i >= 3 ? Math.max(0.0, 1.0 - hopperBlend) : 1.0);
+    const rawPresence = smooth01(Math.max(0.0, Math.min(1.0, (floatC - thrLo) / Math.max(1.0, thrHi - thrLo)))) * (i >= 6 ? Math.max(0.0, 1.0 - hopperBlend) : 1.0);
     const rawTwinW = i < 2 ? 0.0 : smooth01(Math.max(0.0, Math.min(1.0, (effTwinShare - node.twinRoll + 0.44) / 0.88))) * (1.0 - hopperBlend);
     if (!node.smoothInit) {
       node.smoothPresence = rawPresence;
@@ -1463,35 +1463,31 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
     //   Block 0: Hero broad cantilevered terraced hopper wing (morph 0)
     //   Block 1: Tall stepped pagoda ziggurat tower interlocking at an angle (morph 1)
     //   Block 2: Open-sided L-bracket / Greek-key sub-block on the opposite flank (morph 2)
-    const hopperMorph = i < 3 ? i : ((nodeUidInt - 1 + (seedInt % 5)) % 5);
+    const hopperMorph = i < 5 ? i : ((nodeUidInt - 1 + (seedInt % 5)) % 5);
     node.hopperMorph = hopperMorph;
 
-    if (hopperBlend > 1e-4 && i < 3) {
-      // Cohesive 3-block Bismuth Hopper sculptural cluster (post-016032):
+    if (hopperBlend > 1e-4 && i < 6) {
+      // Broken-out 6-block cascading Bismuth Hopper cluster (matching reference photo 1dbbb5bc):
+      // Asymmetric stepped orientations forming a jagged diagonal cascade from upper-right crown to lower-left fingers
       const archMode = seedInt % 3;
-      const azBase = (0.18 + 0.08 * archMode) * Math.PI;
-      const azSpread = (i === 0)
-        ? azBase
-        : (i === 1)
-          ? (azBase + 0.68 * Math.PI)
-          : (i === 2)
-            ? (azBase - 0.72 * Math.PI)
-            : (0.20 * Math.PI + i * (TAU / 5.4) + 0.42 * (seedInt % 7));
-      const leanDeg = (i === 0)
-        ? 16
-        : (i === 1)
-          ? 14
-          : (i === 2)
-            ? 32
-            : (hopperMorph === 1 ? 11 + 5 * (i % 2)
-              : hopperMorph === 0 ? 24 + 8 * (i % 2)
-              : hopperMorph === 3 ? 46 + 10 * (i % 2)
-              : 34 + 14 * (i % 3));
+      const azBase = (0.16 + 0.07 * archMode) * Math.PI;
+      const azSpread = (i === 0) ? azBase
+                     : (i === 1) ? (azBase + 0.38 * Math.PI)
+                     : (i === 2) ? (azBase - 0.56 * Math.PI)
+                     : (i === 3) ? (azBase + 0.82 * Math.PI)
+                     : (i === 4) ? (azBase - 0.92 * Math.PI)
+                                 : (azBase - 0.24 * Math.PI);
+      const leanDeg = (i === 0) ? 18
+                    : (i === 1) ? 15
+                    : (i === 2) ? 26
+                    : (i === 3) ? 22
+                    : (i === 4) ? 38
+                                : 44;
       const zigLean = leanDeg * DEG;
       const zAx0 = Math.sin(zigLean) * Math.cos(azSpread);
       const zAx1 = Math.cos(zigLean);
       const zAx2 = Math.sin(zigLean) * Math.sin(azSpread);
-      const hopperFrameW = 0.86 * hopperBlend * smooth01(hopperBlend);
+      const hopperFrameW = 0.88 * hopperBlend * smooth01(hopperBlend);
       ax[0] = ax[0] * (1 - hopperFrameW) + zAx0 * hopperFrameW;
       ax[1] = ax[1] * (1 - hopperFrameW) + zAx1 * hopperFrameW;
       ax[2] = ax[2] * (1 - hopperFrameW) + zAx2 * hopperFrameW;
@@ -1544,10 +1540,9 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
 
     let primBaseR = P.thickness.value * Math.pow(primBaseL, 0.65) * Math.max(0.25, 1 + P.thicknessJitter.value * 0.55 * node.uRadSym) * radMod;
     if (hopperBlend > 1e-4) {
-      // Scale the 3 Bismuth Hopper blocks (0: hero cantilevered wing, 1: tall stepped pagoda tower,
-      // 2: open L-bracket sub-block) so the 3-block cluster has bold sculptural volume.
-      const biLenMult = hopperMorph === 1 ? 1.28 : hopperMorph === 2 ? 1.16 : hopperMorph === 0 ? 1.14 : 1.04;
-      const biRadMult = hopperMorph === 0 ? 1.26 : hopperMorph === 2 ? 1.12 : hopperMorph === 1 ? 0.96 : 1.02;
+      // Varied sub-block scales across the 6 cascading Bismuth Hopper blocks (matching reference photo 1dbbb5bc)
+      const biLenMult = i === 0 ? 1.18 : i === 1 ? 1.12 : i === 2 ? 1.06 : i === 3 ? 0.94 : i === 4 ? 1.02 : 0.86;
+      const biRadMult = i === 0 ? 1.16 : i === 1 ? 0.92 : i === 2 ? 1.04 : i === 3 ? 0.88 : i === 4 ? 0.94 : 0.82;
       primBaseL *= 1.0 + (biLenMult - 1.0) * hopperBlend;
       primBaseR *= 1.0 + (biRadMult - 1.0) * hopperBlend;
     }
@@ -1639,18 +1634,21 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
       }
     }
 
-    if (hopperBlend > 1e-4 && i > 0 && i < 3) {
-      // Architectural 3-block Bismuth Hopper offsets (Block 1: tall pagoda tower rising on upper flank;
-      // Block 2: open L-bracket ziggurat interlocking on opposite lower-front flank)
-      const tierIdx = i - 1;
-      const archMode = seedInt % 3;
-      const tierRing = (i === 1 ? 0.28 : i === 2 ? 0.32 : (0.30 + 0.09 * Math.floor(tierIdx / 2))) * baseL;
-      const tierAng = (i === 1 ? 0.82 : i === 2 ? -1.28 : tierIdx * (TAU / 5.2) + 0.35) + 0.38 * archMode;
-      const tierY = (i === 1 ? 0.22 : i === 2 ? -0.10 : (0.20 - 0.12 * (tierIdx % 4))) * baseL * gScale * presence;
+    if (hopperBlend > 1e-4 && i < 6) {
+      // Broken-out 6-block cascading Bismuth Hopper offsets (matching reference photo 1dbbb5bc):
+      //   i = 0: Broad lower-right multi-chamber G-spiral foundation block
+      //   i = 1: Upper-right G-spiral crown tower rising above Block 0
+      //   i = 2: Mid-center / upper-left protruding G-spiral block
+      //   i = 3: Mid-right cantilevered L-hook step block
+      //   i = 4: Left-flank cascading crenellated stair-stepped block
+      //   i = 5: Lower-left broken-out L-pillar finger outcrop
+      const offX = (i === 0 ?  0.14 : i === 1 ?  0.11 : i === 2 ? -0.10 : i === 3 ?  0.27 : i === 4 ? -0.26 : -0.34) * baseL * gScale * presence;
+      const offY = (i === 0 ? -0.16 : i === 1 ?  0.26 : i === 2 ?  0.08 : i === 3 ?  0.05 : i === 4 ? -0.02 : -0.18) * baseL * gScale * presence;
+      const offZ = (i === 0 ?  0.12 : i === 1 ?  0.04 : i === 2 ?  0.14 : i === 3 ? -0.08 : i === 4 ? -0.04 :  0.08) * baseL * gScale * presence;
       const hopperRootW = hopperBlend * smooth01(hopperBlend);
-      root[0] = root[0] * (1 - 0.78 * hopperRootW) + Math.cos(tierAng) * tierRing * gScale * presence * hopperRootW;
-      root[1] = root[1] * (1 - 0.78 * hopperRootW) + tierY * hopperRootW;
-      root[2] = root[2] * (1 - 0.78 * hopperRootW) + Math.sin(tierAng) * tierRing * gScale * presence * hopperRootW;
+      root[0] = root[0] * (1 - 0.82 * hopperRootW) + offX * hopperRootW;
+      root[1] = root[1] * (1 - 0.82 * hopperRootW) + offY * hopperRootW;
+      root[2] = root[2] * (1 - 0.82 * hopperRootW) + offZ * hopperRootW;
     }
 
     if (meltBlend > 1e-4 && hopperBlend < 0.5) {
