@@ -727,12 +727,13 @@ float evalBismuthFast(vec3 pQ, vec4 morphP, float hopperAmt, out float outStepId
 
   float wFace = min(wX, min(wY, wZ));
   float dContour = max(min(wX, wY), min(max(wX, wY), wZ));
+  float polyAllow = 0.65 * max(0.0, 1.0 - hopperAmt / 0.88);
 
-  float insideWell = smoothstep(0.12, 0.15, dContour);
+  float insideWell = smoothstep(0.12, 0.15, dContour) * mix(1.0 - smoothstep(0.62, 0.85, abs(pQ.y)), 1.0, smoothstep(0.25, 0.75, hopperAmt));
   if (insideWell <= 1e-4) {
     outStepIdx = 0.9 * stairA + 0.6 * stairB + 0.5 * stairZ;
     outEdgeDist = abs(dContour - 0.135);
-    return wFace;
+    return wFace + polyAllow;
   }
 
   // Active 2D face coordinates for internal Greek-key / parallel-rib / L-bracket walls
@@ -766,14 +767,15 @@ float evalBismuthFast(vec3 pQ, vec4 morphP, float hopperAmt, out float outStepId
     ? max(parallelRibs * 0.85, concentricRidge * 0.65)
     : max(concentricRidge, greekHook);
 
-  float floorDepth = (0.18 + 0.46 * wellStair) * hopperAmt;
-  float ridgeTopDepth = (0.06 + 0.14 * wellStair) * hopperAmt;
+  float wellEase = smoothstep(0.04, 0.38, hopperAmt);
+  float floorDepth = (0.18 + 0.46 * wellStair) * hopperAmt * wellEase;
+  float ridgeTopDepth = (0.06 + 0.14 * wellStair) * hopperAmt * wellEase;
   float targetDepth = mix(floorDepth, ridgeTopDepth, wallMask) * insideWell;
 
   outStepIdx = (0.65 + 2.6 * wellStair + 1.1 * stairA - 0.55 * wallMask) * insideWell + abs(morphP.w) * 0.25;
   float eWell = min(fWell, 1.0 - fWell) / nSt;
   outEdgeDist = min(min(eWell, abs(dContour - 0.115)), (morphP.w < 0.0) ? abs(parWave - 0.18) * 0.25 : abs(ridgePhase - 0.16) / nSt);
-  return wFace - targetDepth;
+  return (wFace + polyAllow * (1.0 - insideWell)) - targetDepth;
 }
 
 float evalBismuthHopper(vec3 p, int row, float hopperAmt, out float outStepIdx, out float outEdgeDist) {
@@ -794,9 +796,9 @@ float evalBismuthHopper(vec3 p, int row, float hopperAmt, out float outStepIdx, 
   float dxp = body(row, PA + 0).w - dot(body(row, PA + 0).xyz, cMid);
   float dxn = body(row, PA + 4).w - dot(body(row, PA + 4).xyz, cMid);
   float dzp = body(row, PA + 2).w - dot(body(row, PA + 2).xyz, cMid);
-  float dzn = body(row, PA + 6).w - dot(body(row, PA + 6).xyz, cMid);
-  float dyp = body(row, PA + 17).w - dot(body(row, PA + 17).xyz, cMid);
-  float dyn = body(row, PA + 16).w - dot(body(row, PA + 16).xyz, cMid);
+  float dzn = (body(row, PA + 6).w - dot(body(row, PA + 6).xyz, cMid)) / max(0.5, abs(dot(body(row, PA + 6).xyz, sz)));
+  float dyp = (body(row, PA + 17).w - dot(body(row, PA + 17).xyz, cMid)) / max(0.25, abs(dot(body(row, PA + 17).xyz, ax)));
+  float dyn = (body(row, PA + 16).w - dot(body(row, PA + 16).xyz, cMid)) / max(0.25, abs(dot(body(row, PA + 16).xyz, ax)));
   vec3 cBox = cMid + sx * (0.5 * (dxp - dxn)) + ax * (0.5 * (dyp - dyn)) + sz * (0.5 * (dzp - dzn));
 
   float hx = max(0.035, 0.5 * (dxp + dxn));
@@ -818,7 +820,8 @@ float evalBismuthHopper(vec3 p, int row, float hopperAmt, out float outStepIdx, 
 // BGS wings, open L-brackets, parallel-ribbed plates & twin hoppers):
 // Precomputes local ray coordinates (q0, dq) and morphP ONCE per crystal (zero UBO reads inside loop).
 bool intersectBismuthHopper(int row, vec3 ro, vec3 rd, float hopperAmt, float tHitMax, inout float tn, float tf, inout int kn, out vec3 outHopperN) {
-  outHopperN = (kn < CP) ? body(row, PA + kn).xyz : vec3(0.0, 1.0, 0.0);
+  vec3 origN = (kn < CP) ? body(row, PA + kn).xyz : vec3(0.0, 1.0, 0.0);
+  outHopperN = origN;
   float tStart = max(tn, 0.0);
   if (tStart >= tHitMax) return false;
 
@@ -835,9 +838,9 @@ bool intersectBismuthHopper(int row, vec3 ro, vec3 rd, float hopperAmt, float tH
   float dxp = body(row, PA + 0).w - dot(body(row, PA + 0).xyz, cMid);
   float dxn = body(row, PA + 4).w - dot(body(row, PA + 4).xyz, cMid);
   float dzp = body(row, PA + 2).w - dot(body(row, PA + 2).xyz, cMid);
-  float dzn = body(row, PA + 6).w - dot(body(row, PA + 6).xyz, cMid);
-  float dyp = body(row, PA + 17).w - dot(body(row, PA + 17).xyz, cMid);
-  float dyn = body(row, PA + 16).w - dot(body(row, PA + 16).xyz, cMid);
+  float dzn = (body(row, PA + 6).w - dot(body(row, PA + 6).xyz, cMid)) / max(0.5, abs(dot(body(row, PA + 6).xyz, sz)));
+  float dyp = (body(row, PA + 17).w - dot(body(row, PA + 17).xyz, cMid)) / max(0.25, abs(dot(body(row, PA + 17).xyz, ax)));
+  float dyn = (body(row, PA + 16).w - dot(body(row, PA + 16).xyz, cMid)) / max(0.25, abs(dot(body(row, PA + 16).xyz, ax)));
   vec3 cBox = cMid + sx * (0.5 * (dxp - dxn)) + ax * (0.5 * (dyp - dyn)) + sz * (0.5 * (dzp - dzn));
 
   float hx = max(0.035, 0.5 * (dxp + dxn));
@@ -907,6 +910,8 @@ bool intersectBismuthHopper(int row, vec3 ro, vec3 rd, float hopperAmt, float tH
       tn = tStart + dtHit;
       kn = CP + 2000;
       vec3 nCand = normalize(sx * gLocal.x + ax * gLocal.y + sz * gLocal.z);
+      float hopNBlend = smoothstep(0.0, 0.45, hopperAmt);
+      nCand = normalize(mix(origN, nCand, hopNBlend));
       if (dot(nCand, rd) > -0.06) {
         nCand = normalize(nCand - rd * (dot(nCand, rd) + 0.06));
       }
@@ -1721,15 +1726,6 @@ vec3 faceNormal(int id, int k, vec3 n, vec3 p, float rough, float footprint, flo
     }
     n = normalize(n + striTan * (u_striations * rawSurfScale * (1.0 - 0.35 * dither) * mix(0.055, 0.125, g1) * amp * ridge));
   }
-  float effHopper = u_hopper * pow(1.0 - dither, 1.5);
-  if (effHopper > 0.0 && k < 18) {
-    float r = max(body(id, 2).w, 0.02);
-    float u = dEdge / (r * 0.22);
-    float riser = smoothstep(0.72, 0.96, fract(u)) - smoothstep(0.0, 0.18, fract(u));
-    float mask = smoothstep(0.06, 0.22, dEdge / r) * (1.0 - smoothstep(0.85, 1.15, dEdge / r));
-    vec3 tangent = normalize(cross(n, ax.xyz) + ax.xyz * 0.35);
-    n = normalize(n + tangent * (effHopper * 0.14 * riser * mask));
-  }
   if (rough > 0.0) {
     float L = max(ax.w, 0.1);
     vec3 pRaw = p - body(id, 3).xyz;
@@ -2155,15 +2151,15 @@ vec3 shadeMetallicCrystal(int id, int k, vec3 pEntry, vec3 rd, vec3 nRefl, float
   vec3 neighborCol = vec3(0.0);
   float seamAO = 1.0;
 
-  if (u_hopper > 0.15 && hopperStepIdx > 0.4) {
+  if (u_hopper > 0.01 && hopperStepIdx > 0.05) {
     // 90° Greek-key step walls reflect adjacent terrace colors into each other
-    float cornerBounceW = smoothstep(0.3, 3.5, hopperStepIdx) * (0.42 + 0.45 * (1.0 - cosTheta));
+    float cornerBounceW = smoothstep(0.05, 0.35, u_hopper) * smoothstep(0.15, 3.5, hopperStepIdx) * (0.42 + 0.45 * (1.0 - cosTheta));
     vec3 bounceOxide = evalBismuthOxidePalette(opd + 0.22);
     reflLight += bounceOxide * f_ambient * (0.26 * cornerBounceW);
   }
 
-  // 1 secondary metallic reflection bounce max (capped to 3 blocks when u_hopper > 0.5)
-  int nc = clamp(int(f_crystals + 0.5), 0, (u_hopper > 0.5) ? 3 : MAX_CRYSTALS);
+  // 1 secondary metallic reflection bounce max
+  int nc = clamp(int(f_crystals + 0.5), 0, MAX_CRYSTALS);
   float bestBT = 1e9;
   int bestBId = 0, bestBK = 0;
   for (int bi = 0; bi < nc; bi++) {
@@ -2241,7 +2237,8 @@ vec3 shadeBehindRay(vec3 roIn, vec3 rdIn, int skipIn, float travIn, float jitter
   float bRough = effFrost * smoothstep(bFrostRoll - 0.15, bFrostRoll + 0.15, effFrostShare);
   vec3 bRawN = (bK < CP) ? body(bId, PA + bK).xyz : bVoidN;
   vec3 bN = faceNormal(bId, bK < CP ? bK : 18, bRawN, bP, bRough, travB * f_pixAngle, 1.0);
-  if (u_metallic >= 0.88 || u_hopper > 0.5) {
+  float bMetalW = clamp(u_metallic, 0.0, 1.0);
+  if (bMetalW >= 0.995) {
     vec3 mCol = shadeMetallicCrystal(bId, bK, bP, rdIn, bN, bRough, 1.0, travB * f_pixAngle);
     return mix(bEnvCol, mCol, bAlpha);
   }
@@ -2276,6 +2273,10 @@ vec3 shadeBehindRay(vec3 roIn, vec3 rdIn, int skipIn, float travIn, float jitter
   vec3 axisBg = mix(lin(u_studioEdge) * 0.14, f_glow * 1.65 + f_ambient * 0.22, glowG);
   endEnv = max(endEnv, axisBg);
   colB += thrB * endEnv;
+  if (bMetalW > 0.005) {
+    vec3 mCol = shadeMetallicCrystal(bId, bK, bP, rdIn, bN, bRough, 1.0, travB * f_pixAngle);
+    colB = mix(colB, mCol, bMetalW);
+  }
   return mix(bEnvCol, colB, bAlpha);
 }
 
@@ -2492,7 +2493,8 @@ void main() {
   float lastRough = 0.0;
   float lastFireAlpha = 0.0;
   float lastHgt = 0.75;
-  int depth = int(u_depth + 0.5), bounces = int(u_bounces + 0.5);
+  float fDepth = max(1.0, u_depth);
+  int depth = int(ceil(fDepth)), bounces = int(ceil(u_bounces));
   if (u_isMobile > 0.5) {
     bounces = min(bounces, 3);
   }
@@ -2505,7 +2507,7 @@ void main() {
   bool primaryEvaluated = false;
 
   for (int hop = 0; hop < maxHops; hop++) {
-    if (hopCost >= float(depth) || dot(thr, thr) < 1e-6) break;
+    if (hopCost >= fDepth || dot(thr, thr) < 1e-6) break;
     int id, k; float t, tfHit;
     vec3 voidWallN = vec3(0.0, 1.0, 0.0);
     float voidBorder = 1e9, voidSeam = 1e9;
@@ -2513,10 +2515,10 @@ void main() {
 
     float rawAmt = clamp(u_rawAmount, 0.0, 2.0);
     float rawSurfScale = mix(0.15, 1.0, clamp(rawAmt / 0.4, 0.0, 1.0)) * mix(1.0, 1.65, max(0.0, (rawAmt - 0.4) / 1.6));
-    float effEdgeMacro = max(0.0, u_patinaMacro * u_edgeMacro * rawSurfScale);
+    float effEdgeMacro = max(0.0, u_patinaMacro * u_edgeMacro * rawSurfScale) * (1.0 - smoothstep(0.20, 0.55, u_hopper));
     float edgeSilAlpha = 1.0;
     vec3 chipFacetN = vec3(0.0, 1.0, 0.0);
-    if (!primaryEvaluated && u_hopper <= 0.5 && (u_edgeChips * effEdgeMacro > 0.005 || u_edgeIrregularity * effEdgeMacro > 0.005 || u_edgeWear * effEdgeMacro > 0.005) && k < CP) {
+    if (!primaryEvaluated && (u_edgeChips * effEdgeMacro > 0.005 || u_edgeIrregularity * effEdgeMacro > 0.005 || u_edgeWear * effEdgeMacro > 0.005) && k < CP) {
       if (!applyTinyEdgeChip(id, k, ro, rd, t, tfHit, k, edgeSilAlpha, chipFacetN)) {
         skipMask |= (1 << id);
         ro += rd * max(t, 0.0);
@@ -2533,7 +2535,7 @@ void main() {
     float rawAlpha = clamp(body(id, 2).x, 0.0, 1.0) * edgeSilAlpha;
     primaryEvaluated = true;
 
-    float budgetWeight = clamp(float(depth) - hopCost, 0.0, 1.0);
+    float budgetWeight = clamp(fDepth - hopCost, 0.0, 1.0);
     float alpha = rawAlpha * rawAlpha * (3.0 - 2.0 * rawAlpha) * budgetWeight;
     if (alpha <= 2e-3) {
       ro = pEntry;
@@ -2580,7 +2582,7 @@ void main() {
     vec3 adjN = rawFaceN;
     int ridgeKLo = -1, ridgeKHi = -1;
     float metalW = clamp(u_metallic, 0.0, 1.0);
-    bool isOpaqueMetal = (metalW >= 0.88 || (u_hopper > 0.5 && metalW >= 0.5));
+    bool isOpaqueMetal = (metalW >= 0.995 || (u_hopper > 0.85 && metalW >= 0.92));
     bool needDEdge = !(isOpaqueMetal && u_hopper > 0.5) && (((hop == 0) && (u_patina > 0.01 || u_occlusion > 0.01 || u_hopper > 0.0 || u_iridescence > 0.0 || u_bloom > 0.0)) || (g1 > 0.001 && u_edgeWear > 0.0));
     float dEdge = needDEdge ? edgeDist(id, k, p, adjN, ridgeKLo, ridgeKHi) : 1.0;
 
@@ -2636,6 +2638,10 @@ void main() {
       }
       ro = pEntry;
       continue;
+    } else if (hop == 0 && metalW > 0.005) {
+      // Smoothly blend opaque conductor reflection at primary surface without compounding inside internal bounces
+      col += thr * (alpha * metalW) * metalSurfCol;
+      thr *= (1.0 - alpha * metalW);
     }
     bool isChippedFacet = isTinyEdgeChip || isCornerVertexChip || isCornerNip;
     float effGlare = (isOcclusionVoid ? min(1.0, glare * 1.15 + 0.12) : (isChippedFacet ? (glare * 0.65) : glare)) * (1.0 - 0.30 * dither);
@@ -2801,9 +2807,8 @@ void main() {
     hopCol += hopThr * (Fo * exitRefl * exitReflW + exitFlash);
     hopThr *= mix(1.0 - Fo * (0.3 + 0.7 * glare * (1.0 - 0.35 * dither)), 1.0 - Fo, g1);
 
-    if (metalW > 0.005) {
-      hopCol = mix(hopCol, metalSurfCol, metalW);
-      hopThr *= (1.0 - metalW);
+    if (hop > 0 && metalW > 0.005) {
+      hopCol = mix(hopCol, metalSurfCol, metalW * 0.35);
     }
 
     if (alpha < 0.999) {

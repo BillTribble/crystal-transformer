@@ -297,7 +297,7 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
 
       const rawT = Math.min(1, morphState.elapsed / duration);
       morphState.progress = Number(rawT.toFixed(4));
-      const k = rawT * rawT * rawT * (rawT * (rawT * 6 - 15) + 10);
+      const k = 0.5 - 0.5 * Math.cos(Math.PI * rawT);
       cluster.morphHabitFrom = morphState.fromMap.habit || P.habit?.value;
       cluster.morphHabitTo = morphState.toMap.habit || P.habit?.value;
       cluster.morphHabitBlend = k;
@@ -332,6 +332,16 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
           const hVal = ((fromV + dh * k) % 360 + 360) % 360;
           store.setSmooth(p, hVal);
           p.base = p.value;
+        } else if (p.key === 'doubleTerminated') {
+          const f0 = typeof fromV === 'boolean' ? (fromV ? 1.0 : 0.0) : Number(fromV);
+          const f1 = typeof toV === 'boolean' ? (toV ? 1.0 : 0.0) : Number(toV);
+          const dtVal = f0 + (f1 - f0) * k;
+          cluster.doubleTermBlend = dtVal;
+          const nextBool = dtVal >= 0.5;
+          if (p.value !== nextBool) {
+            store.setSmooth(p, nextBool);
+            p.base = p.value;
+          }
         } else if (p.type === 'select' || p.type === 'bool') {
           const nextChoice = k >= 0.5 ? toV : fromV;
           if (p.value !== nextChoice) {

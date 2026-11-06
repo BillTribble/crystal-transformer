@@ -313,12 +313,15 @@ const cubeOffR = new Float32Array(18), cubeOffL = new Float32Array(18);
  * morphologies (`Bi`, cantilevered wings, tall pagoda spires, L-brackets, parallel-ribbed slabs & fin bars).
  */
 function computeCubeBlockPlanes(
-  hopperBlend, morphType, chamfer, faceJitterAmt, fs, L, r,
+  hopperBlend, morphType, chamfer, faceJitterAmt, fs, L, r, doubleTermBlend,
   outLx, outLy, outLz, outOffR, outOffL
 ) {
-  const isoScale = Math.max(1.05, Math.min(2.15, (0.36 * L) / Math.max(r, 1e-4)));
-  const cosOct = 0.57735027;
-  const sinOct = 0.81649658;
+  const safeL = Math.max(L, 1e-4);
+  const safeR = Math.max(r, 1e-4);
+  const dtW = typeof doubleTermBlend === 'number'
+    ? Math.max(0.0, Math.min(1.0, doubleTermBlend))
+    : 0.0;
+  const isoScale = Math.max(1.05, Math.min(4.2, (0.36 * safeL) / safeR));
   const cos45 = 0.70710678;
   const cubeHalf = isoScale * 0.92;
 
@@ -341,45 +344,70 @@ function computeCubeBlockPlanes(
   const hy = cubeHalf * scaleY;
   const hz = cubeHalf * scaleZ;
 
-  // Keep octahedral {111} and dodecahedral {110} planes out near the true (hx, hy, hz) vertices/edges
-  // so non-cubic spires, wings, and flat slabs retain crisp 90-degree corners without 45-degree clipping.
-  const octDist = (hx + hy + hz) * cosOct * (0.985 - 0.08 * chamfer);
+  // Express cube offsets in L-units (`outOffL`) with small `outOffR` so plane smoothing is linear across r/L changes.
+  const rOverL = safeR / safeL;
   const fCubeVar = (k, scale = 0.07) => Math.max(0.88, Math.min(1.12, 1 + faceJitterAmt * scale * fs[k]));
+
+  // Slots 0..6: Lateral side faces (0, 2, 4, 6 = cardinal +sx, +sz, -sx, -sz read by shader.js; 1, 3, 5 = vertical {110} corner bevels)
   for (let m = 0; m < 4; m++) {
     const aCube = m * 0.5 * Math.PI;
     const kCube = m * 2;
     const isXFace = (m & 1) === 0;
     const faceHalf = isXFace ? hx : hz;
     const rhoShear = (isXFace ? biTrapY : -0.042) * hopperBlend;
+    const dSideL = faceHalf * fCubeVar(kCube, 0.08) * rOverL;
     setLocalPlane(
       outLx, outLy, outLz, outOffR, outOffL, kCube,
       Math.cos(aCube), rhoShear, Math.sin(aCube),
-      faceHalf * fCubeVar(kCube, 0.08), 0.52 * rhoShear
+      0.0, dSideL + 0.52 * rhoShear
     );
-    const aOct = (m + 0.5) * 0.5 * Math.PI;
-    const kBotOct = m * 2 + 1;
+    if (m < 3) {
+      const aCorner = (m + 0.5) * 0.5 * Math.PI;
+      const kCorner = m * 2 + 1;
+      const cornerDistL = (hx + hz) * cos45 * (0.988 - 0.056 * chamfer) * fCubeVar(kCorner, 0.05) * rOverL;
+      setLocalPlane(
+        outLx, outLy, outLz, outOffR, outOffL, kCorner,
+        Math.cos(aCorner), rhoShear, Math.sin(aCorner),
+        0.0, cornerDistL + 0.52 * rhoShear
+      );
+    }
+  }
+
+  // Slots 8..13: 6 TOP bevel/crown planes (ly > 0) matching the 6 top termination slots of computeSystemPlanes
+  for (let idx = 0; idx < 6; idx++) {
+    const kTop = 8 + idx;
+    const aTop = (idx * TAU) / 6;
+    const faceHalf = Math.abs(Math.cos(aTop)) * hx + Math.abs(Math.sin(aTop)) * hz;
+    const dodDistL = (faceHalf + hy) * cos45 * (0.988 - 0.056 * chamfer) * fCubeVar(kTop, 0.05) * rOverL;
     setLocalPlane(
-      outLx, outLy, outLz, outOffR, outOffL, kBotOct,
-      sinOct * Math.cos(aOct), -cosOct, sinOct * Math.sin(aOct),
-      octDist * fCubeVar(kBotOct, 0.05), -0.52 * cosOct
-    );
-    const kTopOct = 8 + m * 2;
-    setLocalPlane(
-      outLx, outLy, outLz, outOffR, outOffL, kTopOct,
-      sinOct * Math.cos(aOct), cosOct, sinOct * Math.sin(aOct),
-      octDist * fCubeVar(kTopOct, 0.05), 0.52 * cosOct
-    );
-    const kDod = 8 + m * 2 + 1;
-    const dodDist = (faceHalf + hy) * cos45 * (0.988 - 0.056 * chamfer);
-    setLocalPlane(
-      outLx, outLy, outLz, outOffR, outOffL, kDod,
-      cos45 * Math.cos(aCube), cos45, cos45 * Math.sin(aCube),
-      dodDist * fCubeVar(kDod, 0.05), 0.52 * cos45
+      outLx, outLy, outLz, outOffR, outOffL, kTop,
+      cos45 * Math.cos(aTop), cos45, cos45 * Math.sin(aTop),
+      0.0, dodDistL + 0.52 * cos45
     );
   }
-  const topBotHalf = hy * fCubeVar(16, 0.06);
-  setLocalPlane(outLx, outLy, outLz, outOffR, outOffL, 16, 0, -1, 0, topBotHalf, -0.52);
-  setLocalPlane(outLx, outLy, outLz, outOffR, outOffL, 17, 0, 1, 0, topBotHalf, 0.52);
+
+  // Slots 7, 14, 15, 16: 4 BOTTOM planes (ly < 0) — Slot 16 is exact (0, -1, 0) read as `dyn` by shader.js;
+  // Slots 7, 14, 15 are matching bottom planes with tiny outward azimuths so the 2-pole bottom pyramid
+  // smoothly flattens and rises into the flat bottom of the cube/hopper block without ever flipping normal sign.
+  const topBotHalfL = hy * fCubeVar(16, 0.06) * rOverL;
+  const botOffL = (topBotHalfL - 0.52) * (1.0 - dtW) + (0.42 * dtW);
+  const botSlots = [7, 14, 15];
+  const botAz = [0, 0.5 * Math.PI, Math.PI];
+  const sinBot = 0.02;
+  const cosBot = Math.sqrt(1 - sinBot * sinBot);
+  for (let b = 0; b < 3; b++) {
+    const aB = botAz[b];
+    const fHalfL = ((b & 1) === 0 ? hx : hz) * rOverL;
+    setLocalPlane(
+      outLx, outLy, outLz, outOffR, outOffL, botSlots[b],
+      sinBot * Math.cos(aB), -cosBot, sinBot * Math.sin(aB),
+      0.0, botOffL * cosBot + sinBot * fHalfL * 0.5
+    );
+  }
+  setLocalPlane(outLx, outLy, outLz, outOffR, outOffL, 16, 0, -1, 0, 0.0, botOffL);
+
+  // Slot 17: Exact TOP (0, +1, 0) plane read as `dyp` by shader.js
+  setLocalPlane(outLx, outLy, outLz, outOffR, outOffL, 17, 0, 1, 0, 0.0, topBotHalfL + 0.52);
 }
 
 /**
@@ -394,65 +422,96 @@ function computeCubeBlockPlanes(
  *   7. Triclinic (a != b != c, alpha != beta != gamma != 90°: non-90° skewed bladed prism + doubly-oblique asymmetric wedge)
  */
 function computeSystemPlanes(
-  habit, symVal, taperLy, latScale, nodeTilt, chamfer, dom, faceJitterAmt, tipJitterAmt, fs, L, r, isDoubleTerm,
+  habit, symVal, taperLy, latScale, nodeTilt, chamfer, dom, faceJitterAmt, tipJitterAmt, fs, L, r, doubleTermBlend,
   outLx, outLy, outLz, outOffR, outOffL
 ) {
   const sys = resolveHabitSystem(habit);
   const fVar = (k, scale = 0.35) => Math.max(0.55, Math.min(1.45, 1 + faceJitterAmt * scale * fs[k]));
   const tVar = (k, scale = 0.28) => tipJitterAmt * scale * fs[8 + k];
-  const botExt = isDoubleTerm ? 0.42 : 0.02;
-  if (isDoubleTerm) taperLy *= 0.22;
+  const dtW = typeof doubleTermBlend === 'number'
+    ? Math.max(0.0, Math.min(1.0, doubleTermBlend))
+    : (doubleTermBlend ? 1.0 : 0.0);
+  const botExt = 0.02 + 0.40 * dtW;
+  taperLy *= (1.0 - 0.78 * dtW);
+  const tableTop = Math.max(0.76, 1.14 - 0.50 * Math.max(0, chamfer));
 
   if (sys === 'Cubic / Isometric') {
     // Equant isometric polyhedron (a = b = c, alpha = beta = gamma = 90°) centered at y = 0.52 * L
-    const isoScale = Math.max(1.18, Math.min(2.25, (0.34 * L) / Math.max(r, 1e-4)));
+    const isoScale = Math.max(1.18, Math.min(3.8, (0.34 * L) / Math.max(r, 1e-4)));
     const cosOct = 0.57735027; // 1 / sqrt(3)
     const sinOct = 0.81649658; // sqrt(2 / 3)
     const cos45 = 0.70710678;
     const cubeDist = isoScale * Math.max(0.96, 1.38 - 0.52 * chamfer);
     const dodDist = isoScale * Math.max(1.02, 1.24 - 0.24 * chamfer);
+    // Slots 0..6: 4 vertical {100} cube faces (0, 2, 4, 6) + 3 vertical {110} bevels (1, 3, 5)
     for (let m = 0; m < 4; m++) {
-      const aCube = m * 0.5 * Math.PI; // 0, 90, 180, 270 deg: vertical {100}/{001} cube faces
+      const aCube = m * 0.5 * Math.PI;
       const kCube = m * 2;
       setLocalPlane(
         outLx, outLy, outLz, outOffR, outOffL, kCube,
         Math.cos(aCube), 0, Math.sin(aCube),
         cubeDist * fVar(kCube, 0.14), 0
       );
-      const aOct = (m + 0.5) * 0.5 * Math.PI; // 45, 135, 225, 315 deg: octahedral {111} faces
-      const kBotOct = m * 2 + 1;
-      const dBot = isoScale * (1 + 0.10 * tipJitterAmt * fs[kBotOct]);
-      setLocalPlane(
-        outLx, outLy, outLz, outOffR, outOffL, kBotOct,
-        sinOct * Math.cos(aOct), -cosOct, sinOct * Math.sin(aOct),
-        dBot, -0.52 * cosOct
-      );
-      const kTopOct = 8 + m * 2;
+      if (m < 3) {
+        const aCorner = (m + 0.5) * 0.5 * Math.PI;
+        const kCorner = m * 2 + 1;
+        setLocalPlane(
+          outLx, outLy, outLz, outOffR, outOffL, kCorner,
+          Math.cos(aCorner), 0, Math.sin(aCorner),
+          dodDist * fVar(kCorner, 0.12), 0
+        );
+      }
+    }
+    // Slots 8..13: 4 top {111} octahedral faces (8..11) + 2 top {110} dodecahedral bevels (12..13)
+    for (let m = 0; m < 4; m++) {
+      const aOct = (m + 0.5) * 0.5 * Math.PI;
+      const kTopOct = 8 + m;
       const dTop = isoScale * (1 + 0.10 * tipJitterAmt * fs[kTopOct]);
       setLocalPlane(
         outLx, outLy, outLz, outOffR, outOffL, kTopOct,
         sinOct * Math.cos(aOct), cosOct, sinOct * Math.sin(aOct),
         dTop, 0.52 * cosOct
       );
-      const kDod = 8 + m * 2 + 1; // {110} rhombic dodecahedral bevels
+    }
+    for (let m = 0; m < 2; m++) {
+      const aCube = m * Math.PI;
+      const kDod = 12 + m;
       setLocalPlane(
         outLx, outLy, outLz, outOffR, outOffL, kDod,
         cos45 * Math.cos(aCube), cos45, cos45 * Math.sin(aCube),
         dodDist * fVar(kDod, 0.12), 0.52 * cos45
       );
     }
-    setLocalPlane(outLx, outLy, outLz, outOffR, outOffL, 16, 0, -1, 0, cubeDist, -0.52);
+    // Slots 7, 14, 15, 16: 4 bottom {111} octahedral faces (ly < 0)
+    const botSlots = [7, 14, 15, 16];
+    for (let m = 0; m < 4; m++) {
+      const aOct = (m + 0.5) * 0.5 * Math.PI;
+      const kBot = botSlots[m];
+      const dBot = isoScale * (1 + 0.10 * tipJitterAmt * fs[m * 2 + 1]);
+      setLocalPlane(
+        outLx, outLy, outLz, outOffR, outOffL, kBot,
+        sinOct * Math.cos(aOct), -cosOct, sinOct * Math.sin(aOct),
+        dBot, -0.52 * cosOct
+      );
+    }
+    // Slot 17: Top +ax cube face
     setLocalPlane(outLx, outLy, outLz, outOffR, outOffL, 17, 0, 1, 0, cubeDist, 0.52);
     return;
   }
 
   if (sys === 'Hexagonal') {
-    // 6-fold hexagonal prism {10-10} + {10-11} bipyramid bevels + pointed 6-sided bottom termination when double-terminating
+    // 6-fold hexagonal prism {10-10} + {10-11} bipyramid bevels + continuous pointed bottom termination
+    // Monotonically ordered slots k = 0..6 ([0°, 60°, 90°, 120°, 180°, 240°, 300°] -> [0°, 45°, 90°, 135°, 180°, 225°, 270°])
     const hexTaper = taperLy * 0.45;
     const hexLat = Math.sqrt(Math.max(0.1, 1 - hexTaper * hexTaper));
-    for (let k = 0; k < 6; k++) {
-      const a = (k * TAU) / 6;
-      const radR = 1.0 * fVar(k, 0.20);
+    const sqBlend = smooth01(Math.max(0, Math.min(1, (6.0 - symVal) / 2.0)));
+    const hexAz = [0, 60 * DEG, 90 * DEG, 120 * DEG, 180 * DEG, 240 * DEG, 300 * DEG];
+    const sqAz  = [0, 45 * DEG, 90 * DEG, 135 * DEG, 180 * DEG, 225 * DEG, 270 * DEG];
+    const hexR  = [1.0, 1.0, 1.16, 1.0, 1.0, 1.0, 1.0];
+    const sqR   = [0.94, 1.14 - 0.16 * chamfer, 0.94, 1.14 - 0.16 * chamfer, 0.94, 1.14 - 0.16 * chamfer, 0.94];
+    for (let k = 0; k < 7; k++) {
+      const a = hexAz[k] + (sqAz[k] - hexAz[k]) * sqBlend;
+      const radR = (hexR[k] + (sqR[k] - hexR[k]) * sqBlend) * fVar(k, 0.20);
       setLocalPlane(
         outLx, outLy, outLz, outOffR, outOffL, k,
         hexLat * Math.cos(a), hexTaper, hexLat * Math.sin(a),
@@ -464,52 +523,34 @@ function computeSystemPlanes(
     const tableH = Math.max(0.68, 0.84 - 0.22 * chamfer);
     for (let j = 0; j < 6; j++) {
       const a = (j * TAU) / 6;
-      const offR = (isDoubleTerm ? (0.14 - 0.08 * chamfer) : (0.34 - 0.16 * chamfer)) * sinB + tVar(j, 0.16);
+      const offR = ((0.34 - 0.16 * chamfer) * (1 - dtW) + (0.14 - 0.08 * chamfer) * dtW) * sinB + tVar(j, 0.16);
       setLocalPlane(
         outLx, outLy, outLz, outOffR, outOffL, 8 + j,
         sinB * Math.cos(a), cosB, sinB * Math.sin(a),
         offR, tableH * cosB
       );
     }
-    if (isDoubleTerm) {
-      const botSlots = [6, 7, 14, 15, 16, 17];
-      for (let j = 0; j < 6; j++) {
-        const a = (j * TAU) / 6;
-        const offR = 0.06 * sinB + tVar(j, 0.14);
-        setLocalPlane(
-          outLx, outLy, outLz, outOffR, outOffL, botSlots[j],
-          sinB * Math.cos(a), -cosB, sinB * Math.sin(a),
-          offR, botExt * cosB
-        );
-      }
-    } else {
-      for (let m = 0; m < 2; m++) {
-        const k = 6 + m;
-        const a = (m * Math.PI) + Math.PI / 6;
-        setLocalPlane(
-          outLx, outLy, outLz, outOffR, outOffL, k,
-          hexLat * Math.cos(a), hexTaper, hexLat * Math.sin(a),
-          (1.20 - 0.12 * chamfer) * fVar(k, 0.15), 0.5 * hexTaper
-        );
-      }
-      for (let m = 0; m < 3; m++) {
-        const a = (m * TAU) / 3 + Math.PI / 6;
-        setLocalPlane(
-          outLx, outLy, outLz, outOffR, outOffL, 14 + m,
-          sinB * Math.cos(a), -cosB, sinB * Math.sin(a),
-          0.08 * sinB, botExt * cosB
-        );
-      }
-      setLocalPlane(outLx, outLy, outLz, outOffR, outOffL, 17, 0, 1, 0, 0, tableH);
+    const botSlots = [7, 14, 15, 16];
+    const botJ = [0, 1, 3, 5];
+    for (let b = 0; b < 4; b++) {
+      const j = botJ[b];
+      const a = (j * TAU) / 6;
+      const offR = (0.08 - 0.02 * dtW) * sinB + tVar(j, 0.14);
+      setLocalPlane(
+        outLx, outLy, outLz, outOffR, outOffL, botSlots[b],
+        sinB * Math.cos(a), -cosB, sinB * Math.sin(a),
+        offR, botExt * cosB
+      );
     }
+    setLocalPlane(outLx, outLy, outLz, outOffR, outOffL, 17, 0, 1, 0, 0, tableH + 0.18 * dtW);
     return;
   }
 
   if (sys === 'Tetragonal') {
     // 4-fold c-axis symmetry (a = b != c, alpha = beta = gamma = 90°): square {100} prism + {110} corner chamfers + top & bottom {101} bipyramids
     const cornerChamfer = 1.14 - 0.22 * chamfer;
-    for (let k = 0; k < 8; k++) {
-      const a = (k * TAU) / 8; // 0, 45, 90, 135, 180, 225, 270, 315 deg
+    for (let k = 0; k < 7; k++) {
+      const a = (k * TAU) / 8; // 0, 45, 90, 135, 180, 225, 270 deg (Slot 6 = 270°)
       const isCorner = (k & 1) === 1;
       const baseR = isCorner ? cornerChamfer : 0.90;
       setLocalPlane(
@@ -522,7 +563,7 @@ function computeSystemPlanes(
     const c101 = Math.cos(t101), s101 = Math.sin(t101);
     const t211 = Math.min(78 * DEG, t101 + 12 * DEG);
     const c211 = Math.cos(t211), s211 = Math.sin(t211);
-    const topAzIndices = [0, 2, 4, 6, 1, 5];
+    const topAzIndices = [0, 1, 2, 4, 5, 6];
     for (let idx = 0; idx < 6; idx++) {
       const j = topAzIndices[idx];
       const a = (j * TAU) / 8;
@@ -536,15 +577,17 @@ function computeSystemPlanes(
         offR, ct
       );
     }
-    // 4-sided pointed bottom {10-1} bipyramid termination facets in slots 14..17
+    // 4-sided pointed bottom {10-1} bipyramid termination facets in slots [7, 14, 15, 16]
+    const botSlots = [7, 14, 15, 16];
     for (let m = 0; m < 4; m++) {
       const a = (m * TAU) / 4;
       setLocalPlane(
-        outLx, outLy, outLz, outOffR, outOffL, 14 + m,
+        outLx, outLy, outLz, outOffR, outOffL, botSlots[m],
         s101 * Math.cos(a), -c101, s101 * Math.sin(a),
         0.06 + tVar(m, 0.14), botExt * c101
       );
     }
+    setLocalPlane(outLx, outLy, outLz, outOffR, outOffL, 17, 0, 1, 0, 0, tableTop);
     return;
   }
 
@@ -553,7 +596,7 @@ function computeSystemPlanes(
     // Short a-axis (0.68 r) along sx, wide b-axis (1.36 r) along sz, rhombic prism {110} + top & bottom macrodomes/brachydomes
     const orthoAz = [0, 31 * DEG, 90 * DEG, 149 * DEG, 180 * DEG, 211 * DEG, 270 * DEG, 329 * DEG];
     const orthoRadii = [0.70, 0.82, 1.34, 0.82, 0.70, 0.82, 1.34, 0.82];
-    for (let k = 0; k < 8; k++) {
+    for (let k = 0; k < 7; k++) {
       const a = orthoAz[k];
       setLocalPlane(
         outLx, outLy, outLz, outOffR, outOffL, k,
@@ -564,7 +607,7 @@ function computeSystemPlanes(
     const tMacro = Math.min(76 * DEG, nodeTilt + 10 * DEG); // Steep macrodome {101} at 0°, 180°
     const tBrachy = Math.max(28 * DEG, nodeTilt - 16 * DEG); // Shallow chisel brachydome {011} at 90°, 270°
     const tBip = nodeTilt; // Rhombic bipyramid {111} at corners
-    const topIdx = [0, 2, 4, 6, 1, 5];
+    const topIdx = [0, 1, 2, 4, 5, 6];
     for (let idx = 0; idx < 6; idx++) {
       const j = topIdx[idx];
       const a = orthoAz[j];
@@ -584,7 +627,8 @@ function computeSystemPlanes(
         baseOffR + tVar(j, 0.18), ct
       );
     }
-    // 4-sided pointed bottom rhombic dome/bipyramid termination in slots 14..17
+    // 4-sided pointed bottom rhombic dome/bipyramid termination in slots [7, 14, 15, 16]
+    const botSlots = [7, 14, 15, 16];
     for (let m = 0; m < 4; m++) {
       const j = m * 2;
       const a = orthoAz[j];
@@ -592,11 +636,12 @@ function computeSystemPlanes(
       const ct = Math.cos(tj), st = Math.sin(tj);
       const baseOffR = (j === 0 || j === 4) ? 0.05 : 0.14;
       setLocalPlane(
-        outLx, outLy, outLz, outOffR, outOffL, 14 + m,
+        outLx, outLy, outLz, outOffR, outOffL, botSlots[m],
         st * Math.cos(a), -ct, st * Math.sin(a),
         baseOffR + tVar(m, 0.14), botExt * ct
       );
     }
+    setLocalPlane(outLx, outLy, outLz, outOffR, outOffL, 17, 0, 1, 0, 0, tableTop);
     return;
   }
 
@@ -605,7 +650,7 @@ function computeSystemPlanes(
     // Flattened lath prism + obliquely slanted top & bottom clinodome terminations
     const monoAz = [0, 38 * DEG, 90 * DEG, 142 * DEG, 180 * DEG, 218 * DEG, 270 * DEG, 322 * DEG];
     const monoRadii = [0.60, 0.82, 1.38, 0.82, 0.60, 0.82, 1.38, 0.82];
-    for (let k = 0; k < 8; k++) {
+    for (let k = 0; k < 7; k++) {
       const a = monoAz[k];
       setLocalPlane(
         outLx, outLy, outLz, outOffR, outOffL, k,
@@ -614,7 +659,7 @@ function computeSystemPlanes(
       );
     }
     const betaShear = 0.44; // sin(26°) monoclinic inclination along +sx (clino-axis a)
-    const topIdx = [0, 2, 4, 6, 1, 5];
+    const topIdx = [0, 1, 2, 4, 5, 6];
     for (let idx = 0; idx < 6; idx++) {
       const j = topIdx[idx];
       const a = monoAz[j];
@@ -633,6 +678,7 @@ function computeSystemPlanes(
         offR, 0.90 * normLy
       );
     }
+    const botSlots = [7, 14, 15, 16];
     for (let m = 0; m < 4; m++) {
       const j = m * 2;
       const a = monoAz[j];
@@ -645,11 +691,12 @@ function computeSystemPlanes(
       const inv = 1 / (Math.hypot(lx, ly, lz) || 1);
       const normAbsLy = Math.abs(ly * inv);
       setLocalPlane(
-        outLx, outLy, outLz, outOffR, outOffL, 14 + m,
+        outLx, outLy, outLz, outOffR, outOffL, botSlots[m],
         lx * inv, ly * inv, lz * inv,
         0.12 + tVar(m, 0.16), botExt * normAbsLy
       );
     }
+    setLocalPlane(outLx, outLy, outLz, outOffR, outOffL, 17, 0, 1, 0, 0, tableTop);
     return;
   }
 
@@ -659,7 +706,7 @@ function computeSystemPlanes(
     const tricAz = [0, 34 * DEG, 70 * DEG, 128 * DEG, 180 * DEG, 214 * DEG, 250 * DEG, 308 * DEG];
     const tricRadii = [0.52, 0.78, 1.42, 1.06, 0.52, 0.78, 1.42, 1.06];
     const tricLySkew = [0.09, 0.08, 0.12, -0.07, -0.09, -0.08, -0.12, 0.07];
-    for (let k = 0; k < 8; k++) {
+    for (let k = 0; k < 7; k++) {
       const a = tricAz[k];
       const ly = taperLy + tricLySkew[k];
       const ls = Math.sqrt(Math.max(0.1, 1 - ly * ly));
@@ -670,7 +717,7 @@ function computeSystemPlanes(
       );
     }
     const tricTiltOffsets = [8, -2, -14, 12, -18, -6, 6, -10];
-    const topIdx = [0, 2, 4, 6, 1, 5];
+    const topIdx = [0, 1, 2, 4, 5, 6];
     for (let idx = 0; idx < 6; idx++) {
       const j = topIdx[idx];
       const a = tricAz[j];
@@ -688,6 +735,7 @@ function computeSystemPlanes(
         offR, 0.88 * normLy
       );
     }
+    const botSlots = [7, 14, 15, 16];
     for (let m = 0; m < 4; m++) {
       const j = m * 2;
       const a = tricAz[j];
@@ -699,27 +747,35 @@ function computeSystemPlanes(
       const inv = 1 / (Math.hypot(lx, ly, lz) || 1);
       const normAbsLy = Math.abs(ly * inv);
       setLocalPlane(
-        outLx, outLy, outLz, outOffR, outOffL, 14 + m,
+        outLx, outLy, outLz, outOffR, outOffL, botSlots[m],
         lx * inv, ly * inv, lz * inv,
         0.14 + tVar(m, 0.16), botExt * normAbsLy
       );
     }
+    setLocalPlane(outLx, outLy, outLz, outOffR, outOffL, 17, 0, 1, 0, 0, tableTop);
     return;
   }
 
   // Default: Trigonal (Rhombohedral — 3-fold c-axis symmetry, e.g. Quartz, Corundum, Tourmaline)
-  // Smoothly blends between 3-sided rounded ditrigonal Tourmaline prism (symVal ≈ 3) and 6-sided Quartz prism (symVal ≈ 6)
-  const triRound = smooth01(Math.max(0, Math.min(1, (4.8 - symVal) / 1.5)));
-  for (let k = 0; k < 6; k++) {
-    const a = (k * TAU) / 6;
-    const isMinorPrism = (k & 1) === 1;
-    const baseR = isMinorPrism
-      ? (1.0 + 0.16 * triRound + 0.04 * dom)
-      : (1.0 - 0.16 * triRound - 0.04 * dom);
+  // Smoothly blends across 3-sided Tourmaline (symVal ≈ 3), 4-sided square prism (symVal ≈ 4), and 6-sided Quartz prism (symVal ≈ 6)
+  // using monotonically ordered azimuth slots k = 0..6 ([0°, 60°, 90°, 120°, 180°, 240°, 300°] -> [0°, 45°, 90°, 135°, 180°, 225°, 270°]).
+  const triRound = smooth01(Math.max(0, Math.min(1, (3.8 - symVal) / 1.0)));
+  const sqBlend = smooth01(Math.max(0, Math.min(1, (6.0 - symVal) / 2.0))) * (1.0 - triRound);
+  const hexAz = [0, 60 * DEG, 90 * DEG, 120 * DEG, 180 * DEG, 240 * DEG, 300 * DEG];
+  const sqAz  = [0, 45 * DEG, 90 * DEG, 135 * DEG, 180 * DEG, 225 * DEG, 270 * DEG];
+  const minorMask = [0, 1, 0, 0, 1, 0, 1];
+  for (let k = 0; k < 7; k++) {
+    const a = hexAz[k] + (sqAz[k] - hexAz[k]) * sqBlend;
+    const isMinorPrism = minorMask[k] === 1;
+    const hexBaseR = k === 2
+      ? (1.10 * triRound + 1.18 * (1 - triRound))
+      : (isMinorPrism ? (1.0 + 0.16 * triRound + 0.04 * dom) : (1.0 - 0.16 * triRound - 0.04 * dom));
+    const sqBaseR = (k & 1) === 1 ? (1.14 - 0.16 * chamfer) : 0.94;
+    const baseR = hexBaseR + (sqBaseR - hexBaseR) * sqBlend;
     setLocalPlane(
       outLx, outLy, outLz, outOffR, outOffL, k,
       latScale * Math.cos(a), taperLy, latScale * Math.sin(a),
-      baseR * fVar(k, 0.35), 0.5 * taperLy
+      baseR * fVar(k, k === 2 ? 0.20 : 0.35), 0.5 * taperLy
     );
   }
   // 3-fold Rhombohedral top termination: major r{10-11} (even j = 0,2,4) alternating with minor z{01-11} (odd j = 1,3,5)
@@ -740,45 +796,24 @@ function computeSystemPlanes(
       offR, ct
     );
   }
-  if (isDoubleTerm) {
-    // Full 6-faceted pointed rhombohedral bottom termination in slots [6, 7, 14, 15, 16, 17]
-    const botSlots = [6, 7, 14, 15, 16, 17];
-    for (let j = 0; j < 6; j++) {
-      const a = (j * TAU) / 6;
-      const isMinorRhombo = (j & 1) === 0;
-      const ct = isMinorRhombo ? cosZ : cosR;
-      const st = isMinorRhombo ? sinZ : sinR;
-      const offR = (isMinorRhombo ? (0.24 + 0.38 * effDom + 0.14 * triRound) : (0.04 - 0.14 * effDom)) + tVar(j, 0.24);
-      setLocalPlane(
-        outLx, outLy, outLz, outOffR, outOffL, botSlots[j],
-        st * Math.cos(a), -ct, st * Math.sin(a),
-        offR, botExt * ct
-      );
-    }
-  } else {
-    // Accessory ditrigonal rounding bevels in slots 6..7 (at 90° and 270°)
-    for (let m = 0; m < 2; m++) {
-      const k = 6 + m;
-      const a = (m * Math.PI) + 0.5 * Math.PI;
-      const ditrigR = (1.10 * triRound + 1.28 * (1 - triRound)) * fVar(k, 0.20);
-      setLocalPlane(
-        outLx, outLy, outLz, outOffR, outOffL, k,
-        latScale * Math.cos(a), taperLy, latScale * Math.sin(a),
-        ditrigR, 0.5 * taperLy
-      );
-    }
-    // 3 natural rhombohedral bottom facets at 60°, 180°, 300° in slots 14..16 (never a flat horizontal cut)
-    for (let m = 0; m < 3; m++) {
-      const a = (m * TAU) / 3 + Math.PI / 3;
-      setLocalPlane(
-        outLx, outLy, outLz, outOffR, outOffL, 14 + m,
-        sinR * Math.cos(a), -cosR, sinR * Math.sin(a),
-        0.06 + tVar(m, 0.18), botExt * cosR
-      );
-    }
-    const tableFrac = Math.max(0.76, 1.14 - 0.50 * Math.max(0, chamfer));
-    setLocalPlane(outLx, outLy, outLz, outOffR, outOffL, 17, 0, 1, 0, 0, tableFrac);
+  // Pointed rhombohedral bottom termination in slots [7, 14, 15, 16] (all 3 major rhombohedra j = 1, 3, 5 at 60°, 180°, 300° + minor j = 0 at 0°),
+  // scaled continuously by `botExt = 0.02 + 0.40 * dtW` so the lower half smoothly retracts/grows across doubleTermBlend in [0, 1].
+  const botSlots = [7, 14, 15, 16];
+  const botJ = [0, 1, 3, 5];
+  for (let b = 0; b < 4; b++) {
+    const j = botJ[b];
+    const a = (j * TAU) / 6;
+    const isMinorRhombo = (j & 1) === 0;
+    const ct = isMinorRhombo ? cosZ : cosR;
+    const st = isMinorRhombo ? sinZ : sinR;
+    const offR = (isMinorRhombo ? (0.24 + 0.38 * effDom + 0.14 * triRound) : Math.max(0.06, 0.12 - 0.08 * effDom)) + Math.max(0, tVar(j, 0.24));
+    setLocalPlane(
+      outLx, outLy, outLz, outOffR, outOffL, botSlots[b],
+      st * Math.cos(a), -ct, st * Math.sin(a),
+      offR, botExt * ct
+    );
   }
+  setLocalPlane(outLx, outLy, outLz, outOffR, outOffL, 17, 0, 1, 0, 0, tableTop);
 }
 
 // Pre-allocated scratch buffers for target and morph-blended local crystal planes (0..17)
@@ -1174,9 +1209,9 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
   const evolveOn = P?.evolve ? !!P.evolve.value : true;
   const hopperVal = P?.hopper ? Math.max(0, Math.min(1, Number(P.hopper.value))) : 0;
   const metallicVal = P?.metallic ? Math.max(0, Math.min(1, Number(P.metallic.value))) : 0;
-  const hopperBlend = smooth01(Math.max(0, Math.min(1, (hopperVal - 0.18) / 0.45)));
+  const hopperBlend = Math.max(0, Math.min(1, hopperVal / 0.92));
   const rawCount = P?.crystals ? Number(P.crystals.value) : (P?.count ? Number(P.count.value) : 4.0);
-  const count = hopperBlend > 0.5 ? Math.min(3.0, rawCount) : rawCount;
+  const count = rawCount;
   const floatC = Math.max(3.0, Math.min(MAX_CRYSTALS, count));
   const nActive = Math.min(MAX_CRYSTALS, Math.ceil(floatC - 1e-4));
   cluster.floatCrystals = floatC;
@@ -1213,19 +1248,26 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
   const hFrom = cluster.morphHabitFrom ? resolveHabitSystem(cluster.morphHabitFrom) : '';
   const hTo = cluster.morphHabitTo ? resolveHabitSystem(cluster.morphHabitTo) : '';
   const curSys = resolveHabitSystem(curHabit);
-  const pyriteCubeBlend = smooth01(Math.max(0, Math.min(1, (metallicVal - 0.25) / 0.45))) * (1 - hopperBlend);
+  const pyriteCubeBlend = Math.max(0, Math.min(1, (metallicVal - 0.08) / 0.88)) * (1 - hopperBlend);
   const cubeBlockBlend = Math.max(hopperBlend, pyriteCubeBlend);
 
-  const baseRepel = (morphBlend > 1e-4 && morphBlend < 1 - 1e-4 && hFrom && hTo && hFrom !== hTo)
+  const baseRepel = (hFrom && hTo && hFrom !== hTo)
     ? habitRepelWeight(hFrom) * (1 - morphBlend) + habitRepelWeight(hTo) * morphBlend
     : habitRepelWeight(curSys);
   const repelStrength = hopperBlend > 1e-4
     ? baseRepel * (1 - hopperBlend) + 0.86 * hopperBlend
     : baseRepel * (1 - 0.66 * pyriteCubeBlend);
-  const baseCubicBlend = (morphBlend > 1e-4 && morphBlend < 1 - 1e-4 && hFrom && hTo && hFrom !== hTo)
+  const baseCubicBlend = (hFrom && hTo && hFrom !== hTo)
     ? (hFrom === 'Cubic / Isometric' ? 1 - morphBlend : 0) + (hTo === 'Cubic / Isometric' ? morphBlend : 0)
     : (curSys === 'Cubic / Isometric' ? 1 : 0);
   const cubicBlend = Math.max(baseCubicBlend, cubeBlockBlend);
+
+  const paramDoubleTerm = P?.doubleTerminated !== undefined
+    ? (typeof P.doubleTerminated.value === 'boolean'
+      ? (P.doubleTerminated.value ? 1.0 : 0.0)
+      : Math.max(0.0, Math.min(1.0, Number(P.doubleTerminated.value))))
+    : 1.0;
+  const rawDoubleTermBlend = paramDoubleTerm * (1.0 - cubicBlend);
 
   // Continuous float symmetry (3.0..8.0) for smooth 'opening-out' polygon transformation
   const symmetry = P.symmetry ? Math.max(3, Math.min(8, Number(P.symmetry.value))) : 6;
@@ -1244,6 +1286,15 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
   const rawEffPrimaryCount = Math.max(1.8, floatC * (1.0 - 0.38 * twinShare));
   const nodeDt = Math.max(0, Math.min(cluster.pendingNodeDt || 0, 10));
   cluster.pendingNodeDt = 0;
+  if (!Number.isFinite(cluster.doubleTermBlend) || !cluster.centerInit) {
+    cluster.doubleTermBlend = rawDoubleTermBlend;
+  } else if (nodeDt > 0) {
+    cluster.doubleTermBlend += (rawDoubleTermBlend - cluster.doubleTermBlend) * (1 - Math.exp(-3.6 * nodeDt));
+  } else {
+    cluster.doubleTermBlend = rawDoubleTermBlend;
+  }
+  const doubleTermBlend = Math.max(0.0, Math.min(1.0, cluster.doubleTermBlend));
+
   if (!Number.isFinite(cluster.smoothEffPrimaryCount)) {
     cluster.smoothEffPrimaryCount = rawEffPrimaryCount;
   } else if (nodeDt > 0) {
@@ -1258,29 +1309,25 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
     const i = node.cohortIdx;
     const nodeSymmetry = symmetry;
 
-    // Continuous presence & twinW with ultra-slow 2nd-order critically-damped spring (omega = 0.20..0.24 rad/s,
-    // max velocity <= 0.065/s, taking ~15-18s — 3x longer than before) so appearing and disappearing
-    // crystals bud and shrink very gradually across preset changes.
-    // When Bismuth Hopper (hopperBlend > 0.1) is active, cap to 3 blocks (i = 0, 1, 2) immediately for high FPS.
-    const rawPresence = (hopperBlend > 0.5 && i >= 3)
-      ? 0.0
-      : smooth01(Math.max(0.0, Math.min(1.0, floatC - i))) * (i >= 3 ? (1.0 - hopperBlend) : 1.0);
-    const rawTwinW = i < 2 ? 0.0 : smooth01(Math.max(0.0, Math.min(1.0, (twinShare - node.twinRoll + 0.44) / 0.88)));
+    // Continuous presence & twinW with critically-damped spring — wide overlapping fade windows for i >= 3
+    // so outer strands i = 3, 4, 5 shrink and grow smoothly across the full morph rather than dying in the first 25%.
+    const effTwinShare = twinShare * (1.0 - hopperBlend);
+    const thrLo = i < 3 ? i : (i <= 5 ? (3.0 + (i - 3) * 0.22) : (i - 0.8));
+    const thrHi = i + 1.0;
+    const rawPresence = smooth01(Math.max(0.0, Math.min(1.0, (floatC - thrLo) / Math.max(1.0, thrHi - thrLo)))) * (i >= 3 ? Math.max(0.0, 1.0 - hopperBlend) : 1.0);
+    const rawTwinW = i < 2 ? 0.0 : smooth01(Math.max(0.0, Math.min(1.0, (effTwinShare - node.twinRoll + 0.44) / 0.88))) * (1.0 - hopperBlend);
     if (!node.smoothInit) {
       node.smoothPresence = rawPresence;
       node.velPresence = 0;
       node.smoothTwinW = rawTwinW;
       node.velTwinW = 0;
       node.smoothInit = true;
-    } else if (hopperBlend > 0.5 && i >= 3) {
-      node.smoothPresence = 0;
-      node.velPresence = 0;
     } else if (nodeDt > 0) {
       let remN = nodeDt;
-      const omegaN = 0.20 + 0.04 * (0.5 + 0.5 * (node.uLen || 0));
+      const omegaN = 1.15 + 0.15 * (0.5 + 0.5 * (node.uLen || 0));
       const omegaN2 = omegaN * omegaN;
       const dampN = 2.0 * omegaN;
-      const maxVelN = 0.065;
+      const maxVelN = 0.45;
       while (remN > 1e-6) {
         const ndt = Math.min(remN, 0.05);
         remN -= ndt;
@@ -1370,7 +1417,8 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
       node.az0 = az0;
     }
 
-    if (!node.lockedTwinRole || twinShare < 0.05) {
+    const effTwinW = i < 2 ? 0.0 : twinW * smooth01(Math.max(0.0, Math.min(1.0, effTwinShare / 0.22))) * (1.0 - hopperBlend);
+    if (effTwinW <= 1e-4) {
       ax[0] = primAx[0]; ax[1] = primAx[1]; ax[2] = primAx[2];
     } else {
       const pNode = cluster.nodes[node.parentIdx >= 0 ? node.parentIdx : 0];
@@ -1388,7 +1436,12 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
       twinAx[1] = pAxis[1] * cosB + ry * sinB;
       twinAx[2] = pAxis[2] * cosB + rz * sinB;
       const tal = Math.hypot(twinAx[0], twinAx[1], twinAx[2]) || 1;
-      ax[0] = twinAx[0] / tal; ax[1] = twinAx[1] / tal; ax[2] = twinAx[2] / tal;
+      const tax0 = twinAx[0] / tal, tax1 = twinAx[1] / tal, tax2 = twinAx[2] / tal;
+      const mixAx0 = primAx[0] * (1 - effTwinW) + tax0 * effTwinW;
+      const mixAx1 = primAx[1] * (1 - effTwinW) + tax1 * effTwinW;
+      const mixAx2 = primAx[2] * (1 - effTwinW) + tax2 * effTwinW;
+      const mal = Math.hypot(mixAx0, mixAx1, mixAx2) || 1;
+      ax[0] = mixAx0 / mal; ax[1] = mixAx1 / mal; ax[2] = mixAx2 / mal;
       if (!node.branchRadial0) node.branchRadial0 = new Float32Array(3);
       node.branchRadial0[0] = rx; node.branchRadial0[1] = ry; node.branchRadial0[2] = rz;
     }
@@ -1402,7 +1455,7 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
     const hopperMorph = i < 3 ? i : ((nodeUidInt - 1 + (seedInt % 5)) % 5);
     node.hopperMorph = hopperMorph;
 
-    if (hopperBlend > 1e-4) {
+    if (hopperBlend > 1e-4 && i < 3) {
       // Cohesive 3-block Bismuth Hopper sculptural cluster (post-016032):
       const archMode = seedInt % 3;
       const azBase = (0.18 + 0.08 * archMode) * Math.PI;
@@ -1427,9 +1480,10 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
       const zAx0 = Math.sin(zigLean) * Math.cos(azSpread);
       const zAx1 = Math.cos(zigLean);
       const zAx2 = Math.sin(zigLean) * Math.sin(azSpread);
-      ax[0] = ax[0] * (1 - 0.86 * hopperBlend) + zAx0 * (0.86 * hopperBlend);
-      ax[1] = ax[1] * (1 - 0.86 * hopperBlend) + zAx1 * (0.86 * hopperBlend);
-      ax[2] = ax[2] * (1 - 0.86 * hopperBlend) + zAx2 * (0.86 * hopperBlend);
+      const hopperFrameW = 0.86 * hopperBlend * smooth01(hopperBlend);
+      ax[0] = ax[0] * (1 - hopperFrameW) + zAx0 * hopperFrameW;
+      ax[1] = ax[1] * (1 - hopperFrameW) + zAx1 * hopperFrameW;
+      ax[2] = ax[2] * (1 - hopperFrameW) + zAx2 * hopperFrameW;
       const zal = Math.hypot(ax[0], ax[1], ax[2]) || 1;
       ax[0] /= zal; ax[1] /= zal; ax[2] /= zal;
     }
@@ -1465,8 +1519,8 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
     const tw = node.rot0 * (1 - 0.86 * hopperBlend) + quantTwist * (0.86 * hopperBlend);
     const rho = node.rho;
     const az = node.az0 || (i * GOLDEN + 0.38 * node.uAz);
-    const isDoubleTerm = true;
-    node.isDoubleTerm = isDoubleTerm;
+    node.doubleTermBlend = doubleTermBlend;
+    node.isDoubleTerm = doubleTermBlend >= 0.5;
 
     let primBaseL = (i === 0 ? 0.76 : Math.max(0.28, 0.80 - P.lengthJitter.value * (0.28 * node.uLen + 0.34 * rho))) * lenMod;
     const horizComp = Math.hypot(ax[0], ax[2]);
@@ -1490,7 +1544,7 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
     // Softly bound extreme vertical projection of single nearly-upright outlier spikes so the camera
     // can sit ~25-30% closer without a lone vertical tip clipping the top/bottom viewport edge,
     // while keeping full prism thickness `primBaseR` and full horizontal reach on angled crystals.
-    const vertSpanFactor = vertComp * (isDoubleTerm ? 1.42 : 1.04) * (1 - 0.45 * cubicBlend);
+    const vertSpanFactor = vertComp * (1.04 + 0.38 * doubleTermBlend) * (1 - 0.45 * cubicBlend);
     const spikeCap = growSideways ? 0.64 : 0.88;
     if (primBaseL * vertSpanFactor > spikeCap) {
       const rawVS = primBaseL * vertSpanFactor;
@@ -1501,46 +1555,48 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
     let baseL = primBaseL;
     let baseR = primBaseR;
 
-    if (!node.lockedTwinRole || twinShare < 0.05) {
-      const curPrimL = primBaseL * gScale * presence;
-      const curPrimR = primBaseR * Math.pow(gScale, 0.78) * presence;
-      // Non-diamond crystals cross through a shared root nexus (0, 0, 0) so their longer top points
-      // (+0.86 * L) and shorter bottom points (-0.56 * L) extend out past the root in asymmetric 'X' / '*' shapes.
-      const baseCrossFrac = isDoubleTerm
-        ? Math.max(0.10, Math.min(0.22, P.crossAt.value * 0.45 + 0.07))
-        : Math.max(0.16, Math.min(0.32, P.crossAt.value));
-      const back = (cubicBlend * P.crossAt.value + (1 - cubicBlend) * baseCrossFrac) * curPrimL;
-      const uvSpread = 0.16 + 0.89 * cubicBlend;
-      const u = node.uRootU * curPrimR * uvSpread, v = node.uRootV * curPrimR * uvSpread;
-      for (let k = 0; k < 3; k++) {
-        root[k] = -ax[k] * back + sx[k] * u + sz[k] * v + node.driftOffset[k];
+    const curPrimL = primBaseL * gScale * presence;
+    const curPrimR = primBaseR * Math.pow(gScale, 0.78) * presence;
+    // Non-diamond crystals cross through a shared root nexus (0, 0, 0) so their longer top points
+    // (+0.86 * L) and shorter bottom points (-0.56 * L) extend out past the root in asymmetric 'X' / '*' shapes.
+    const dtCrossFrac = Math.max(0.10, Math.min(0.22, P.crossAt.value * 0.45 + 0.07));
+    const singleCrossFrac = Math.max(0.16, Math.min(0.32, P.crossAt.value));
+    const baseCrossFrac = singleCrossFrac + (dtCrossFrac - singleCrossFrac) * doubleTermBlend;
+    const back = (cubicBlend * P.crossAt.value + (1 - cubicBlend) * baseCrossFrac) * curPrimL;
+    const uvSpread = 0.16 + 0.89 * cubicBlend;
+    const u = node.uRootU * curPrimR * uvSpread, v = node.uRootV * curPrimR * uvSpread;
+    for (let k = 0; k < 3; k++) {
+      primRoot[k] = -ax[k] * back + sx[k] * u + sz[k] * v + node.driftOffset[k];
+    }
+    if (dirProgress > 0.01 && i > 0) {
+      const spreadScale = 0.12 + 0.88 * cubicBlend;
+      if (growSideways) {
+        const latDist = Math.min(curPrimR * 0.45 + cubicBlend * halfFrustumX, dirProgress * halfFrustumX * 0.96 * rho * localGrowth * presence * spreadScale);
+        primRoot[0] += Math.cos(az) * latDist;
+        primRoot[2] += Math.sin(az) * latDist;
+        primRoot[1] *= (1 - 0.42 * dirProgress * spreadScale);
+      } else {
+        const tier = ((i % 2 === 1) ? 1 : -0.88) * Math.pow(rho, 0.78);
+        const vertDist = Math.min(curPrimR * 0.45 + cubicBlend * halfFrustumY, Math.abs(dirProgress * halfFrustumY * 0.98 * tier * localGrowth * presence * spreadScale)) * Math.sign(tier);
+        primRoot[1] += vertDist;
+        primRoot[0] *= (1 - 0.42 * dirProgress * spreadScale);
+        primRoot[2] *= (1 - 0.42 * dirProgress * spreadScale);
       }
-      if (dirProgress > 0.01 && i > 0) {
-        const spreadScale = 0.12 + 0.88 * cubicBlend;
-        if (growSideways) {
-          const latDist = Math.min(curPrimR * 0.45 + cubicBlend * halfFrustumX, dirProgress * halfFrustumX * 0.96 * rho * localGrowth * presence * spreadScale);
-          root[0] += Math.cos(az) * latDist;
-          root[2] += Math.sin(az) * latDist;
-          root[1] *= (1 - 0.42 * dirProgress * spreadScale);
-        } else {
-          const tier = ((i % 2 === 1) ? 1 : -0.88) * Math.pow(rho, 0.78);
-          const vertDist = Math.min(curPrimR * 0.45 + cubicBlend * halfFrustumY, Math.abs(dirProgress * halfFrustumY * 0.98 * tier * localGrowth * presence * spreadScale)) * Math.sign(tier);
-          root[1] += vertDist;
-          root[0] *= (1 - 0.42 * dirProgress * spreadScale);
-          root[2] *= (1 - 0.42 * dirProgress * spreadScale);
-        }
-      }
-      if (cavityCurve > 0.001) {
-        // Keep base offset tightly bounded by curPrimR * 0.42 on non-diamond clusters so crystals
-        // always grow out of a shared clumped base nexus rather than floating in separate mid-air orbits.
-        const maxClumpBowlR = curPrimR * 0.42 + cubicBlend * 0.52 * cavityCurve * (0.35 + 0.65 * gScale) * presence;
-        const bowlR = Math.min(maxClumpBowlR, 0.12 * cavityCurve * (0.35 + 0.65 * gScale) * presence);
-        const ringR = bowlR * rho;
-        const bowlY = (-bowlR * Math.cos(rho * 1.15) + bowlR * 0.45) * 0.35;
-        root[0] += Math.cos(az) * ringR;
-        root[1] += bowlY;
-        root[2] += Math.sin(az) * ringR;
-      }
+    }
+    if (cavityCurve > 0.001) {
+      // Keep base offset tightly bounded by curPrimR * 0.42 on non-diamond clusters so crystals
+      // always grow out of a shared clumped base nexus rather than floating in separate mid-air orbits.
+      const maxClumpBowlR = curPrimR * 0.42 + cubicBlend * 0.52 * cavityCurve * (0.35 + 0.65 * gScale) * presence;
+      const bowlR = Math.min(maxClumpBowlR, 0.12 * cavityCurve * (0.35 + 0.65 * gScale) * presence);
+      const ringR = bowlR * rho;
+      const bowlY = (-bowlR * Math.cos(rho * 1.15) + bowlR * 0.45) * 0.35;
+      primRoot[0] += Math.cos(az) * ringR;
+      primRoot[1] += bowlY;
+      primRoot[2] += Math.sin(az) * ringR;
+    }
+
+    if (effTwinW <= 1e-4) {
+      root[0] = primRoot[0]; root[1] = primRoot[1]; root[2] = primRoot[2];
     } else {
       const pNode = cluster.nodes[node.parentIdx >= 0 ? node.parentIdx : 0];
       if (pNode && pNode.worldL > 0.005) {
@@ -1558,18 +1614,21 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
       const pFullL = node.savedParentFullL;
       const pR = node.savedParentR;
       const br = node.branchRadial0 || sx;
-      baseL = pFullL * (0.48 + 0.34 * node.uBranchLen) * (1 + 0.32 * dirProgress) * lenMod;
-      baseR = Math.max(0.035, P.thickness.value * 0.85) * (0.68 + 0.28 * node.uBranchRad) * radMod;
-      const curTwinL = baseL * gScale * presence;
+      const twinBaseL = pFullL * (0.48 + 0.34 * node.uBranchLen) * (1 + 0.32 * dirProgress) * lenMod;
+      const twinBaseR = Math.max(0.035, P.thickness.value * 0.85) * (0.68 + 0.28 * node.uBranchRad) * radMod;
+      baseL = primBaseL * (1 - effTwinW) + twinBaseL * effTwinW;
+      baseR = primBaseR * (1 - effTwinW) + twinBaseR * effTwinW;
+      const curTwinL = twinBaseL * gScale * presence;
       const attachFrac = Math.max(0.06, Math.min(0.22, 0.08 + 0.14 * node.uAttach));
       const attachDist = pL * attachFrac;
-      const twinBack = (isDoubleTerm ? 0.14 : 0.16) * curTwinL * (1 - cubicBlend);
+      const twinBack = (0.16 - 0.02 * doubleTermBlend) * curTwinL * (1 - cubicBlend);
       for (let k = 0; k < 3; k++) {
-        root[k] = pRoot[k] + pAxis[k] * attachDist + br[k] * (pR * 0.10) - ax[k] * twinBack + node.driftOffset[k];
+        twinRoot[k] = pRoot[k] + pAxis[k] * attachDist + br[k] * (pR * 0.10) - ax[k] * twinBack + node.driftOffset[k];
+        root[k] = primRoot[k] * (1 - effTwinW) + twinRoot[k] * effTwinW;
       }
     }
 
-    if (hopperBlend > 1e-4 && i > 0) {
+    if (hopperBlend > 1e-4 && i > 0 && i < 3) {
       // Architectural 3-block Bismuth Hopper offsets (Block 1: tall pagoda tower rising on upper flank;
       // Block 2: open L-bracket ziggurat interlocking on opposite lower-front flank)
       const tierIdx = i - 1;
@@ -1577,9 +1636,10 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
       const tierRing = (i === 1 ? 0.28 : i === 2 ? 0.32 : (0.30 + 0.09 * Math.floor(tierIdx / 2))) * baseL;
       const tierAng = (i === 1 ? 0.82 : i === 2 ? -1.28 : tierIdx * (TAU / 5.2) + 0.35) + 0.38 * archMode;
       const tierY = (i === 1 ? 0.22 : i === 2 ? -0.10 : (0.20 - 0.12 * (tierIdx % 4))) * baseL * gScale * presence;
-      root[0] = root[0] * (1 - 0.78 * hopperBlend) + Math.cos(tierAng) * tierRing * gScale * presence * hopperBlend;
-      root[1] = root[1] * (1 - 0.78 * hopperBlend) + tierY * hopperBlend;
-      root[2] = root[2] * (1 - 0.78 * hopperBlend) + Math.sin(tierAng) * tierRing * gScale * presence * hopperBlend;
+      const hopperRootW = hopperBlend * smooth01(hopperBlend);
+      root[0] = root[0] * (1 - 0.78 * hopperRootW) + Math.cos(tierAng) * tierRing * gScale * presence * hopperRootW;
+      root[1] = root[1] * (1 - 0.78 * hopperRootW) + tierY * hopperRootW;
+      root[2] = root[2] * (1 - 0.78 * hopperRootW) + Math.sin(tierAng) * tierRing * gScale * presence * hopperRootW;
     }
 
     // Pull emerging/shrinking crystals smoothly into the heart of the cluster core (0, 0, 0)
@@ -1728,38 +1788,50 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
     const dynTipJitter = Math.max(0.06, P.tipJitter.value);
     const dynChamfer = Math.max(0, chamfer);
 
-    const isDoubleTerm = !!node.isDoubleTerm;
+    const nodeDoubleTerm = node.doubleTermBlend !== undefined ? node.doubleTermBlend : doubleTermBlend;
 
-    if (morphBlend > 1e-4 && morphBlend < 1 - 1e-4 && hFrom && hTo && hFrom !== hTo) {
-      computeSystemPlanes(
-        hFrom, nodeSymmetry, taperLy, latScale, nodeTilt, dynChamfer, dynDom, faceJitterAmt, dynTipJitter, fs, L, r, isDoubleTerm,
-        tgtLx, tgtLy, tgtLz, tgtOffR, tgtOffL
-      );
-      computeSystemPlanes(
-        hTo, nodeSymmetry, taperLy, latScale, nodeTilt, dynChamfer, dynDom, faceJitterAmt, dynTipJitter, fs, L, r, isDoubleTerm,
-        altLx, altLy, altLz, altOffR, altOffL
-      );
-      for (let k = 0; k < 18; k++) {
-        const bx = tgtLx[k] + (altLx[k] - tgtLx[k]) * morphBlend;
-        const by = tgtLy[k] + (altLy[k] - tgtLy[k]) * morphBlend;
-        const bz = tgtLz[k] + (altLz[k] - tgtLz[k]) * morphBlend;
-        const inv = 1 / (Math.hypot(bx, by, bz) || 1);
-        tgtLx[k] = bx * inv;
-        tgtLy[k] = by * inv;
-        tgtLz[k] = bz * inv;
-        tgtOffR[k] = tgtOffR[k] + (altOffR[k] - tgtOffR[k]) * morphBlend;
-        tgtOffL[k] = tgtOffL[k] + (altOffL[k] - tgtOffL[k]) * morphBlend;
+    if (hFrom && hTo && hFrom !== hTo) {
+      if (morphBlend <= 1e-4) {
+        computeSystemPlanes(
+          hFrom, nodeSymmetry, taperLy, latScale, nodeTilt, dynChamfer, dynDom, faceJitterAmt, dynTipJitter, fs, L, r, nodeDoubleTerm,
+          tgtLx, tgtLy, tgtLz, tgtOffR, tgtOffL
+        );
+      } else if (morphBlend >= 1 - 1e-4) {
+        computeSystemPlanes(
+          hTo, nodeSymmetry, taperLy, latScale, nodeTilt, dynChamfer, dynDom, faceJitterAmt, dynTipJitter, fs, L, r, nodeDoubleTerm,
+          tgtLx, tgtLy, tgtLz, tgtOffR, tgtOffL
+        );
+      } else {
+        computeSystemPlanes(
+          hFrom, nodeSymmetry, taperLy, latScale, nodeTilt, dynChamfer, dynDom, faceJitterAmt, dynTipJitter, fs, L, r, nodeDoubleTerm,
+          tgtLx, tgtLy, tgtLz, tgtOffR, tgtOffL
+        );
+        computeSystemPlanes(
+          hTo, nodeSymmetry, taperLy, latScale, nodeTilt, dynChamfer, dynDom, faceJitterAmt, dynTipJitter, fs, L, r, nodeDoubleTerm,
+          altLx, altLy, altLz, altOffR, altOffL
+        );
+        for (let k = 0; k < 18; k++) {
+          const bx = tgtLx[k] + (altLx[k] - tgtLx[k]) * morphBlend;
+          const by = tgtLy[k] + (altLy[k] - tgtLy[k]) * morphBlend;
+          const bz = tgtLz[k] + (altLz[k] - tgtLz[k]) * morphBlend;
+          const inv = 1 / (Math.hypot(bx, by, bz) || 1);
+          tgtLx[k] = bx * inv;
+          tgtLy[k] = by * inv;
+          tgtLz[k] = bz * inv;
+          tgtOffR[k] = tgtOffR[k] + (altOffR[k] - tgtOffR[k]) * morphBlend;
+          tgtOffL[k] = tgtOffL[k] + (altOffL[k] - tgtOffL[k]) * morphBlend;
+        }
       }
     } else {
       computeSystemPlanes(
-        curHabit, nodeSymmetry, taperLy, latScale, nodeTilt, dynChamfer, dynDom, faceJitterAmt, dynTipJitter, fs, L, r, isDoubleTerm,
+        curHabit, nodeSymmetry, taperLy, latScale, nodeTilt, dynChamfer, dynDom, faceJitterAmt, dynTipJitter, fs, L, r, nodeDoubleTerm,
         tgtLx, tgtLy, tgtLz, tgtOffR, tgtOffL
       );
     }
 
     if (cubeBlockBlend > 1e-4) {
       computeCubeBlockPlanes(
-        hopperBlend, node.hopperMorph || 0, dynChamfer, faceJitterAmt, fs, L, r,
+        hopperBlend, node.hopperMorph || 0, dynChamfer, faceJitterAmt, fs, L, r, nodeDoubleTerm,
         cubeLx, cubeLy, cubeLz, cubeOffR, cubeOffL
       );
       for (let k = 0; k < 18; k++) {
@@ -1876,8 +1948,8 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
     const nipDepth3 = r * (0.0036 + 0.0088 * edgeChipsVal) * chipSizeVal * nipSizeMult3 * (whaleMult3 > 1.0 ? Math.max(0.65, node.smoothChip3) : node.smoothChip3) * nipBlockDamp;
     writeCornerNipPlane(rowIdx, 20, kt0, kt1, tipHoriz, tipVert, nipDepth3, 0.90, 1.10, vertCount, L, r);
 
-    const half = (isDoubleTerm ? 0.72 : 0.51) * L;
-    const midFrac = cubicBlend * 0.52 + (1 - cubicBlend) * (isDoubleTerm ? 0.29 : 0.49);
+    const half = (0.51 + 0.21 * nodeDoubleTerm) * L;
+    const midFrac = cubicBlend * 0.52 + (1 - cubicBlend) * (0.49 - 0.20 * nodeDoubleTerm);
     const nodeAlpha = Math.max(0.0, Math.min(1.0, node.alpha * smooth01(Math.min(1.0, presence / 0.55))));
     const scx = root[0] + ax[0] * midFrac * L;
     const scy = root[1] + ax[1] * midFrac * L;
@@ -1919,7 +1991,7 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
 
     if (vertCount === 0) {
       const tipY = root[1] + ax[1] * L;
-      const botReach = (1 - cubicBlend) * (isDoubleTerm ? 0.44 * L : 0.04 * L);
+      const botReach = (1 - cubicBlend) * (0.04 + 0.40 * nodeDoubleTerm) * L;
       const botY = root[1] - ax[1] * botReach;
       const effPad = r * (0.1 + 0.35 * nodeAlpha);
       minY = Math.min(minY, Math.min(botY, tipY) - effPad);
@@ -2059,8 +2131,8 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
 cluster.resetEvolution = resetEvolution;
 cluster.stepEvolution = stepEvolution;
 cluster.applyManualParam = (key, P) => {
-  cluster.morphHabitBlend = 0;
   if (key === 'habit' && P?.habit) {
+    cluster.morphHabitBlend = 0;
     const h = String(P.habit.value);
     const desiredCount = Math.max(1, Math.min(MAX_CRYSTALS, Math.round(P?.crystals ? Number(P.crystals.value) : 9)));
     const twinShare = P?.twinShare ? Number(P.twinShare.value) : 0.3;

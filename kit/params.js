@@ -247,6 +247,10 @@ export function createModel(schema, storageKey, presets = {}) {
         }
         return p.default;
       };
+      store.glideHabitFrom = byKey.habit ? String(byKey.habit.value) : 'Trigonal';
+      store.glideHabitTo = byKey.habit ? String(coerce(byKey.habit, resolveTarget(byKey.habit))) : store.glideHabitFrom;
+      store.glideHabitBlend = 0;
+      store.glideToPreset = presetName;
       for (const p of params) {
         if (p.key === 'renderScale' || p.key === 'targetFps' || p.key === 'maxFps' || p.key === 'maxDpr' || p.key === 'bloom' || p.noPreset) continue;
         p.base = coerce(p, resolveTarget(p));
@@ -271,6 +275,9 @@ export function createModel(schema, storageKey, presets = {}) {
       }
       glideT = 0;
       glideLen = Math.max(seconds, 1e-3);
+      if (seconds <= 0) {
+        store.glideHabitBlend = 1;
+      }
     },
     applyPreset(name, seconds = 0.65, glideNumbers = true) {
       const resolvedName = (name === 'Glacial Ice Dendrite' && presets?.['Glacial Ice'])
@@ -398,6 +405,7 @@ export function createModel(schema, storageKey, presets = {}) {
       glideT = Math.min(glideLen, glideT + dt);
       const done = glideT >= glideLen;
       const k = easeInOut(glideT / glideLen);
+      store.glideHabitBlend = k;
       for (const g of glides) {
         if (g.rgbFrom && g.rgbTo) {
           const a = g.rgbFrom, b = g.rgbTo;
@@ -406,6 +414,9 @@ export function createModel(schema, storageKey, presets = {}) {
           else assignSmooth(g.p, null, [r / 255, gr / 255, bl / 255]);
         } else if (done) {
           assign(g.p, g.to);
+        } else if (g.p.key === 'hueShift') {
+          const dh = ((g.to - g.from + 540) % 360) - 180;
+          assignSmooth(g.p, ((g.from + dh * k) % 360 + 360) % 360);
         } else {
           assignSmooth(g.p, g.from + (g.to - g.from) * k);
         }
