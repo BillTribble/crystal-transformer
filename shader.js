@@ -1878,16 +1878,16 @@ bool intersectGalliumMelt(
   bool hitPuddle = false;
 
   if (t1 > t0) {
-    for (int st = 0; st < 36; st++) {
+    for (int st = 0; st < 24; st++) {
       if (t > t1) break;
       float mF = 0.0;
       float d = evalGalliumFastStep(qRo + qRd * t, meltAmt, c0, h0, c1, h1, c2, h2, c3, h3, mF);
-      if (d <= 0.0003) {
+      if (d <= 0.0005) {
         hitPuddle = true;
         break;
       }
       tPrev = t;
-      t += max(0.0008, d * 0.72);
+      t += max(0.0012, d * 0.82);
     }
   }
 
@@ -1919,10 +1919,10 @@ bool intersectGalliumMelt(
   }
 
   float tLo = tPrev, tHi = t;
-  for (int bs = 0; bs < 6; bs++) {
+  for (int bs = 0; bs < 3; bs++) {
     float tMid = 0.5 * (tLo + tHi);
     float mFMid = 0.0;
-    if (evalGalliumFastStep(qRo + qRd * tMid, meltAmt, c0, h0, c1, h1, c2, h2, c3, h3, mFMid) <= 0.0001) {
+    if (evalGalliumFastStep(qRo + qRd * tMid, meltAmt, c0, h0, c1, h1, c2, h2, c3, h3, mFMid) <= 0.0002) {
       tHi = tMid;
     } else {
       tLo = tMid;
@@ -1933,15 +1933,12 @@ bool intersectGalliumMelt(
   float mF0 = 1.0;
   float d0 = evalGalliumFastStep(qHit, meltAmt, c0, h0, c1, h1, c2, h2, c3, h3, mF0);
 
-  // Compute 3D central-difference gradient normal in qGa space for sub-pixel smooth puddle & meniscus
-  float eps = 0.0022;
-  float dm1, dm2, dm3, dm4, dm5, dm6;
-  float gx = evalGalliumFastStep(qHit + vec3(eps, 0.0, 0.0), meltAmt, c0, h0, c1, h1, c2, h2, c3, h3, dm1)
-           - evalGalliumFastStep(qHit - vec3(eps, 0.0, 0.0), meltAmt, c0, h0, c1, h1, c2, h2, c3, h3, dm2);
-  float gy = evalGalliumFastStep(qHit + vec3(0.0, eps, 0.0), meltAmt, c0, h0, c1, h1, c2, h2, c3, h3, dm3)
-           - evalGalliumFastStep(qHit - vec3(0.0, eps, 0.0), meltAmt, c0, h0, c1, h1, c2, h2, c3, h3, dm4);
-  float gz = evalGalliumFastStep(qHit + vec3(0.0, 0.0, eps), meltAmt, c0, h0, c1, h1, c2, h2, c3, h3, dm5)
-           - evalGalliumFastStep(qHit - vec3(0.0, 0.0, eps), meltAmt, c0, h0, c1, h1, c2, h2, c3, h3, dm6);
+  // Compute 3D gradient normal in qGa space using 3 forward differences against d0
+  float eps = 0.0018;
+  float dm1, dm2, dm3;
+  float gx = evalGalliumFastStep(qHit + vec3(eps, 0.0, 0.0), meltAmt, c0, h0, c1, h1, c2, h2, c3, h3, dm1) - d0;
+  float gy = evalGalliumFastStep(qHit + vec3(0.0, eps, 0.0), meltAmt, c0, h0, c1, h1, c2, h2, c3, h3, dm2) - d0;
+  float gz = evalGalliumFastStep(qHit + vec3(0.0, 0.0, eps), meltAmt, c0, h0, c1, h1, c2, h2, c3, h3, dm3) - d0;
   vec3 nGaLocal = normalize(vec3(gx, gy, gz) + vec3(0.0, 1e-6, 0.0));
   // Transform normal back from qGa to cluster space p
   vec3 nPuddleWorld = normalize(vec3(
