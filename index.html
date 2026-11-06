@@ -7281,18 +7281,18 @@ const presets = {
     faceDominance: 0.14,
     stoneColour: '#dfe5ee',
     colourDepth: 2.2,
-    colourZoning: 0.45,
-    biColour: 0.72,
-    coreColour: '#ffe0a8',
+    colourZoning: 0.25,
+    biColour: 0.15,
+    coreColour: '#c8d6eb',
     ior: 2.35,
     fire: 0.02,
     fireSamples: 3,
     bounces: 2,
     depth: 1,
-    striations: 0.54,
+    striations: 0.22,
     striationScale: 145,
-    frostShare: 0.75,
-    frost: 0.18,
+    frostShare: 0.24,
+    frost: 0.06,
     edgeChips: 0.08,
     occlusion: 0,
     edgeWear: 0.10,
@@ -10015,19 +10015,9 @@ float evalCathedralFace(
   float u, float ly, float faceSeed, float cathAmt,
   out float outGu, out float outGax, out float outEdgeDist, out float outIsGable
 ) {
-  if (cathAmt <= 1e-4) {
-    outGu = 0.0; outGax = 0.0; outEdgeDist = 1.0; outIsGable = 0.0;
-    return 0.0;
-  }
-  // Bilateral cathedral carving across BOTH the prominent upper half (ly >= 0.14) and the short lower half (ly < 0.14):
-  // mirror & compress the lower axial coordinate around the waist (ly = 0.14) so the short bottom half displays
-  // matching stepped Elestial rhombohedral sub-terminations and Gothic vertical ribs!
-  float axSign = (ly >= 0.14) ? 1.0 : -1.0;
-  float lyMapped = (ly >= 0.14)
-    ? ly
-    : (0.20 + (0.14 - ly) * 1.65);
-  float baseRamp = 1.0 - smoothstep(0.92, 1.04, lyMapped);
-  if (baseRamp <= 1e-4) {
+  float lyBilateral = 0.16 + abs(ly - 0.14) * 1.12;
+  float baseRamp = smoothstep(0.05, 0.14, lyBilateral);
+  if (baseRamp <= 1e-4 || cathAmt <= 1e-4) {
     outGu = 0.0; outGax = 0.0; outEdgeDist = 1.0; outIsGable = 0.0;
     return 0.0;
   }
@@ -10035,19 +10025,19 @@ float evalCathedralFace(
   float absU = abs(u);
   float sideSign = (u >= 0.0) ? 1.0 : -1.0;
 
-  // 1. Broad Central Nave Spire Column (u = 0, wCol = 0.23, gable peaks on both upper and short lower halves)
+  // 1. Broad Central Nave Spire Column (u = 0, wCol = 0.23, taller gable peaks on both upper and short lower halves)
   float sideEx0 = max(0.0, absU - 0.23);
   float inWall0 = smoothstep(0.22, 0.24, absU) * (1.0 - smoothstep(0.27, 0.29, absU));
   float d0, gu0, gax0, edge0, gab0;
-  evalCathedralColumn(u, sideEx0, inWall0, 0.0, lyMapped, 0.240 + fShift, cathAmt, baseRamp, d0, gu0, gax0, edge0, gab0);
+  evalCathedralColumn(u, sideEx0, inWall0, 0.0, lyBilateral, 0.250 + fShift, cathAmt, baseRamp, d0, gu0, gax0, edge0, gab0);
 
   // 2. Flanking Buttress Spire Column (|u| >= 0.25 extending cleanly through the prism corner ridges with zero outer excess!)
   float sideEx1 = max(0.0, 0.25 - absU);
   float inWall1 = 1.0 - smoothstep(0.24, 0.27, absU);
   float d1, gu1, gax1, edge1, gab1;
   evalCathedralColumn(
-    u - sideSign * 0.46, sideEx1, inWall1, 0.032, lyMapped,
-    0.185 + fShift * 0.5, cathAmt, baseRamp,
+    u - sideSign * 0.46, sideEx1, inWall1, 0.032, lyBilateral,
+    0.195 + fShift * 0.5, cathAmt, baseRamp,
     d1, gu1, gax1, edge1, gab1
   );
 
@@ -10055,10 +10045,10 @@ float evalCathedralFace(
   float fluteDist = abs(absU - 0.24);
   float seamDist = min(fluteDist, abs(d0 - d1) * 0.55);
   if (d0 <= d1) {
-    outGu = gu0; outGax = gax0 * axSign; outEdgeDist = min(edge0, seamDist); outIsGable = gab0;
+    outGu = gu0; outGax = gax0; outEdgeDist = min(edge0, seamDist); outIsGable = gab0;
     return d0;
   } else {
-    outGu = gu1; outGax = gax1 * axSign; outEdgeDist = min(edge1, seamDist); outIsGable = gab1;
+    outGu = gu1; outGax = gax1; outEdgeDist = min(edge1, seamDist); outIsGable = gab1;
     return d1;
   }
 }
@@ -10089,7 +10079,7 @@ bool intersectCathedralSpire(
   float ly0 = dot(pStart - rt, ax) * invL;
   float dly = dot(rd, ax) * invL;
   float lyEnd = ly0 + dly * dtSpan;
-  if (max(ly0, lyEnd) < -0.45) return true;
+  if (max(ly0, lyEnd) < -0.42) return true;
 
   // Find the 3 closest active prism planes (kA, kB, kC) at the chord midpoint pMid.
   // Because any chord through a hexagonal prism interacts with the 3 prism faces on its side of the axis,
@@ -10158,13 +10148,13 @@ bool intersectCathedralSpire(
     return true;
   }
 
-  int nSteps = (u_isMobile > 0.5) ? 7 : 10;
+  int nSteps = (u_isMobile > 0.5) ? 6 : 8;
   float dtStep = dtSpan / float(nSteps);
   float dtPrev = 0.0;
   float dtHit = 0.0;
   bool foundHit = false;
 
-  for (int ms = 0; ms <= 10; ms++) {
+  for (int ms = 0; ms <= 8; ms++) {
     if (ms > nSteps) break;
     float dt = float(ms) * dtStep;
     float ly = ly0 + dly * dt;
@@ -10218,18 +10208,15 @@ bool intersectCathedralSpire(
   }
 
   // If the ray entered a main termination face (kn >= 7) without being clipped by the cathedral flank (dtHit == 0):
-  // Carry the Elestial cathedral gable terraces seamlessly across BOTH top rhombohedral faces (kn in 8..13)
-  // AND short bottom rhombohedral termination faces (kn == 7 || kn in 14..16)!
+  // Above ly = 0.85 (or on bottom termination faces), keep the termination plane untouched;
+  // on the lower/mid shoulder of top rhombohedral faces (kn in 8..13, ly0 < 0.85), carry the Elestial cathedral
+  // gable terraces seamlessly across the rhombohedral shoulder!
   if (kn >= 7 && dtHit <= 1e-5) {
-    bool isTopTerm = (kn >= 8 && kn <= 13 && ly0 > 0.14 && ly0 < 0.88);
-    bool isBotTerm = ((kn == 7 || (kn >= 14 && kn <= 16)) && ly0 < 0.14 && ly0 > -0.38);
-    if (isTopTerm || isBotTerm) {
-      float termFade = isTopTerm
-        ? ((1.0 - smoothstep(0.68, 0.88, ly0)) * smoothstep(0.14, 0.24, ly0))
-        : (smoothstep(-0.36, -0.08, ly0) * (1.0 - smoothstep(0.06, 0.14, ly0)));
+    if (kn >= 8 && kn <= 13 && ly0 > 0.16 && ly0 < 0.85) {
+      float termFade = (1.0 - smoothstep(0.64, 0.85, ly0)) * smoothstep(0.16, 0.28, ly0);
       float guT, gaxT, edT, gabT;
       evalCathedralFace(uA0, ly0, seedA, cathAmt, guT, gaxT, edT, gabT);
-      vec3 nTermCath = normalize(origN + (guT * 0.52 * tUA - gaxT * 0.45 * ax) * termFade);
+      vec3 nTermCath = normalize(origN + (guT * 0.48 * tUA - gaxT * 0.42 * ax) * termFade);
       if (dot(nTermCath, rd) > -0.06) {
         nTermCath = normalize(nTermCath - rd * (dot(nTermCath, rd) + 0.06));
       }
@@ -10713,10 +10700,8 @@ float smaxSimple(float a, float b, float k) {
 
 float evalGalliumPuddleSDF(vec3 qGa, float meltAmt, out float outFloorClip, out vec2 outPuddleUV) {
   float m = clamp(meltAmt, 0.0, 1.0);
-  float morphT = smoothstep(0.06, 0.72, m);
-  // Keep liquid metaballs full-size and advect upward toward the crystal cluster core as meltAmt transforms (post-016765)
-  float mScale = mix(1.06, 1.00, morphT);
-  vec3 pCen = vec3(-0.012, mix(0.045, -0.016, morphT), 0.042);
+  float mScale = mix(0.95, 1.02, m);
+  vec3 pCen = vec3(-0.012, mix(0.045, -0.016, smoothstep(0.05, 0.68, m)), 0.042);
 
   // Tilted puddle plane (~34 deg forward slope toward viewer, matching reference photo 372c3f66)
   vec3 nP = vec3(0.055, 0.825, 0.562);
@@ -10725,7 +10710,7 @@ float evalGalliumPuddleSDF(vec3 qGa, float meltAmt, out float outFloorClip, out 
 
   vec3 rel = (qGa - pCen) / max(mScale, 0.12);
   vec2 uv = vec2(dot(rel, uP), dot(rel, vP));
-  float h = dot(rel, nP) * mix(0.58, 1.0, morphT);
+  float h = dot(rel, nP);
   outPuddleUV = uv;
 
   // Compact multi-lobed scalloped liquid basin + drooping bottom-right tongue (matching 372c3f66)
@@ -10749,14 +10734,14 @@ float evalGalliumPuddleSDF(vec3 qGa, float meltAmt, out float outFloorClip, out 
   float dh = h - hCamber;
   float dPad = (sqrt(dCore2D * dCore2D + dh * dh) - T) * mScale;
 
-  outFloorClip = -(h - (hCamber - T * 0.42)) * mScale * morphT;
+  outFloorClip = -(h - (hCamber - T * 0.42)) * mScale * smoothstep(0.15, 0.65, m);
   return dPad;
 }
 
 // Pure 3D evaluation of the molten gallium puddle + 3D concave capillary meniscus collar
-// around the core crystal bases, morphing from blobby liquid into the next crystal shape during transitions (post-016765).
+// around the core crystal bases (C1-smooth everywhere, zero dRayPoly/1e9 silhouette discontinuity!).
 float evalGalliumFastStep(
-  vec3 qGa, float meltAmt, float morphT,
+  vec3 qGa, float meltAmt,
   vec3 c0, vec3 h0, vec3 c1, vec3 h1, vec3 c2, vec3 h2,
   out float outMeltFactor
 ) {
@@ -10768,18 +10753,13 @@ float evalGalliumFastStep(
   float d1 = (length((qGa - c1) / h1) - 1.0) * h1.x;
   float d2 = (length((qGa - c2) / h2) - 1.0) * h2.x;
 
-  float dBase = sminSimple(d0, sminSimple(d1, d2, 0.060), 0.060);
-  float kMeniscus = (0.090 + 0.110 * clamp(meltAmt, 0.0, 1.0));
-  float uMen = 1.0 - smoothstep(-0.06, kMeniscus, dBase);
-  float meniscusLift = 0.62 * kMeniscus * uMen * uMen;
-  float dLiquidFull = dPuddle - meniscusLift;
-
-  // Morph between blobby liquid puddle + meniscus (morphT = 1) and the 3D crystal cluster shape (morphT = 0)
-  float midBell = 4.0 * morphT * (1.0 - morphT);
-  vec3 rWave = abs(fract(qGa * 2.1 + u_time * 0.25) - 0.5) - 0.25;
-  float liquidRipple = 0.038 * midBell * (rWave.x + rWave.y - rWave.z);
-  float dLiquid = mix(dBase, dLiquidFull, morphT) + liquidRipple;
-  outMeltFactor = mix(0.85 * midBell, smoothstep(0.02, 0.85, uMen), morphT);
+  float dBase = sminSimple(d0, sminSimple(d1, d2, 0.055), 0.055);
+  float kMeniscus = (0.075 + 0.095 * clamp(meltAmt, 0.0, 1.0));
+  // C1-smooth 3D capillary meniscus collar that visibly climbs up and fillets the lower crystal walls
+  float uMen = 1.0 - smoothstep(-0.055, kMeniscus, dBase);
+  float meniscusLift = 0.58 * kMeniscus * uMen * uMen;
+  float dLiquid = dPuddle - meniscusLift;
+  outMeltFactor = smoothstep(0.02, 0.35, uMen);
   return dLiquid;
 }
 
@@ -10817,7 +10797,7 @@ bool intersectGalliumMelt(
     }
   }
 
-  // 2. Compute solid crystal analytical Euclidean edge distance & crisp mirror-chrome facet normal at polyT
+  // 2. Compute solid crystal analytical Euclidean edge distance & smooth physical cast-gallium bevel normal at polyT
   vec3 polyN = vec3(0.0, 1.0, 0.0);
   float polyEdgeDist = 1.0;
   if (hasPolyHit) {
@@ -10839,17 +10819,15 @@ bool intersectGalliumMelt(
     }
     polyEdgeDist = d2nd;
     float rPoly = max(body(polyId, 2).w, 0.02);
-    // Micro-bevel only at physical edge (zero wide white wireframe bevel stripes)
     float bevelW = (1.0 - smoothstep(0.0, rPoly * 0.014, d2nd)) * 0.14;
     polyN = normalize(mix(polyN, normalize(polyN + n2nd), bevelW));
   }
 
-  // 3. Bounding sphere around the molten gallium puddle & morphing liquid cluster
-  float morphT = smoothstep(0.06, 0.72, clamp(meltAmt, 0.0, 1.0));
+  // 3. Tight bounding sphere around the lower molten gallium puddle & meniscus collar
   vec3 qRo = toGalliumFrame(ro);
   vec3 qRd = toGalliumFrame(rd);
-  vec3 pudSphCen = vec3(-0.01, mix(0.02, -0.065, morphT), 0.045);
-  float pudSphRad = mix(0.50, 0.39, morphT);
+  vec3 pudSphCen = vec3(-0.01, -0.065, 0.045);
+  float pudSphRad = 0.38;
   vec3 oc = qRo - pudSphCen;
   float b = dot(oc, qRd);
   float h = b * b - dot(oc, oc) + pudSphRad * pudSphRad;
@@ -10863,31 +10841,27 @@ bool intersectGalliumMelt(
 
   float s = sqrt(h);
   float t0 = max(0.0, -b - s);
-  float t1 = min(-b + s, (hasPolyHit && morphT > 0.85) ? polyT : (-b + s));
+  float t1 = min(-b + s, hasPolyHit ? polyT : (-b + s));
 
-  // Precompute 3 core crystal ellipsoids in qGa frame ONCE outside the march loop
-  float spireStretch = 1.0 - morphT;
+  // Precompute 3 core crystal base ellipsoids in qGa frame ONCE outside the march loop
   vec3 c0 = toGalliumFrame(body(0, 0).xyz);
   float r0 = max(body(0, 2).w, 0.05);
-  float l0 = max(body(0, 1).w * 0.46, r0 * 1.1);
-  vec3 h0 = vec3(r0 * mix(0.92, 1.16, spireStretch), mix(r0 * 1.06, l0, spireStretch), r0 * mix(0.90, 1.16, spireStretch));
+  vec3 h0 = vec3(r0 * 0.90, r0 * 1.04, r0 * 0.88);
   vec3 c1 = (nc > 1) ? toGalliumFrame(body(1, 0).xyz) : c0;
   float r1 = (nc > 1) ? max(body(1, 2).w, 0.05) : r0;
-  float l1 = (nc > 1) ? max(body(1, 1).w * 0.46, r1 * 1.1) : l0;
-  vec3 h1 = vec3(r1 * mix(0.92, 1.16, spireStretch), mix(r1 * 1.04, l1, spireStretch), r1 * mix(0.90, 1.16, spireStretch));
+  vec3 h1 = vec3(r1 * 0.90, r1 * 1.02, r1 * 0.88);
   int idx2 = (nc > 3) ? 3 : 2;
   vec3 c2 = (nc > 2) ? toGalliumFrame(body(idx2, 0).xyz) : c0;
   float r2 = (nc > 2) ? max(body(idx2, 2).w, 0.05) : r0;
-  float l2 = (nc > 2) ? max(body(idx2, 1).w * 0.46, r2 * 1.1) : l0;
-  vec3 h2 = vec3(r2 * mix(0.94, 1.16, spireStretch), mix(r2 * 1.08, l2, spireStretch), r2 * mix(0.92, 1.16, spireStretch));
+  vec3 h2 = vec3(r2 * 0.94, r2 * 1.08, r2 * 0.92);
 
-  // Early exit only for high upper crystal hits well above the puddle/meniscus zone when morphT > 0.85
-  if (hasPolyHit && morphT > 0.85) {
+  // Early exit for upper crystal hits well above the puddle/meniscus zone
+  if (hasPolyHit) {
     vec3 qPolyHit = qRo + qRd * polyT;
     float fClipP = -1e9;
     vec2 puvP = vec2(0.0);
     float dPudHit = evalGalliumPuddleSDF(qPolyHit, meltAmt, fClipP, puvP);
-    if (qPolyHit.y > 0.12 && dPudHit > 0.16) {
+    if (dPudHit > 0.13) {
       outId = polyId; outTHit = polyT; outTfHit = polyTf;
       outK = CP + 3000 + clamp(polyK, 0, 17);
       outN = polyN; outMeltFactor = 0.0; outEdgeDist = polyEdgeDist;
@@ -10903,13 +10877,13 @@ bool intersectGalliumMelt(
     for (int st = 0; st < 24; st++) {
       if (t > t1) break;
       float mF = 0.0;
-      float d = evalGalliumFastStep(qRo + qRd * t, meltAmt, morphT, c0, h0, c1, h1, c2, h2, mF);
-      if (d <= 0.0005) {
+      float d = evalGalliumFastStep(qRo + qRd * t, meltAmt, c0, h0, c1, h1, c2, h2, mF);
+      if (d <= 0.0006) {
         hitPuddle = true;
         break;
       }
       tPrev = t;
-      t += max(0.0012, d * 0.82);
+      t += max(0.0014, d * 0.84);
     }
   }
 
@@ -10918,25 +10892,25 @@ bool intersectGalliumMelt(
     // Smooth capillary wetting fillet on the solid crystal wall right where it meets the liquid pool
     vec3 qPoly = qRo + qRd * polyT;
     float mFPoly = 0.0;
-    float dLiqPoly = evalGalliumFastStep(qPoly, meltAmt, morphT, c0, h0, c1, h1, c2, h2, mFPoly);
-    float wetW = (1.0 - smoothstep(-0.012, 0.075, dLiqPoly)) * clamp(meltAmt * 1.35, 0.0, 1.0);
-    if (wetW > 0.002) {
-      float epsW = 0.0020;
+    float dLiqPoly = evalGalliumFastStep(qPoly, meltAmt, c0, h0, c1, h1, c2, h2, mFPoly);
+    float wetW = (1.0 - smoothstep(-0.006, 0.052, dLiqPoly)) * clamp(meltAmt * 1.35, 0.0, 1.0);
+    if (wetW > 0.005) {
+      float epsW = 0.0018;
       float dm1, dm2, dm3;
-      float gxW = evalGalliumFastStep(qPoly + vec3(epsW, 0.0, 0.0), meltAmt, morphT, c0, h0, c1, h1, c2, h2, dm1) - dLiqPoly;
-      float gyW = evalGalliumFastStep(qPoly + vec3(0.0, epsW, 0.0), meltAmt, morphT, c0, h0, c1, h1, c2, h2, dm2) - dLiqPoly;
-      float gzW = evalGalliumFastStep(qPoly + vec3(0.0, 0.0, epsW), meltAmt, morphT, c0, h0, c1, h1, c2, h2, dm3) - dLiqPoly;
+      float gxW = evalGalliumFastStep(qPoly + vec3(epsW, 0.0, 0.0), meltAmt, c0, h0, c1, h1, c2, h2, dm1) - dLiqPoly;
+      float gyW = evalGalliumFastStep(qPoly + vec3(0.0, epsW, 0.0), meltAmt, c0, h0, c1, h1, c2, h2, dm2) - dLiqPoly;
+      float gzW = evalGalliumFastStep(qPoly + vec3(0.0, 0.0, epsW), meltAmt, c0, h0, c1, h1, c2, h2, dm3) - dLiqPoly;
       vec3 nGaW = normalize(vec3(gxW, gyW, gzW) + vec3(0.0, 1e-6, 0.0));
       vec3 nLiqW = normalize(vec3(
         0.186646 * nGaW.x + 0.982427 * nGaW.z,
         nGaW.y,
         -0.982427 * nGaW.x + 0.186646 * nGaW.z
       ));
-      polyN = normalize(mix(polyN, nLiqW, wetW * 0.95));
+      polyN = normalize(mix(polyN, nLiqW, wetW * 0.86));
     }
     outId = polyId; outTHit = polyT; outTfHit = polyTf;
     outK = CP + 3000 + clamp(polyK, 0, 17);
-    outN = polyN; outMeltFactor = max(wetW, 2.6 * morphT * (1.0 - morphT)); outEdgeDist = polyEdgeDist;
+    outN = polyN; outMeltFactor = wetW * 0.92; outEdgeDist = polyEdgeDist;
     return true;
   }
 
@@ -10944,7 +10918,7 @@ bool intersectGalliumMelt(
   for (int bs = 0; bs < 3; bs++) {
     float tMid = 0.5 * (tLo + tHi);
     float mFMid = 0.0;
-    if (evalGalliumFastStep(qRo + qRd * tMid, meltAmt, morphT, c0, h0, c1, h1, c2, h2, mFMid) <= 0.0002) {
+    if (evalGalliumFastStep(qRo + qRd * tMid, meltAmt, c0, h0, c1, h1, c2, h2, mFMid) <= 0.0002) {
       tHi = tMid;
     } else {
       tLo = tMid;
@@ -10953,14 +10927,14 @@ bool intersectGalliumMelt(
   float tFinal = 0.5 * (tLo + tHi);
   vec3 qHit = qRo + qRd * tFinal;
   float mF0 = 1.0;
-  float d0 = evalGalliumFastStep(qHit, meltAmt, morphT, c0, h0, c1, h1, c2, h2, mF0);
+  float d0 = evalGalliumFastStep(qHit, meltAmt, c0, h0, c1, h1, c2, h2, mF0);
 
-  // Compute 3D gradient normal in qGa space using 3 forward differences against d0
+  // Compute 3D gradient normal in qGa space using 3 forward differences (zero UBO reads!)
   float eps = 0.0018;
   float dm1, dm2, dm3;
-  float gx = evalGalliumFastStep(qHit + vec3(eps, 0.0, 0.0), meltAmt, morphT, c0, h0, c1, h1, c2, h2, dm1) - d0;
-  float gy = evalGalliumFastStep(qHit + vec3(0.0, eps, 0.0), meltAmt, morphT, c0, h0, c1, h1, c2, h2, dm2) - d0;
-  float gz = evalGalliumFastStep(qHit + vec3(0.0, 0.0, eps), meltAmt, morphT, c0, h0, c1, h1, c2, h2, dm3) - d0;
+  float gx = evalGalliumFastStep(qHit + vec3(eps, 0.0, 0.0), meltAmt, c0, h0, c1, h1, c2, h2, dm1) - d0;
+  float gy = evalGalliumFastStep(qHit + vec3(0.0, eps, 0.0), meltAmt, c0, h0, c1, h1, c2, h2, dm2) - d0;
+  float gz = evalGalliumFastStep(qHit + vec3(0.0, 0.0, eps), meltAmt, c0, h0, c1, h1, c2, h2, dm3) - d0;
   vec3 nGaLocal = normalize(vec3(gx, gy, gz) + vec3(0.0, 1e-6, 0.0));
   // Transform normal back from qGa to cluster space p
   vec3 nPuddleWorld = normalize(vec3(
@@ -10970,15 +10944,9 @@ bool intersectGalliumMelt(
   ));
 
   vec3 nFinal = nPuddleWorld;
-  if (hasPolyHit && polyT - tFinal < 0.045) {
-    float blendWall = smoothstep(0.0, 0.045, polyT - tFinal);
-    nFinal = normalize(mix(polyN, nPuddleWorld, 0.55 + 0.45 * blendWall));
-  }
-  // As meltAmt transitions toward 0 (post-016765), smoothly lock the morphing liquid blobs onto the exact 3D crystal facets!
-  float facetLock = 1.0 - smoothstep(0.06, 0.58, clamp(meltAmt, 0.0, 1.0));
-  if (hasPolyHit && facetLock > 0.001) {
-    tFinal = mix(tFinal, polyT, facetLock);
-    nFinal = normalize(mix(nFinal, polyN, facetLock));
+  if (hasPolyHit && polyT - tFinal < 0.018) {
+    float blendWall = smoothstep(0.0, 0.018, polyT - tFinal);
+    nFinal = normalize(mix(polyN, nPuddleWorld, 0.35 + 0.65 * blendWall));
   }
   if (dot(nFinal, rd) > -0.04) {
     nFinal = normalize(nFinal - rd * (dot(nFinal, rd) + 0.04));
@@ -10989,8 +10957,8 @@ bool intersectGalliumMelt(
   outTfHit = hasPolyHit ? max(tFinal + 0.12, polyTf) : (tFinal + 0.16);
   outK = CP + 3000 + clamp(hasPolyHit ? polyK : 0, 0, 17);
   outN = nFinal;
-  outMeltFactor = mix(1.0, mF0, facetLock * 0.65);
-  outEdgeDist = mix(1.0, polyEdgeDist, facetLock);
+  outMeltFactor = 1.0;
+  outEdgeDist = 1.0;
   return true;
 }
 
@@ -12043,43 +12011,38 @@ vec3 shadeMetallicCrystal(int id, int k, vec3 pEntry, vec3 rd, vec3 nRefl, float
     float cosGa = clamp(-dot(rd, nGa), 0.02, 1.0);
     float cosSmooth = clamp(-dot(rd, nRefl), 0.02, 1.0);
 
-    // High-reflectance mirror-chrome silvery-blue metallic gallium conductor palette (F0 ~ vec3(0.88, 0.92, 0.97)):
-    vec3 gaF0 = vec3(0.88, 0.92, 0.97);
-    vec3 coolSilverRim = vec3(0.76, 0.84, 0.94);
-    vec3 brightSilverSpec = vec3(0.96, 1.01, 1.08);
-    vec3 chromeHighlight = vec3(1.04, 1.05, 1.08);
-    vec3 pewterShadow = vec3(0.032, 0.042, 0.062);
+    // High-reflectance mirror-chrome metallic gallium conductor palette (F0 ~ vec3(0.90, 0.93, 0.97)):
+    vec3 gaF0 = vec3(0.90, 0.93, 0.97);
+    vec3 warmGoldKey = vec3(0.90, 0.94, 1.00);
+    vec3 coolSilverRim = vec3(0.78, 0.85, 0.94);
+    vec3 brightSilverSpec = vec3(1.00, 1.04, 1.10);
+    vec3 pewterShadow = vec3(0.038, 0.046, 0.060);
 
-    // --- (A) Upper Solid Gallium Crystal Facet Shading (Mirror-Chrome Silvery-Blue Metallic Conductor) ---
-    // 1. Top & beveled pyramidal facets reflect the bright silvery-chrome overhead studio softbox
-    float topChromeAlign = smoothstep(0.06, 0.56, dot(wNGa, normalize(vec3(-0.24, 0.80, 0.55))));
-    // 2. Right & front-right steep facets reflect the cool ice-silver studio rim tent
-    float sideSilverAlign = smoothstep(-0.14, 0.52, dot(wNGa, normalize(vec3(0.62, 0.12, 0.78))));
-    // 3. Inner & left-facing vertical facets reflect deep black-chrome pewter with bright liquid puddle bounce near the base
-    float innerPewterAlign = smoothstep(0.02, 0.52, dot(wNGa, normalize(vec3(-0.74, -0.14, 0.65)))) * (1.0 - 0.82 * topChromeAlign);
-    float puddleUpBounce = (1.0 - smoothstep(-0.46, -0.04, wNGa.y)) * (1.0 - smoothstep(-0.08, 0.11, qGa.y)) * clamp(u_melt * 1.35, 0.0, 1.0);
+    // --- (A) Upper Solid Gallium Crystal Facet Shading (Mirror-Chrome Metallic Conductor) ---
+    float topGoldAlign = smoothstep(0.10, 0.54, dot(wNGa, normalize(vec3(-0.28, 0.78, 0.56))));
+    float sideSilverAlign = smoothstep(-0.12, 0.50, dot(wNGa, normalize(vec3(0.62, 0.08, 0.78))));
+    float innerPewterAlign = smoothstep(0.02, 0.50, dot(wNGa, normalize(vec3(-0.74, -0.14, 0.65)))) * (1.0 - 0.85 * topGoldAlign);
+    float puddleUpBounce = (1.0 - smoothstep(-0.44, -0.06, wNGa.y)) * (1.0 - smoothstep(-0.06, 0.09, qGa.y)) * clamp(u_melt * 1.35, 0.0, 1.0);
 
-    // Mirror-chrome conductor Fresnel tint per orientation (silvery-blue platinum F0 matching the molten gallium pool)
     vec3 gaCondTint = mix(coolSilverRim, brightSilverSpec, sideSilverAlign);
-    gaCondTint = mix(gaCondTint, pewterShadow * 2.0, innerPewterAlign * (1.0 - 0.80 * puddleUpBounce));
-    gaCondTint = mix(gaCondTint, chromeHighlight, topChromeAlign * 0.85);
-    gaCondTint = mix(gaCondTint, brightSilverSpec * 1.06, puddleUpBounce * 0.82);
+    gaCondTint = mix(gaCondTint, pewterShadow * 1.8, innerPewterAlign * (1.0 - 0.75 * puddleUpBounce));
+    gaCondTint = mix(gaCondTint, warmGoldKey, topGoldAlign * 0.85);
+    gaCondTint = mix(gaCondTint, brightSilverSpec * 1.05, puddleUpBounce * 0.80);
     vec3 gaFresnel = mix(gaCondTint, vec3(0.98, 1.00, 1.04), pow(max(0.0, 1.0 - cosGa), 3.6) * 0.62);
 
-    // High-contrast mirror-chrome studio reflection (dark chrome horizon band + bright overhead softbox + side rim strips)
     vec3 gaEnvRefl = env(reflect(rd, nGa), 0.016);
-    float keySoftboxGrad = pow(max(0.0, smoothstep(-0.18, 0.82, wReflGa.y + 0.34 * wReflGa.z - 0.16 * wReflGa.x)), 1.45);
-    float rimStripGrad = pow(max(0.0, smoothstep(-0.12, 0.80, abs(wReflGa.x) * 0.68 + wReflGa.z * 0.72)), 1.50);
-    float chromeHorizonDiff = (wReflGa.y + 0.08) * 3.6;
-    float chromeHorizonBand = 1.0 - 0.72 * exp(-chromeHorizonDiff * chromeHorizonDiff);
-    float darkTentGrad = (0.14 + 0.86 * smoothstep(-0.42, 0.38, wReflGa.y + 0.28 * wReflGa.z)) * chromeHorizonBand;
+    float keySoftboxGrad = pow(max(0.0, smoothstep(-0.18, 0.82, wReflGa.y + 0.32 * wReflGa.z - 0.18 * wReflGa.x)), 1.45);
+    float rimStripGrad = pow(max(0.0, smoothstep(-0.12, 0.80, abs(wReflGa.x) * 0.65 + wReflGa.z * 0.72)), 1.45);
+    float chDiff = (wReflGa.y + 0.08) * 3.4;
+    float chBand = 1.0 - 0.68 * exp(-chDiff * chDiff);
+    float darkTentGrad = (0.14 + 0.86 * smoothstep(-0.42, 0.36, wReflGa.y + 0.26 * wReflGa.z)) * chBand;
 
-    float subtleBrushMod = 0.96 + 0.04 * grainMicro + 0.03 * brushFine + 0.02 * brushCross;
-    vec3 realMetalRefl = reflLight * mix(0.62, 0.98, sideSilverAlign * 0.7 + topChromeAlign * 0.8)
+    float subtleBrushMod = 0.97 + 0.03 * grainMicro + 0.02 * brushFine + 0.015 * brushCross;
+    vec3 realMetalRefl = reflLight * mix(0.62, 0.98, sideSilverAlign * 0.7 + topGoldAlign * 0.8)
                        + gaEnvRefl * (0.46 + 0.52 * rimStripGrad + 0.58 * keySoftboxGrad);
 
     vec3 solidCol = gaFresnel * realMetalRefl * darkTentGrad * subtleBrushMod
-                  + gaCondTint * f_ambient * (0.10 + 0.34 * keySoftboxGrad * topChromeAlign + 0.28 * rimStripGrad * sideSilverAlign) * chromeHorizonBand * subtleBrushMod
+                  + gaCondTint * f_ambient * (0.08 + 0.30 * keySoftboxGrad * topGoldAlign + 0.26 * rimStripGrad * sideSilverAlign) * chBand * subtleBrushMod
                   + min(specBroad, vec3(1.6)) * brightSilverSpec * 0.24 * seamAO
                   + min(specSharp, vec3(1.4)) * vec3(1.14, 1.18, 1.24) * 0.22;
     solidCol = min(solidCol, vec3(1.34, 1.36, 1.40));
@@ -12091,37 +12054,36 @@ vec3 shadeMetallicCrystal(int id, int k, vec3 pEntry, vec3 rd, vec3 nRefl, float
     // Outer grazing silhouette attenuation (cosSmooth < 0.24 reflects the dark studio floor/horizon, never a blown-out white halo!)
     float silhouetteDarkEdge = smoothstep(0.04, 0.28, cosSmooth);
 
-    // 1. Broad tilted puddle basin reflects luminous silvery-platinum & subtle warm studio softbox dome
-    float basinMask = smoothstep(0.42, 0.82, basinDot) * silhouetteDarkEdge;
-    vec3 puddleChromePool = mix(vec3(0.38, 0.44, 0.54), vec3(0.86, 0.90, 0.96), smoothstep(0.56, 0.94, basinDot));
+    // 1. Broad tilted puddle basin reflects bright silvery-platinum studio diffuser
+    float basinMask = smoothstep(0.46, 0.82, basinDot) * silhouetteDarkEdge;
+    vec3 puddleWarmPool = mix(vec3(0.46, 0.52, 0.62), vec3(0.86, 0.91, 0.98), smoothstep(0.62, 0.95, basinDot));
 
-    // 2. Smooth concave meniscus collar transition right where solid crystal plunges into the molten pool
-    float meniscusCrease = max(0.0, sin(clamp((meltFactor - 0.04) / 0.78, 0.0, 1.0) * PI));
-    float meniscusDark = 1.0 - 0.42 * pow(meniscusCrease, 1.45);
-    float meniscusFilletSpec = pow(meniscusCrease, 2.0) * smoothstep(0.04, 0.72, wReflGa.y + 0.38 * wReflGa.z) * silhouetteDarkEdge;
+    // 2. Concave meniscus crease right where solid crystal plunges into the molten pool
+    float meniscusCrease = max(0.0, sin(clamp((meltFactor - 0.03) / 0.55, 0.0, 1.0) * PI));
+    float meniscusDark = 1.0 - 0.78 * pow(meniscusCrease, 1.35);
+    float meniscusFilletSpec = pow(meniscusCrease, 2.4) * smoothstep(0.08, 0.72, wReflGa.y + 0.35 * wReflGa.z) * silhouetteDarkEdge;
 
     // 3. High-contrast black-chrome studio horizon band along the bulbous capillary rim & outer grazing edge
-    float rimDiff = (basinDot - 0.50) / 0.22;
+    float rimDiff = (basinDot - 0.52) / 0.20;
     float rimDarkRing = exp(-rimDiff * rimDiff);
     float outerGrazingDark = 1.0 - silhouetteDarkEdge;
-    float darkBand = clamp(max(rimDarkRing * 0.88, outerGrazingDark * 0.86), 0.0, 0.94);
+    float darkBand = clamp(max(rimDarkRing * 0.92, outerGrazingDark * 0.88), 0.0, 0.95);
 
-    // 4. Inward-set silver-white liquid-gallium specular highlight tube along the upper-outer curvature of the rim (cosSmooth ~ 0.28..0.68)
+    // 4. Inward-set silver-white liquid-mercury specular highlight tube along the upper-outer curvature of the rim (cosSmooth ~ 0.28..0.68)
     float tubeDiff = (cosSmooth - 0.44) / 0.16;
-    float inwardRimTube = exp(-tubeDiff * tubeDiff) * smoothstep(0.10, 0.30, cosSmooth) * (1.0 - 0.70 * basinMask);
+    float inwardRimTube = exp(-tubeDiff * tubeDiff) * smoothstep(0.10, 0.30, cosSmooth) * (1.0 - 0.75 * basinMask);
     float lowerLipCatch = outerLipCatchLight(wNSmooth, wReflGa, qGa);
-    float rimSpecHighlight = clamp(inwardRimTube * (0.72 + 0.74 * lowerLipCatch), 0.0, 1.35);
+    float rimSpecHighlight = clamp(inwardRimTube * (0.68 + 0.72 * lowerLipCatch), 0.0, 1.35);
 
-    vec3 mirrorEnv = env(reflect(rd, nRefl), 0.004) * (0.22 + 0.32 * silhouetteDarkEdge);
-    vec3 liquidCol = puddleChromePool * basinMask * meniscusDark * (0.78 + 0.30 * max(f_ambient.r, 0.9));
-    liquidCol = mix(liquidCol, vec3(0.014, 0.018, 0.028), darkBand);
-    liquidCol += mirrorEnv * (1.0 - 0.55 * darkBand) * vec3(0.90, 0.95, 1.02);
-    liquidCol += vec3(1.24, 1.28, 1.34) * rimSpecHighlight * (0.66 + 0.34 * max(f_ambient.r, 0.9));
-    liquidCol += vec3(1.06, 1.12, 1.20) * meniscusFilletSpec * 0.62;
-    liquidCol += min(specSharp, vec3(1.4)) * vec3(1.14, 1.18, 1.24) * 0.26 * silhouetteDarkEdge;
+    vec3 mirrorEnv = env(reflect(rd, nRefl), 0.004) * (0.14 + 0.22 * silhouetteDarkEdge);
+    vec3 liquidCol = puddleWarmPool * basinMask * meniscusDark * (0.74 + 0.32 * max(f_ambient.r, 0.9));
+    liquidCol = mix(liquidCol, vec3(0.012, 0.014, 0.020), darkBand);
+    liquidCol += mirrorEnv * (1.0 - 0.65 * darkBand) * vec3(0.88, 0.92, 0.98);
+    liquidCol += vec3(1.28, 1.24, 1.15) * rimSpecHighlight * (0.62 + 0.38 * max(f_ambient.r, 0.9));
+    liquidCol += vec3(1.12, 0.94, 0.66) * meniscusFilletSpec * 0.58;
+    liquidCol += min(specSharp, vec3(1.4)) * vec3(1.12, 1.10, 1.04) * 0.24 * silhouetteDarkEdge;
 
-    float collarBlend = smoothstep(0.01, 0.68, meltFactor);
-    vec3 gaCol = mix(solidCol, liquidCol, collarBlend);
+    vec3 gaCol = mix(solidCol, liquidCol, liqW);
     metalCol = mix(metalCol, gaCol, gaModeW);
   }
   return metalCol;
