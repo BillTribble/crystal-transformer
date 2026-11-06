@@ -8,7 +8,7 @@ import { FULLSCREEN_VERT, frameUniforms, probeFloatTargets, program, shaderHeade
 
 const UNIT_INCL = 0, UNIT_HDR = 1, UNIT_BLOOM_A = 2, UNIT_BLOOM_B = 3;
 const BLOOM_DIVISOR = 4;
-const FILL_IN_DURATION = 0.72;
+const FILL_IN_DURATION = 1.0;
 const COMPLETION_STATUS_KHR = 0x91b1;
 
 export default function create({ canvas, P, model, degrade }) {
@@ -55,7 +55,7 @@ export default function create({ canvas, P, model, degrade }) {
   let hdrTex = null, hdrFbo = null, bloomA = null, bloomAFbo = null, bloomB = null, bloomBFbo = null;
   let hdrW = 0, hdrH = 0, bloomW = 0, bloomH = 0, floatTargets = false;
   let clusterVersion = -1, uploadedClusterVer = -1, lastClusterW = 0, lastClusterH = 0, pxRatio = 1;
-  let wireframeFrames = 0, fillInProgress = isCapture && !holdWireframe ? 1.0 : 0.0, wireframeAlpha = isCapture && !holdWireframe ? 0.0 : 1.0;
+  let wireframeFrames = 0, shaderWarmupFrames = 0, fillInProgress = isCapture && !holdWireframe ? 1.0 : 0.0, wireframeAlpha = isCapture && !holdWireframe ? 0.0 : 1.0;
   let firstWireframeMs = null, firstWireframeNavMs = null, shaderReadyMs = null, fillStartPerfMs = 0, fillClockStarted = false;
 
   // Preallocated scratch buffers for 60 FPS 3D wireframe projection
@@ -504,7 +504,7 @@ export default function create({ canvas, P, model, degrade }) {
       pxRatio = px;
       if (buildStage >= 1) sizeTargets();
     },
-    frame(t, _dt, rt) {
+    frame(t, _dt, rt, rawDt = 0.016) {
       if (!ready) return;
       sceneTime = t;
       realTime = rt;
@@ -536,9 +536,9 @@ export default function create({ canvas, P, model, degrade }) {
         const minWfMs = (isCapture || pinnedFillIn !== null || sp.has('fast')) ? 0 : 420;
         if (buildStage === 2 && wireframeFrames >= 8 && (performance.now() - sketchStartPerf) >= minWfMs && isParallelCompileComplete()) {
           finalizeCompiledPrograms();
-        } else {
-          return;
+          shaderWarmupFrames = 0;
         }
+        return;
       }
 
       if (uploadedClusterVer !== cluster.version) {
@@ -560,38 +560,35 @@ export default function create({ canvas, P, model, degrade }) {
       }
       drawPass(passComposite, null, canvas.width, canvas.height);
 
-      // Start the 720ms lockstep cross-fade clock AFTER the first full WebGL2 frame has rendered,
-      // so compile/link/first-draw latency never eats into the smooth wireframe -> filled transition!
-      if (!fillClockStarted) {
-        fillClockStarted = true;
-        fillStartPerfMs = performance.now();
-      }
-
-      // Smooth 720ms lockstep cross-fade from rotating 3D Wireframe -> full ray-traced crystal
+      // Wait 3 warm-up WebGL2 draw frames so any synchronous GPU PSO compilation stall on Apple Metal
+      // finishes completely underneath the 100% opaque rotating wireframe BEFORE the 1.0s fade begins!
       if (holdWireframe) {
         fillInProgress = 0.0;
         wireframeAlpha = 1.0;
         drawWireframeOverlay(1.0, 1.0);
       } else if (pinnedFillIn !== null) {
         fillInProgress = pinnedFillIn;
-        const pBg = Math.min(1.0, fillInProgress / 0.72);
-        const bgEase = pBg * pBg * (3.0 - 2.0 * pBg);
-        const backdropAlpha = 1.0 - bgEase;
-        const pWf = Math.max(0.0, Math.min(1.0, (fillInProgress - 0.14) / 0.86));
-        const wfEase = pWf * pWf * (3.0 - 2.0 * pWf);
-        wireframeAlpha = 1.0 - wfEase;
+        const fillAlpha = 0.5 - 0.5 * Math.cos(Math.PI * fillInProgress);
+        const backdropAlpha = 1.0 - fillAlpha;
+        wireframeAlpha = 1.0 - fillAlpha;
         drawWireframeOverlay(backdropAlpha, wireframeAlpha);
+      } else if (shaderWarmupFrames < 3 && fillInProgress < 1.0) {
+        shaderWarmupFrames++;
+        fillInProgress = 0.0;
+        wireframeAlpha = 1.0;
+        drawWireframeOverlay(1.0, 1.0);
       } else if (fillInProgress < 1.0) {
-        const elapsed = Math.max(0, (performance.now() - fillStartPerfMs) * 0.001);
-        fillInProgress = Math.min(1.0, elapsed / FILL_IN_DURATION);
-        // Smooth cubic ease-in-out for ray-traced crystal reveal underneath the rotating wireframe
-        const pBg = Math.min(1.0, fillInProgress / 0.72);
-        const bgEase = pBg * pBg * (3.0 - 2.0 * pBg);
-        const backdropAlpha = 1.0 - bgEase;
-        // Keep rotating wireframe aligned in 100% lockstep over the crystal facets as it dissolves out
-        const pWf = Math.max(0.0, Math.min(1.0, (fillInProgress - 0.14) / 0.86));
-        const wfEase = pWf * pWf * (3.0 - 2.0 * pWf);
-        wireframeAlpha = 1.0 - wfEase;
+        if (!fillClockStarted) {
+          fillClockStarted = true;
+          fillStartPerfMs = performance.now();
+        }
+        // Advance by bounded frame delta (max 20ms per rendered frame -> >= 50 smooth frames over 1.0s)
+        // so GPU driver stalls can never skip frames or make the transition look abrupt!
+        const stepDt = Math.min(Math.max(rawDt || 0.016, 0.004), 0.020);
+        fillInProgress = Math.min(1.0, fillInProgress + stepDt / FILL_IN_DURATION);
+        const fillAlpha = 0.5 - 0.5 * Math.cos(Math.PI * fillInProgress);
+        const backdropAlpha = 1.0 - fillAlpha;
+        wireframeAlpha = 1.0 - fillAlpha;
         drawWireframeOverlay(backdropAlpha, wireframeAlpha);
       } else if (wfCanvas && wfCanvas.style.display !== 'none') {
         wireframeAlpha = 0.0;
