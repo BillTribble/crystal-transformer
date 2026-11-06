@@ -10756,8 +10756,8 @@ float evalGalliumPuddleSDF(vec3 qGa, float meltAmt, out float outFloorClip, out 
 // Pure 3D evaluation of the molten gallium puddle + 3D concave capillary meniscus collar
 // around the core crystal bases, morphing from blobby liquid into the next crystal shape during transitions (post-016765).
 float evalGalliumFastStep(
-  vec3 qGa, float meltAmt,
-  vec3 c0, vec3 h0, vec3 c1, vec3 h1, vec3 c2, vec3 h2, vec3 c3, vec3 h3,
+  vec3 qGa, float meltAmt, float morphT,
+  vec3 c0, vec3 h0, vec3 c1, vec3 h1, vec3 c2, vec3 h2,
   out float outMeltFactor
 ) {
   float floorClip = -1e9;
@@ -10767,24 +10767,19 @@ float evalGalliumFastStep(
   float d0 = (length((qGa - c0) / h0) - 1.0) * h0.x;
   float d1 = (length((qGa - c1) / h1) - 1.0) * h1.x;
   float d2 = (length((qGa - c2) / h2) - 1.0) * h2.x;
-  float d3 = (length((qGa - c3) / h3) - 1.0) * h3.x;
 
-  float dBase = sminSimple(sminSimple(d0, d1, 0.065), sminSimple(d2, d3, 0.065), 0.065);
-  float kMeniscus = (0.095 + 0.115 * clamp(meltAmt, 0.0, 1.0));
-  // Smooth 3D smin capillary meniscus collar that seamlessly fillets the crystal walls into the puddle
-  float hMen = 0.0;
-  float dLiquidFull = sminPoly(dPuddle, max(dBase, dPuddle - 0.085), kMeniscus, hMen);
+  float dBase = sminSimple(d0, sminSimple(d1, d2, 0.060), 0.060);
+  float kMeniscus = (0.090 + 0.110 * clamp(meltAmt, 0.0, 1.0));
+  float uMen = 1.0 - smoothstep(-0.06, kMeniscus, dBase);
+  float meniscusLift = 0.62 * kMeniscus * uMen * uMen;
+  float dLiquidFull = dPuddle - meniscusLift;
 
   // Morph between blobby liquid puddle + meniscus (morphT = 1) and the 3D crystal cluster shape (morphT = 0)
-  float morphT = smoothstep(0.06, 0.72, clamp(meltAmt, 0.0, 1.0));
-  float midBell = sin(morphT * PI);
-  float liquidRipple = 0.028 * midBell * (
-    sin(qGa.x * 13.0 + u_time * 2.2) * cos(qGa.y * 11.0 - u_time * 1.8) +
-    0.5 * sin(qGa.z * 15.0 + u_time * 2.5)
-  );
+  float midBell = 4.0 * morphT * (1.0 - morphT);
+  vec3 rWave = abs(fract(qGa * 2.1 + u_time * 0.25) - 0.5) - 0.25;
+  float liquidRipple = 0.038 * midBell * (rWave.x + rWave.y - rWave.z);
   float dLiquid = mix(dBase, dLiquidFull, morphT) + liquidRipple;
-  float baseMeltF = smoothstep(0.02, 0.85, 1.0 - smoothstep(-0.06, kMeniscus, dBase));
-  outMeltFactor = mix(0.85 * midBell, baseMeltF, morphT);
+  outMeltFactor = mix(0.85 * midBell, smoothstep(0.02, 0.85, uMen), morphT);
   return dLiquid;
 }
 
@@ -10854,7 +10849,7 @@ bool intersectGalliumMelt(
   vec3 qRo = toGalliumFrame(ro);
   vec3 qRd = toGalliumFrame(rd);
   vec3 pudSphCen = vec3(-0.01, mix(0.02, -0.065, morphT), 0.045);
-  float pudSphRad = mix(0.54, 0.40, morphT);
+  float pudSphRad = mix(0.50, 0.39, morphT);
   vec3 oc = qRo - pudSphCen;
   float b = dot(oc, qRd);
   float h = b * b - dot(oc, oc) + pudSphRad * pudSphRad;
@@ -10870,25 +10865,21 @@ bool intersectGalliumMelt(
   float t0 = max(0.0, -b - s);
   float t1 = min(-b + s, (hasPolyHit && morphT > 0.85) ? polyT : (-b + s));
 
-  // Precompute 4 core crystal ellipsoids in qGa frame ONCE outside the march loop
-  // As morphT -> 0 (transforming to the next crystal), elongate h0..h3 to match the full crystal spire lengths!
+  // Precompute 3 core crystal ellipsoids in qGa frame ONCE outside the march loop
   float spireStretch = 1.0 - morphT;
   vec3 c0 = toGalliumFrame(body(0, 0).xyz);
   float r0 = max(body(0, 2).w, 0.05);
-  float l0 = max(body(0, 1).w * 0.48, r0 * 1.1);
-  vec3 h0 = vec3(r0 * mix(0.92, 1.18, spireStretch), mix(r0 * 1.06, l0, spireStretch), r0 * mix(0.90, 1.18, spireStretch));
+  float l0 = max(body(0, 1).w * 0.46, r0 * 1.1);
+  vec3 h0 = vec3(r0 * mix(0.92, 1.16, spireStretch), mix(r0 * 1.06, l0, spireStretch), r0 * mix(0.90, 1.16, spireStretch));
   vec3 c1 = (nc > 1) ? toGalliumFrame(body(1, 0).xyz) : c0;
   float r1 = (nc > 1) ? max(body(1, 2).w, 0.05) : r0;
-  float l1 = (nc > 1) ? max(body(1, 1).w * 0.48, r1 * 1.1) : l0;
-  vec3 h1 = vec3(r1 * mix(0.92, 1.18, spireStretch), mix(r1 * 1.04, l1, spireStretch), r1 * mix(0.90, 1.18, spireStretch));
-  vec3 c2 = (nc > 2) ? toGalliumFrame(body(2, 0).xyz) : c0;
-  float r2 = (nc > 2) ? max(body(2, 2).w, 0.05) : r0;
-  float l2 = (nc > 2) ? max(body(2, 1).w * 0.48, r2 * 1.1) : l0;
-  vec3 h2 = vec3(r2 * mix(0.94, 1.18, spireStretch), mix(r2 * 1.08, l2, spireStretch), r2 * mix(0.92, 1.18, spireStretch));
-  vec3 c3 = (nc > 3) ? toGalliumFrame(body(3, 0).xyz) : c2;
-  float r3 = (nc > 3) ? max(body(3, 2).w, 0.05) : r2;
-  float l3 = (nc > 3) ? max(body(3, 1).w * 0.48, r3 * 1.1) : l2;
-  vec3 h3 = vec3(r3 * mix(0.94, 1.18, spireStretch), mix(r3 * 1.08, l3, spireStretch), r3 * mix(0.92, 1.18, spireStretch));
+  float l1 = (nc > 1) ? max(body(1, 1).w * 0.46, r1 * 1.1) : l0;
+  vec3 h1 = vec3(r1 * mix(0.92, 1.16, spireStretch), mix(r1 * 1.04, l1, spireStretch), r1 * mix(0.90, 1.16, spireStretch));
+  int idx2 = (nc > 3) ? 3 : 2;
+  vec3 c2 = (nc > 2) ? toGalliumFrame(body(idx2, 0).xyz) : c0;
+  float r2 = (nc > 2) ? max(body(idx2, 2).w, 0.05) : r0;
+  float l2 = (nc > 2) ? max(body(idx2, 1).w * 0.46, r2 * 1.1) : l0;
+  vec3 h2 = vec3(r2 * mix(0.94, 1.16, spireStretch), mix(r2 * 1.08, l2, spireStretch), r2 * mix(0.92, 1.16, spireStretch));
 
   // Early exit only for high upper crystal hits well above the puddle/meniscus zone when morphT > 0.85
   if (hasPolyHit && morphT > 0.85) {
@@ -10912,7 +10903,7 @@ bool intersectGalliumMelt(
     for (int st = 0; st < 24; st++) {
       if (t > t1) break;
       float mF = 0.0;
-      float d = evalGalliumFastStep(qRo + qRd * t, meltAmt, c0, h0, c1, h1, c2, h2, c3, h3, mF);
+      float d = evalGalliumFastStep(qRo + qRd * t, meltAmt, morphT, c0, h0, c1, h1, c2, h2, mF);
       if (d <= 0.0005) {
         hitPuddle = true;
         break;
@@ -10927,14 +10918,14 @@ bool intersectGalliumMelt(
     // Smooth capillary wetting fillet on the solid crystal wall right where it meets the liquid pool
     vec3 qPoly = qRo + qRd * polyT;
     float mFPoly = 0.0;
-    float dLiqPoly = evalGalliumFastStep(qPoly, meltAmt, c0, h0, c1, h1, c2, h2, c3, h3, mFPoly);
+    float dLiqPoly = evalGalliumFastStep(qPoly, meltAmt, morphT, c0, h0, c1, h1, c2, h2, mFPoly);
     float wetW = (1.0 - smoothstep(-0.012, 0.075, dLiqPoly)) * clamp(meltAmt * 1.35, 0.0, 1.0);
     if (wetW > 0.002) {
       float epsW = 0.0020;
       float dm1, dm2, dm3;
-      float gxW = evalGalliumFastStep(qPoly + vec3(epsW, 0.0, 0.0), meltAmt, c0, h0, c1, h1, c2, h2, c3, h3, dm1) - dLiqPoly;
-      float gyW = evalGalliumFastStep(qPoly + vec3(0.0, epsW, 0.0), meltAmt, c0, h0, c1, h1, c2, h2, c3, h3, dm2) - dLiqPoly;
-      float gzW = evalGalliumFastStep(qPoly + vec3(0.0, 0.0, epsW), meltAmt, c0, h0, c1, h1, c2, h2, c3, h3, dm3) - dLiqPoly;
+      float gxW = evalGalliumFastStep(qPoly + vec3(epsW, 0.0, 0.0), meltAmt, morphT, c0, h0, c1, h1, c2, h2, dm1) - dLiqPoly;
+      float gyW = evalGalliumFastStep(qPoly + vec3(0.0, epsW, 0.0), meltAmt, morphT, c0, h0, c1, h1, c2, h2, dm2) - dLiqPoly;
+      float gzW = evalGalliumFastStep(qPoly + vec3(0.0, 0.0, epsW), meltAmt, morphT, c0, h0, c1, h1, c2, h2, dm3) - dLiqPoly;
       vec3 nGaW = normalize(vec3(gxW, gyW, gzW) + vec3(0.0, 1e-6, 0.0));
       vec3 nLiqW = normalize(vec3(
         0.186646 * nGaW.x + 0.982427 * nGaW.z,
@@ -10945,7 +10936,7 @@ bool intersectGalliumMelt(
     }
     outId = polyId; outTHit = polyT; outTfHit = polyTf;
     outK = CP + 3000 + clamp(polyK, 0, 17);
-    outN = polyN; outMeltFactor = max(wetW, 0.65 * sin(morphT * PI)); outEdgeDist = polyEdgeDist;
+    outN = polyN; outMeltFactor = max(wetW, 2.6 * morphT * (1.0 - morphT)); outEdgeDist = polyEdgeDist;
     return true;
   }
 
@@ -10953,7 +10944,7 @@ bool intersectGalliumMelt(
   for (int bs = 0; bs < 3; bs++) {
     float tMid = 0.5 * (tLo + tHi);
     float mFMid = 0.0;
-    if (evalGalliumFastStep(qRo + qRd * tMid, meltAmt, c0, h0, c1, h1, c2, h2, c3, h3, mFMid) <= 0.0002) {
+    if (evalGalliumFastStep(qRo + qRd * tMid, meltAmt, morphT, c0, h0, c1, h1, c2, h2, mFMid) <= 0.0002) {
       tHi = tMid;
     } else {
       tLo = tMid;
@@ -10962,14 +10953,14 @@ bool intersectGalliumMelt(
   float tFinal = 0.5 * (tLo + tHi);
   vec3 qHit = qRo + qRd * tFinal;
   float mF0 = 1.0;
-  float d0 = evalGalliumFastStep(qHit, meltAmt, c0, h0, c1, h1, c2, h2, c3, h3, mF0);
+  float d0 = evalGalliumFastStep(qHit, meltAmt, morphT, c0, h0, c1, h1, c2, h2, mF0);
 
   // Compute 3D gradient normal in qGa space using 3 forward differences against d0
   float eps = 0.0018;
   float dm1, dm2, dm3;
-  float gx = evalGalliumFastStep(qHit + vec3(eps, 0.0, 0.0), meltAmt, c0, h0, c1, h1, c2, h2, c3, h3, dm1) - d0;
-  float gy = evalGalliumFastStep(qHit + vec3(0.0, eps, 0.0), meltAmt, c0, h0, c1, h1, c2, h2, c3, h3, dm2) - d0;
-  float gz = evalGalliumFastStep(qHit + vec3(0.0, 0.0, eps), meltAmt, c0, h0, c1, h1, c2, h2, c3, h3, dm3) - d0;
+  float gx = evalGalliumFastStep(qHit + vec3(eps, 0.0, 0.0), meltAmt, morphT, c0, h0, c1, h1, c2, h2, dm1) - d0;
+  float gy = evalGalliumFastStep(qHit + vec3(0.0, eps, 0.0), meltAmt, morphT, c0, h0, c1, h1, c2, h2, dm2) - d0;
+  float gz = evalGalliumFastStep(qHit + vec3(0.0, 0.0, eps), meltAmt, morphT, c0, h0, c1, h1, c2, h2, dm3) - d0;
   vec3 nGaLocal = normalize(vec3(gx, gy, gz) + vec3(0.0, 1e-6, 0.0));
   // Transform normal back from qGa to cluster space p
   vec3 nPuddleWorld = normalize(vec3(
