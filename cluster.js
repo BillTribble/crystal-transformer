@@ -1505,8 +1505,8 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
       node.u0 = new Float32Array(sx);
       node.v0 = new Float32Array(sz);
       node.frameInit = true;
-    } else if (nodeDt > 0) {
-      const aAxis = 1 - Math.exp(-2.8 * nodeDt);
+    } else if (nodeDt > 0 || !evolveOn) {
+      const aAxis = nodeDt > 0 ? (1 - Math.exp(-2.8 * nodeDt)) : 1.0;
       node.axis0[0] += (ax[0] - node.axis0[0]) * aAxis;
       node.axis0[1] += (ax[1] - node.axis0[1]) * aAxis;
       node.axis0[2] += (ax[2] - node.axis0[2]) * aAxis;
@@ -1877,8 +1877,8 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
       node.smoothOffR = new Float32Array(tgtOffR);
       node.smoothOffL = new Float32Array(tgtOffL);
       node.planesInit = true;
-    } else if (nodeDt > 0) {
-      const aPlane = 1 - Math.exp(-3.0 * nodeDt);
+    } else if (nodeDt > 0 || !evolveOn) {
+      const aPlane = nodeDt > 0 ? (1 - Math.exp(-3.0 * nodeDt)) : 1.0;
       for (let k = 0; k < 18; k++) {
         const nx = node.smoothLx[k] + (tgtLx[k] - node.smoothLx[k]) * aPlane;
         const ny = node.smoothLy[k] + (tgtLy[k] - node.smoothLy[k]) * aPlane;

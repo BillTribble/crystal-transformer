@@ -81,7 +81,7 @@ MODULES = [
             "const { setupChrome } = __mod_chrome;",
             "const { createLoop } = __mod_loop;",
             "const { hexToOkhsl, okhslToHex } = __mod_okhsl;",
-            "const { buildCluster, cluster, resetEvolution, stepEvolution } = __mod_cluster;",
+            "const { buildCluster, cluster, resetEvolution, resolveHabitSystem, stepEvolution } = __mod_cluster;",
             "const { createEnsoSound } = __mod_sound;",
         ],
         ["run"],

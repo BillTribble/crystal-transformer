@@ -3957,8 +3957,8 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
       node.u0 = new Float32Array(sx);
       node.v0 = new Float32Array(sz);
       node.frameInit = true;
-    } else if (nodeDt > 0) {
-      const aAxis = 1 - Math.exp(-2.8 * nodeDt);
+    } else if (nodeDt > 0 || !evolveOn) {
+      const aAxis = nodeDt > 0 ? (1 - Math.exp(-2.8 * nodeDt)) : 1.0;
       node.axis0[0] += (ax[0] - node.axis0[0]) * aAxis;
       node.axis0[1] += (ax[1] - node.axis0[1]) * aAxis;
       node.axis0[2] += (ax[2] - node.axis0[2]) * aAxis;
@@ -4329,8 +4329,8 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
       node.smoothOffR = new Float32Array(tgtOffR);
       node.smoothOffL = new Float32Array(tgtOffL);
       node.planesInit = true;
-    } else if (nodeDt > 0) {
-      const aPlane = 1 - Math.exp(-3.0 * nodeDt);
+    } else if (nodeDt > 0 || !evolveOn) {
+      const aPlane = nodeDt > 0 ? (1 - Math.exp(-3.0 * nodeDt)) : 1.0;
       for (let k = 0; k < 18; k++) {
         const nx = node.smoothLx[k] + (tgtLx[k] - node.smoothLx[k]) * aPlane;
         const ny = node.smoothLy[k] + (tgtLy[k] - node.smoothLy[k]) * aPlane;
@@ -8048,7 +8048,7 @@ function randomize(store) {
   const { setupChrome } = __mod_chrome;
   const { createLoop } = __mod_loop;
   const { hexToOkhsl, okhslToHex } = __mod_okhsl;
-  const { buildCluster, cluster, resetEvolution, stepEvolution } = __mod_cluster;
+  const { buildCluster, cluster, resetEvolution, resolveHabitSystem, stepEvolution } = __mod_cluster;
   const { createEnsoSound } = __mod_sound;
 // Boots the crystal ray-tracer: params -> saved overrides -> pane -> interactive orbit/zoom -> loop.
 
@@ -8222,6 +8222,8 @@ function run(slug, { manifest, params, presets, randomize, sketch }) {
   const morphState = {
     stageIndex: 0,
     diceRolls: 0,
+    transitionCount: 0,
+    structuralDelta: 1.0,
     fromPreset: standardPresetNames[0] || 'Classic Quartz Prism',
     toPreset: standardPresetNames[1] || 'Bismuth Hopper',
     elapsed: 0,
@@ -8232,6 +8234,28 @@ function run(slug, { manifest, params, presets, randomize, sketch }) {
     fromOkhsl: Object.create(null),
     toOkhsl: Object.create(null),
   };
+
+  function computeStructuralDelta(fromObj, toObj) {
+    if (!fromObj || !toObj) return 0.0;
+    const h0 = resolveHabitSystem(fromObj.habit || 'Trigonal');
+    const h1 = resolveHabitSystem(toObj.habit || 'Trigonal');
+    const habitDiff = h0 !== h1 ? 1.0 : 0.0;
+    const symDiff = Math.min(1.0, Math.abs(Number(fromObj.symmetry ?? 6) - Number(toObj.symmetry ?? 6)) / 1.5);
+    const hopperDiff = Math.min(1.0, Math.abs(Number(fromObj.hopper ?? 0) - Number(toObj.hopper ?? 0)) / 0.45);
+    const meltDiff = Math.min(1.0, Math.abs(Number(fromObj.melt ?? 0) - Number(toObj.melt ?? 0)) / 0.45);
+    const dt0 = typeof fromObj.doubleTerminated === 'boolean' ? (fromObj.doubleTerminated ? 1 : 0) : Number(fromObj.doubleTerminated ?? 1);
+    const dt1 = typeof toObj.doubleTerminated === 'boolean' ? (toObj.doubleTerminated ? 1 : 0) : Number(toObj.doubleTerminated ?? 1);
+    const dtDiff = Math.abs(dt0 - dt1);
+    const countDiff = Math.min(1.0, Math.abs(Number(fromObj.crystals ?? 4) - Number(toObj.crystals ?? 4)) / 3.0);
+    const shapeDiff = Math.min(
+      1.0,
+      Math.abs(Number(fromObj.tipAngle ?? 38) - Number(toObj.tipAngle ?? 38)) / 18.0 +
+      Math.abs(Number(fromObj.thickness ?? 0.16) - Number(toObj.thickness ?? 0.16)) / 0.14 +
+      Math.abs(Number(fromObj.twinShare ?? 0.3) - Number(toObj.twinShare ?? 0.3)) / 0.30
+    );
+    const rawDelta = Math.max(habitDiff, symDiff, hopperDiff, meltDiff, dtDiff * 0.9, countDiff * 0.85, shapeDiff * 0.85);
+    return rawDelta >= 0.22 ? Math.min(1.0, (rawDelta - 0.12) / 0.55) : 0.0;
+  }
 
   let panel = null;
 
@@ -8293,6 +8317,7 @@ function run(slug, { manifest, params, presets, randomize, sketch }) {
         morphState.toMap[p.key] = Number(toVal);
       }
     }
+    morphState.structuralDelta = computeStructuralDelta(morphState.fromMap, morphState.toMap);
   }
 
   function resetMorphFromPreset(presetName, holdSeconds = 2.0) {
@@ -8317,6 +8342,8 @@ function run(slug, { manifest, params, presets, randomize, sketch }) {
         morphState.fromMap[p.key] = Number(p.value);
       }
     }
+    morphState.structuralDelta = computeStructuralDelta(morphState.fromMap, morphState.toMap);
+    morphState.transitionCount = (morphState.transitionCount || 0) + 1;
     morphState.fromLive = true;
   }
 
@@ -8859,7 +8886,6 @@ function run(slug, { manifest, params, presets, randomize, sketch }) {
     // until the crystals fill the screen, then smoothly slows down. Clicking the Grow plant
     // button (#grow-btn) adds a `growBoost` surge that makes the crystals grow even more!
     if (P.growth && dt > 0 && (P.autoGrow?.value || growBoost > 0.001)) {
-      buildCluster(P, canvas.clientWidth || window.innerWidth, canvas.clientHeight || window.innerHeight);
       const curG = Number(P.growth.value);
       const maxG = P.growth.max || 3.5;
       let deltaG = 0;
@@ -8953,35 +8979,42 @@ function run(slug, { manifest, params, presets, randomize, sketch }) {
             targetOcclusion = 0.0;
           } else if ((occStyle === 'Auto alternate (Ovoids & Invisible Crystals)' || occStyle === 'Auto drift (1/3 time)') && P.evolve?.value) {
             occlusionDriftTime += dt;
-            // 90-second cycle (active 30s = 1/3 of the time) alternating between Ovoids (even cycles) and Invisible Crystals (odd cycles):
-            // 60s clear at 0.0 (0..60s), 12s slow fade-in (60..72s), 6s hold in the middle at 0.92 (72..78s), 12s slow fade-out (78..90s)
-            const cyc = occlusionDriftTime % 90.0;
-            const cycleIdx = Math.floor(occlusionDriftTime / 90.0);
-            const desiredType = (cycleIdx % 2 === 1) ? 1.0 : 0.0;
-            if (P.occlusionType && smoothOcclusion < 0.02 && Math.abs(Number(P.occlusionType.value) - desiredType) > 1e-3) {
+            // Synchronize Ovoid / Crystal-Negative phases strictly to the middle of major structural transitions (post-016227):
+            // - Hold windows and peak-solidity phases (morphAlpha <= 0.18 or morphAlpha >= 0.82) stay at 0.0 (100% solid crystal).
+            // - Rises smoothly to peak (0.92) right at morphAlpha = 0.50 (middle of a major structural transition) and settles
+            //   completely back to 0.0 before the crystal finishes arriving at its new form.
+            const isGliding = state === 'moving' && store.gliding;
+            const isMorphing = !isGliding && P.morphPresets?.value && morphState.holdRemaining <= 0;
+            const morphAlpha = isGliding
+              ? store.glideProgress
+              : (isMorphing ? morphState.progress : 0.0);
+            const structDelta = isGliding ? 1.0 : (isMorphing ? morphState.structuralDelta : 0.0);
+            const desiredType = ((morphState.transitionCount || 0) % 2 === 1) ? 1.0 : 0.0;
+
+            if (P.occlusionType && morphAlpha <= 0.18 && smoothOcclusion < 0.02 && Math.abs(Number(P.occlusionType.value) - desiredType) > 1e-3) {
               store.setSmooth(P.occlusionType, desiredType);
               P.occlusionType.base = desiredType;
               needsUiSync = true;
             }
-            if (cyc >= 60.0 && cyc < 72.0) {
-              const u = (cyc - 60.0) / 12.0;
-              targetOcclusion = 0.92 * (0.5 - 0.5 * Math.cos(Math.PI * u));
-            } else if (cyc >= 72.0 && cyc < 78.0) {
-              targetOcclusion = 0.92;
-            } else if (cyc >= 78.0) {
-              const u = (cyc - 78.0) / 12.0;
-              targetOcclusion = 0.92 * (0.5 + 0.5 * Math.cos(Math.PI * u));
+
+            if (structDelta > 0.01 && morphAlpha > 0.18 && morphAlpha < 0.82) {
+              const u = (morphAlpha - 0.18) / 0.64;
+              const transitionBell = Math.pow(Math.sin(Math.PI * u), 2.5);
+              targetOcclusion = 0.92 * transitionBell * structDelta;
+              smoothOcclusion = targetOcclusion;
             } else {
               targetOcclusion = 0.0;
+              smoothOcclusion = 0.0;
             }
           }
-          // Rate-limit smoothOcclusion to at most 0.92 / 12.0 per second so voids always appear/disappear over a full 12.0 seconds
-          const maxStep = (0.92 / 12.0) * dt;
-          const diff = targetOcclusion - smoothOcclusion;
-          if (Math.abs(diff) <= maxStep) {
-            smoothOcclusion = targetOcclusion;
-          } else {
-            smoothOcclusion += Math.sign(diff) * maxStep;
+          if (occStyle !== 'Auto alternate (Ovoids & Invisible Crystals)' && occStyle !== 'Auto drift (1/3 time)') {
+            const maxStep = (0.92 / 12.0) * dt;
+            const diff = targetOcclusion - smoothOcclusion;
+            if (Math.abs(diff) <= maxStep) {
+              smoothOcclusion = targetOcclusion;
+            } else {
+              smoothOcclusion += Math.sign(diff) * maxStep;
+            }
           }
           const curOcc = Number(P.occlusion.value) || 0;
           if (Math.abs(smoothOcclusion - curOcc) > 5e-4) {
@@ -9832,10 +9865,11 @@ float evalBismuthFast(vec3 pQ, vec4 morphP, float hopperAmt, out float outStepId
   float dContour = max(min(wX, wY), min(max(wX, wY), wZ));
   float polyAllow = 0.65 * max(0.0, 1.0 - hopperAmt / 0.88);
 
-  float insideWell = smoothstep(0.12, 0.15, dContour) * mix(1.0 - smoothstep(0.62, 0.85, abs(pQ.y)), 1.0, smoothstep(0.25, 0.75, hopperAmt));
+  float insideWell = smoothstep(0.12, 0.15, dContour) * (1.0 - smoothstep(0.64, 0.85, abs(pQ.y)));
+  float wellEase = smoothstep(0.02, 0.38, hopperAmt);
   if (insideWell <= 1e-4) {
-    outStepIdx = 0.9 * stairA + 0.6 * stairB + 0.5 * stairZ;
-    outEdgeDist = abs(dContour - 0.135);
+    outStepIdx = (0.9 * stairA + 0.6 * stairB + 0.5 * stairZ) * hopperAmt * wellEase;
+    outEdgeDist = mix(1.0, abs(dContour - 0.135), wellEase);
     return wFace + polyAllow;
   }
 
@@ -9870,14 +9904,14 @@ float evalBismuthFast(vec3 pQ, vec4 morphP, float hopperAmt, out float outStepId
     ? max(parallelRibs * 0.85, concentricRidge * 0.65)
     : max(concentricRidge, greekHook);
 
-  float wellEase = smoothstep(0.04, 0.38, hopperAmt);
   float floorDepth = (0.18 + 0.46 * wellStair) * hopperAmt * wellEase;
   float ridgeTopDepth = (0.06 + 0.14 * wellStair) * hopperAmt * wellEase;
   float targetDepth = mix(floorDepth, ridgeTopDepth, wallMask) * insideWell;
 
-  outStepIdx = (0.65 + 2.6 * wellStair + 1.1 * stairA - 0.55 * wallMask) * insideWell + abs(morphP.w) * 0.25;
+  outStepIdx = ((0.65 + 2.6 * wellStair + 1.1 * stairA - 0.55 * wallMask) * insideWell + abs(morphP.w) * 0.25) * hopperAmt * wellEase;
   float eWell = min(fWell, 1.0 - fWell) / nSt;
-  outEdgeDist = min(min(eWell, abs(dContour - 0.115)), (morphP.w < 0.0) ? abs(parWave - 0.18) * 0.25 : abs(ridgePhase - 0.16) / nSt);
+  float rawEdgeDist = min(min(eWell, abs(dContour - 0.115)), (morphP.w < 0.0) ? abs(parWave - 0.18) * 0.25 : abs(ridgePhase - 0.16) / nSt);
+  outEdgeDist = mix(1.0, rawEdgeDist, wellEase);
   return (wFace + polyAllow * (1.0 - insideWell)) - targetDepth;
 }
 
@@ -9922,8 +9956,8 @@ float evalBismuthHopper(vec3 p, int row, float hopperAmt, out float outStepIdx, 
 // Fast branchless 3D raymarcher for varied Bismuth Hopper morphologies (ziggurat spires, cantilevered
 // BGS wings, open L-brackets, parallel-ribbed plates & twin hoppers):
 // Precomputes local ray coordinates (q0, dq) and morphP ONCE per crystal (zero UBO reads inside loop).
-bool intersectBismuthHopper(int row, vec3 ro, vec3 rd, float hopperAmt, float tHitMax, inout float tn, float tf, inout int kn, out vec3 outHopperN) {
-  vec3 origN = (kn < CP) ? body(row, PA + kn).xyz : vec3(0.0, 1.0, 0.0);
+bool intersectBismuthHopper(int row, vec3 ro, vec3 rd, float hopperAmt, float tHitMax, inout float tn, float tf, inout int kn, inout vec3 outHopperN) {
+  vec3 origN = (kn < CP) ? body(row, PA + kn).xyz : outHopperN;
   outHopperN = origN;
   float tStart = max(tn, 0.0);
   if (tStart >= tHitMax) return false;
@@ -10013,7 +10047,7 @@ bool intersectBismuthHopper(int row, vec3 ro, vec3 rd, float hopperAmt, float tH
       tn = tStart + dtHit;
       kn = CP + 2000;
       vec3 nCand = normalize(sx * gLocal.x + ax * gLocal.y + sz * gLocal.z);
-      float hopNBlend = smoothstep(0.0, 0.45, hopperAmt);
+      float hopNBlend = smoothstep(0.02, 0.45, hopperAmt);
       nCand = normalize(mix(origN, nCand, hopNBlend));
       if (dot(nCand, rd) > -0.06) {
         nCand = normalize(nCand - rd * (dot(nCand, rd) + 0.06));
@@ -10435,17 +10469,17 @@ void evalSingleRidgeBevel(
   float edLen = length(edgeDir);
   if (edLen <= 1e-4) return;
   edgeDir /= edLen;
-  if (dot(edgeDir, ax + (nLo - nHi) * 0.15) < 0.0) edgeDir = -edgeDir;
 
   float dnAB = dot(nAB, rd);
   float nomBevel = r * (0.0032 * effIrreg + 0.0028 * effChips) * (0.75 + 0.25 * chipSz) * nodePresence;
   float tNom = (abs(dnAB) > 1e-3) ? clamp((wAB - nomBevel - dot(nAB, ro)) / dnAB, tStart, min(tf, tStart + r * 0.08)) : tStart;
   vec3 pRidge = ro + rd * tNom;
-  vec3 relRidge = pRidge - rt;
+  vec3 cMid = rt + ax * (0.52 * L);
+  vec3 relRidge = pRidge - cMid;
   float hNorm = dot(relRidge, ax) / max(L * 0.45, 0.06);
   vec3 radEdgeDir = edgeDir - ax * dot(edgeDir, ax);
   float rNorm = dot(relRidge, radEdgeDir) / max(r * 1.15, 0.03);
-  float alongEdge = hNorm * abs(dot(edgeDir, ax)) + rNorm;
+  float alongEdge = 0.8 + hNorm * abs(dot(edgeDir, ax)) + rNorm;
   if (alongEdge < -1.1 || alongEdge > 2.6) return;
 
   float edgeSeed = uid * 13.7 + float(kLo) * 19.3 + float(kHi) * 7.1;
@@ -10533,8 +10567,9 @@ bool applyTinyEdgeChip(int row, int k0, vec3 ro, vec3 rd, inout float tn, inout 
     vec4 pl = body(row, PA + k);
     if (pl.w - dot(pl.xyz, rt) > maxValidOff) continue;
     float cAng = dot(pl.xyz, n0);
-    if (cAng > 0.992 || cAng < -0.75) continue;
-    float d = max(0.0, pl.w - dot(pl.xyz, pStart));
+    if (cAng > 0.996 || cAng < -0.75) continue;
+    float parallelPen = max(0.0, (cAng - 0.94) / 0.056) * r * 1.5;
+    float d = max(0.0, pl.w - dot(pl.xyz, pStart)) + parallelPen;
     if (d < d1) {
       d3 = d2; k3 = k2;
       d2 = d1; k2 = k1; pl2 = pl1;
@@ -11156,6 +11191,9 @@ vec3 insideVolume(int id, vec3 ro, vec3 rd, float len, float jitter, int maxStep
   float hgtStart = crystalHeight01(id, ro);
   float hgtEnd = crystalHeight01(id, ro + rd * len);
   bool needInclTex = (effMilk > 0.01 || effVeils > 0.01 || u_iridescence > 0.01 || u_colourZoning > 0.01 || g1 > 0.01);
+  vec3 cMidVol = root + axis * (0.52 * L);
+  float invLVol = 1.0 / max(L, 0.14);
+  float inclOctBlend = clamp((u_inclusionScale - 1.5) / 2.5, 0.0, 1.0);
   vec3 fGemBodyCol = exp(-f_sigma * 0.38);
   vec3 fGemBodyNorm = normalize(fGemBodyCol + vec3(0.04)) * 1.28;
   float fSigmaLen = length(f_sigma);
@@ -11185,7 +11223,11 @@ vec3 insideVolume(int id, vec3 ro, vec3 rd, float len, float jitter, int maxStep
     }
     vec3 tintedLightIn = lightIn * mix(vec3(1.0), gemBodyNorm, clamp(baseSigmaLen * 0.24 * zRamp, 0.0, 0.88));
     vec3 effLightIn = mix(tintedLightIn, mix(lightIn, tintedLightIn, 0.28), g1);
-    vec4 v = needInclTex ? texture(u_incl, pp * u_inclusionScale + off) : vec4(0.0, 0.0, 0.5, 0.0);
+    vec3 relMidV = (pp - cMidVol) * invLVol;
+    vec3 pCry = vec3(dot(relMidV, t1), dot(relMidV, axis), dot(relMidV, t2));
+    vec4 v = needInclTex
+      ? mix(texture(u_incl, pCry * 1.25 + off), texture(u_incl, pCry * 2.50 + off + 0.37), inclOctBlend)
+      : vec4(0.0, 0.0, 0.5, 0.0);
     float a = 0.0;
     if (effMilk > 0.01 || effVeils > 0.01) {
       float rootCloud = mix(1.0, (0.20 + 2.2 * pow(1.0 - hgt, 1.95)) * (0.45 + 0.85 * v.g), u_milkBase);
@@ -11282,23 +11324,28 @@ vec3 insideVolume(int id, vec3 ro, vec3 rd, float len, float jitter, int maxStep
 
       // 2-step Newton refinement on the gently warped 3D crack surface:
       // crackPlane = abs(dot(q, crackNormal_k) + offset_k + 0.18 * n3(q * 3.5))
+      float invL = 0.55 / max(L, 0.15);
       for (int it = 0; it < 2; it++) {
         vec3 hpIt = ro + rd * clamp(t, 0.0, len);
         vec3 qIt = hpIt - root;
+        vec3 relCIt = (hpIt - fc_k) * invL;
+        vec3 qLocIt = vec3(dot(relCIt, t1), dot(relCIt, axis), dot(relCIt, t2));
         float uIt = dot(hpIt - fc_k, crackTan) * invPatchScale;
         float vIt = dot(hpIt - fc_k, crackBit) * invPatchScale;
         float gentleArc = r * (0.07 * (uIt * uIt - 0.30) + 0.04 * sin(vIt * 1.9 + seed.x));
-        float signedSurface = dot(qIt, crackNormal_k) + offset_k + gentleArc + 0.10 * r * n3(qIt * 3.5 + seed);
+        float signedSurface = dot(qIt, crackNormal_k) + offset_k + gentleArc + 0.10 * r * n3(qLocIt * 3.5 + seed);
         t -= signedSurface / signedDn;
       }
       if (t <= 0.005 * len || t >= 0.995 * len) continue;
 
       vec3 hp = ro + rd * t;
       vec3 q = hp - root;
+      vec3 relC = (hp - fc_k) * invL;
+      vec3 qLoc = vec3(dot(relC, t1), dot(relC, axis), dot(relC, t2));
       float u = dot(hp - fc_k, crackTan) * invPatchScale;
       float v = dot(hp - fc_k, crackBit) * invPatchScale;
       float gentleArc = r * (0.07 * (u * u - 0.30) + 0.04 * sin(v * 1.9 + seed.x));
-      float crackPlane = abs(dot(q, crackNormal_k) + offset_k + gentleArc + 0.10 * r * n3(q * 3.5 + seed));
+      float crackPlane = abs(dot(q, crackNormal_k) + offset_k + gentleArc + 0.10 * r * n3(qLoc * 3.5 + seed));
       float sheetHit = 1.0 - smoothstep(0.004 * r, 0.024 * r, crackPlane);
       if (sheetHit <= 1e-4) continue;
 
@@ -11306,9 +11353,9 @@ vec3 insideVolume(int id, vec3 ro, vec3 rd, float len, float jitter, int maxStep
       // Each crack is a true 2D curved cleavage sheet inside the 3D crystal that feathers out organically.
       float uSign = ((k & 1) == 0) ? 1.0 : -1.0;
       float uCoord = u * uSign;
-      float patchNoise = n3(q * 2.2 + seed);
-      float patchFine = n3(q * 5.8 + seed * 1.73);
-      float patchMicro = n3(q * 12.5 + seed * 2.41);
+      float patchNoise = n3(qLoc * 2.2 + seed);
+      float patchFine = n3(qLoc * 5.8 + seed * 1.73);
+      float patchMicro = n3(qLoc * 12.5 + seed * 2.41);
       float uFront = mix(-0.02, 0.42, hash(hSeed + 5.3))
                    + 0.24 * sin(v * 2.1 + seed.x)
                    + 0.12 * cos(v * 4.3 + seed.y)
@@ -11324,11 +11371,15 @@ vec3 insideVolume(int id, vec3 ro, vec3 rd, float len, float jitter, int maxStep
       float mask = famWeight * sheetHit * patchEnv * vSpan * endTaper;
       if (mask <= 1e-4) continue;
 
-      // 3D crack sheet normal nCrack (gently curved conchoidal surface + fine feathery step-fracture facets)
+      // 3D crack sheet normal nCrack (gently curved conchoidal surface + smooth step-fracture facets, zero floor() jump)
       float epsP = 0.028;
-      float dU = n3((q + crackTan * epsP) * 5.2 + seed) - n3((q - crackTan * epsP) * 5.2 + seed);
-      float dV = n3((q + crackBit * epsP) * 5.2 + seed) - n3((q - crackBit * epsP) * 5.2 + seed);
-      float terraceStep = floor(patchFine * 5.0) * 0.025 + (patchMicro - 0.5) * 0.08;
+      vec3 cTanLoc = vec3(dot(crackTan, t1), dot(crackTan, axis), dot(crackTan, t2));
+      vec3 cBitLoc = vec3(dot(crackBit, t1), dot(crackBit, axis), dot(crackBit, t2));
+      float dU = n3((qLoc + cTanLoc * epsP) * 5.2 + seed) - n3((qLoc - cTanLoc * epsP) * 5.2 + seed);
+      float dV = n3((qLoc + cBitLoc * epsP) * 5.2 + seed) - n3((qLoc - cBitLoc * epsP) * 5.2 + seed);
+      float pf5 = patchFine * 5.0;
+      float smoothStair5 = pf5 - 0.12 * sin(TAU * pf5);
+      float terraceStep = smoothStair5 * 0.025 + (patchMicro - 0.5) * 0.08;
       vec3 nCrack = normalize(
         crackNormal_k
         + crackTan * (0.10 * uCoord + dU * 0.22 + terraceStep)
@@ -11391,6 +11442,12 @@ void insidePrimaryExtras(int id, vec3 ro, vec3 rd, float len, float travelled, i
   float phRateRoll = hash(vec3(uid, f_seed, 97.0));
   float phRateW = smoothstep(phRateRoll - 0.14, phRateRoll + 0.14, u_phantomRate);
   if (effPhantom > 0.01 && phRateW > 1e-4) {
+    vec3 p0Ph = body(id, PA).xyz;
+    vec3 t1Ph = p0Ph - axis * dot(p0Ph, axis);
+    float t1PhLen = length(t1Ph);
+    t1Ph = t1PhLen > 1e-4 ? (t1Ph / t1PhLen) : normalize(cross(axis, vec3(0.577, 0.577, 0.577)));
+    vec3 t2Ph = cross(axis, t1Ph);
+    float invLPh = 1.0 / max(L, 0.14);
     vec3 phTint = exp(-mix(f_sigma, f_sigmaCore, 0.4) * 0.35);
     vec3 phLightIn = lightIn * mix(vec3(1.0), normalize(phTint + vec3(0.05)) * 1.25, clamp(length(f_sigma) * 0.22, 0.0, 0.85));
     int maxPhLayers = clamp(int(ceil(u_phantomLayers)), 0, (u_isMobile > 0.5) ? 2 : 4);
@@ -11415,8 +11472,10 @@ void insidePrimaryExtras(int id, vec3 ro, vec3 rd, float len, float travelled, i
           float t = e == 0 ? tn : tf;
           if (t <= 0.0 || t >= len) continue;
           vec3 hp = ro + rd * t;
+          vec3 relPh = (hp - c) * (invLPh / max(pScale, 0.2));
+          vec3 hpLoc = vec3(dot(relPh, t1Ph), dot(relPh, axis), dot(relPh, t2Ph));
           float cosk = abs(dot(rd, e == 0 ? nEnter : nExit));
-          float dust = texture(u_incl, hp * u_inclusionScale * 2.0 + off + float(layer) * 0.37).r;
+          float dust = texture(u_incl, hpLoc * 2.4 + off + float(layer) * 0.37).r;
           float sheet = phRateW * layerWeight * clamp(effPhantom * (0.12 - 0.02 * float(layer)) * (0.3 + 1.7 * dust) / max(cosk, 0.12), 0.0, 1.0);
           float effIrid = u_iridescence * u_rainbow;
           vec3 phCol = effIrid > 0.01
@@ -11430,82 +11489,98 @@ void insidePrimaryExtras(int id, vec3 ro, vec3 rd, float len, float travelled, i
   }
 }
 
+// Evaluates a crystal-locked 1D striation wave at fixed harmonic frequencies (so morphing u_striationScale
+// blends harmonic weights instead of sweeping wave phase across the crystal face!).
+float evalCrystalStriationWave(float cNorm, float uid, float fpNorm, float scaleBlend, float metalW, float aaCoarse, float aaFine, float aaBrush) {
+  float fCoarse = 5.5;
+  float fFine = 16.5;
+  float fBrush = 31.0;
+  float amp = (0.38 + 0.72 * texture(u_incl, vec3(cNorm * 1.8, uid * 0.37, 0.5)).b) * mix(1.0, 1.45, metalW);
+  float wFine = mix(0.24, 0.46, scaleBlend);
+  float wCoarse = 1.0 - wFine;
+  float ridge = aaCoarse * wCoarse * sin(TAU * cNorm * fCoarse + 1.5 * sin(cNorm * 11.0))
+              + aaFine * wFine * sin(TAU * cNorm * fFine);
+  ridge += metalW * aaBrush * 0.48 * sin(TAU * cNorm * fBrush + 2.3 * cos(cNorm * 23.0));
+  return amp * ridge;
+}
+
 // Bend a face's normal: growth ridges across prism faces (including orthogonal m-3 diploid cube-face striations on Pyrite),
 // stepped hopper terraces, and smooth/Gaussian-dithered/Jack-Bush-druzy mineral frost relief.
 vec3 faceNormal(int id, int k, vec3 n, vec3 p, float rough, float footprint, float dEdge) {
   vec4 ax = body(id, 1);
+  float L = max(ax.w, 0.10);
+  float r = max(body(id, 2).w, 0.02);
+  vec3 rt = body(id, 3).xyz;
+  vec3 cMid = rt + ax.xyz * (0.52 * L);
+  vec3 relMid = p - cMid;
+  vec3 p0 = body(id, PA).xyz;
+  vec3 t1 = p0 - ax.xyz * dot(p0, ax.xyz);
+  float t1Len = length(t1);
+  t1 = t1Len > 1e-4 ? (t1 / t1Len) : normalize(cross(ax.xyz, vec3(0.577, 0.577, 0.577)));
+  vec3 t2 = cross(ax.xyz, t1);
+  vec3 pLoc = vec3(
+    dot(relMid, t1) / max(r * 2.0, 0.04),
+    dot(relMid, ax.xyz) / L,
+    dot(relMid, t2) / max(r * 2.0, 0.04)
+  );
+  vec3 localN = normalize(vec3(dot(n, t1), dot(n, ax.xyz), dot(n, t2)) + vec3(1e-6));
+
   float uid = crystalUid(id);
   float dither = clamp(u_ditherBlend, 0.0, 1.0);
   float glimmer = clamp(u_glimmer, 0.0, 2.0);
   float g1 = clamp(glimmer, 0.0, 1.0);
   float rawAmt = clamp(u_rawAmount, 0.0, 2.0);
   float rawSurfScale = mix(0.15, 1.0, clamp(rawAmt / 0.4, 0.0, 1.0)) * mix(1.0, 1.65, max(0.0, (rawAmt - 0.4) / 1.6));
-  if (u_striations > 0.0 && (k < 8 || (u_metallic > 0.15 && k < 18))) {
-    vec3 rel = p - body(id, 3).xyz;
-    vec3 p0 = body(id, PA).xyz;
-    vec3 t1 = p0 - ax.xyz * dot(p0, ax.xyz);
-    float t1Len = length(t1);
-    t1 = t1Len > 1e-4 ? (t1 / t1Len) : normalize(cross(ax.xyz, vec3(0.577, 0.577, 0.577)));
-    vec3 t2 = cross(ax.xyz, t1);
+  if (u_striations > 0.001) {
+    float metalW = smoothstep(0.08, 0.55, u_metallic);
+    float hopperAtten = 1.0 - smoothstep(0.15, 0.52, u_hopper);
+    float prismFaceW = 1.0 - smoothstep(0.32, 0.72, abs(localN.y));
+    float voidDamp = (k >= CP && k < CP + 5000 && k != CP + 2000) ? 0.0 : 1.0;
+    float striFaceMask = mix(prismFaceW, 1.0, metalW) * hopperAtten * voidDamp;
+    if (striFaceMask > 1e-4) {
+      float fpNorm = footprint / L;
+      float scaleBlend = clamp((u_striationScale - 40.0) / 140.0, 0.0, 1.0);
+      float aaCoarse = clamp(1.0 - (fpNorm * 5.5) * 5.8, 0.0, 1.0);
+      float aaFine = clamp(1.0 - (fpNorm * 16.5) * 5.8, 0.0, 1.0);
+      float aaBrush = clamp(1.0 - (fpNorm * 31.0) * 4.5, 0.0, 1.0);
 
-    // For metallic cubes (Pyrite FeS2 crystallographic class m-3), adjacent cube faces {100}, {010}, {001}
-    // have mutually perpendicular (90° orthogonal) brushed growth striations!
-    float striCoord = dot(rel, ax.xyz);
-    vec3 striTan = ax.xyz;
-    if (u_metallic > 0.15 && u_hopper < 0.35) {
-      vec3 an = abs(vec3(dot(n, t1), dot(n, ax.xyz), dot(n, t2)));
-      if (an.x >= an.y && an.x >= an.z) {
-        striCoord = dot(rel, ax.xyz);
-        striTan = ax.xyz;
-      } else if (an.z >= an.x && an.z >= an.y) {
-        striCoord = dot(rel, t1);
-        striTan = t1;
-      } else {
-        striCoord = dot(rel, t2);
-        striTan = t2;
+      // Smooth triplanar m-3 diploid cube-face blend (zero 90° axis-switch flick, zero u_hopper < 0.35 jump)
+      float pyriteW = smoothstep(0.12, 0.60, u_metallic) * (1.0 - smoothstep(0.12, 0.48, u_hopper));
+      vec3 wTri = pow(abs(localN), vec3(6.0));
+      wTri /= max(wTri.x + wTri.y + wTri.z, 1e-5);
+      vec3 axisWeights = mix(vec3(1.0, 0.0, 0.0), wTri, pyriteW);
+
+      float waveY = evalCrystalStriationWave(pLoc.y, uid, fpNorm, scaleBlend, metalW, aaCoarse, aaFine, aaBrush);
+      vec3 striPerturb = ax.xyz * (axisWeights.x * waveY);
+      if (pyriteW > 1e-3) {
+        float waveX = evalCrystalStriationWave(pLoc.x * 0.55, uid + 1.7, fpNorm, scaleBlend, metalW, aaCoarse, aaFine, aaBrush);
+        float waveZ = evalCrystalStriationWave(pLoc.z * 0.55, uid + 3.3, fpNorm, scaleBlend, metalW, aaCoarse, aaFine, aaBrush);
+        striPerturb += t1 * (axisWeights.z * waveX) + t2 * (axisWeights.y * waveZ);
       }
+      // Project perturbation onto the facet tangent plane so normal length stays consistent
+      striPerturb -= n * dot(n, striPerturb);
+      float striStrength = u_striations * striFaceMask * rawSurfScale * (1.0 - 0.35 * dither) * mix(0.055, 0.125, g1);
+      n = normalize(n + striPerturb * striStrength);
     }
-    float fFine = u_striationScale * 0.30;
-    float fCoarse = u_striationScale * 0.10;
-    float aaFine = clamp(1.0 - (footprint * fFine) * 5.8, 0.0, 1.0);
-    float aaCoarse = clamp(1.0 - (footprint * fCoarse) * 5.8, 0.0, 1.0);
-    float amp = 0.38 + 0.72 * texture(u_incl, vec3(striCoord * 1.8, uid * 0.37, 0.5)).b;
-    float ridge = aaCoarse * 0.68 * sin(TAU * striCoord * fCoarse + 1.5 * sin(striCoord * 11.0))
-                + aaFine * 0.32 * sin(TAU * striCoord * fFine);
-    if (u_metallic > 0.15) {
-      float fBrush = u_striationScale * 0.55;
-      float aaBrush = clamp(1.0 - (footprint * fBrush) * 4.5, 0.0, 1.0);
-      ridge += aaBrush * 0.48 * sin(TAU * striCoord * fBrush + 2.3 * cos(striCoord * 23.0));
-      amp *= 1.45;
-    }
-    n = normalize(n + striTan * (u_striations * rawSurfScale * (1.0 - 0.35 * dither) * mix(0.055, 0.125, g1) * amp * ridge));
   }
   if (rough > 0.0) {
-    float L = max(ax.w, 0.1);
-    vec3 pRaw = p - body(id, 3).xyz;
-    vec3 pLoc = pRaw / L;
     float frostAa = 1.0 / (1.0 + 65.0 * (footprint / L));
-    float n0 = n3(pLoc * 14.0 + uid * 1.7) - 0.5;
-    vec3 fGrad = (u_isMobile > 0.5 || footprint > 0.0022)
-      ? vec3(n0, sin(n0 * 9.0) * 0.45, cos(n0 * 9.0) * 0.45)
-      : vec3(
-          n0,
-          n3(pLoc * 14.0 + uid * 3.1 + 7.3) - 0.5,
-          n3(pLoc * 14.0 + uid * 5.3 + 13.7) - 0.5
-        );
+    // Crystal-locked frost coordinates (scaled in crystal-local frame using trilinear hardware u_incl lookups — zero floor() cellular jumps & zero hash() overhead)
+    vec3 pFrost = vec3(pLoc.x * 0.32, pLoc.y, pLoc.z * 0.32);
+    vec4 fTex = texture(u_incl, pFrost * 0.48 + uid * 0.19);
+    vec3 fGradLoc = fTex.rgb - 0.5;
+    vec3 fGrad = t1 * fGradLoc.x + ax.xyz * fGradLoc.y + t2 * fGradLoc.z;
     vec3 nSmooth = fGrad * (rough * 0.014 * frostAa);
-    vec3 cell = floor(pRaw * 820.0);
-    vec3 patchCell = floor(pRaw * 140.0);
-    float patchMod = 0.55 + 0.75 * hash(patchCell + uid * 3.1);
-    vec3 hCell = vec3(hash(cell), hash(cell + 1.3), hash(cell + 2.7)) - 0.5;
-    vec3 nDither = rough * 0.036 * patchMod * hCell;
+    vec4 dTex = texture(u_incl, pFrost * 2.85 + uid * 0.31);
+    vec3 nCell0 = dTex.rgb - 0.5;
+    float patchMod = 0.55 + 0.75 * fTex.b;
+    vec3 nDitherWorld = (t1 * nCell0.x + ax.xyz * nCell0.y + t2 * nCell0.z) * (rough * 0.036 * patchMod * frostAa);
     vec3 nJack = vec3(0.0);
     if (glimmer > 0.001) {
-      vec3 jbCell = floor(pRaw * 900.0);
-      vec3 hJb = vec3(hash(jbCell), hash(jbCell + 1.3), hash(jbCell + 2.7)) - 0.5;
-      nJack = rough * 0.024 * glimmer * hJb;
+      vec3 hJb = texture(u_incl, pFrost * 3.45 + uid * 0.53 + 0.17).rgb - 0.5;
+      nJack = (t1 * hJb.x + ax.xyz * hJb.y + t2 * hJb.z) * (rough * 0.024 * glimmer * frostAa);
     }
-    n = normalize(n + mix(nSmooth, nDither, dither) * (1.0 - 0.72 * g1) + nJack);
+    n = normalize(n + mix(nSmooth, nDitherWorld, dither) * (1.0 - 0.72 * g1) + nJack);
   }
   return n;
 }
@@ -11550,13 +11625,15 @@ float evalLongHairlineScratch(vec2 uv, vec3 lp, float angle, float stripFreq, fl
 }
 
 // Realistic mineral surface patina: 4 orientations of sparse, varied-angle hair-thin mineral scratches
-// and faint growth-hillock etch lines. Keeps crystal faces 96%+ glassy and water-clear with zero pixel static!
+// and faint growth-hillock etch lines. Uses crystal-frame-locked normalized coordinates (lp) independent of
+// facet normal tilt nFlat and plane index kFace so surface scratches and hillocks never flick during morphs!
 void evalSurfacePatina(int id, int k, vec3 p, vec3 nBase, float footprint, float dEdge, out vec3 nPatina, out float patinaGlint, out float patinaRough) {
   nPatina = nBase;
   patinaGlint = 0.0;
   patinaRough = 0.0;
+  float metalAtten = 1.0 - smoothstep(0.75, 0.96, clamp(u_metallic, 0.0, 1.0));
   float rawSurfScale = mix(0.15, 1.0, clamp(u_rawAmount / 0.4, 0.0, 1.0)) * mix(1.0, 1.65, max(0.0, (u_rawAmount - 0.4) / 1.6));
-  float effPatina = clamp(u_patina * u_patinaMacro * u_surfaceMacro * rawSurfScale, 0.0, 2.0);
+  float effPatina = clamp(u_patina * u_patinaMacro * u_surfaceMacro * rawSurfScale * metalAtten, 0.0, 2.0);
   if (effPatina <= 0.005) return;
 
   vec3 ax = body(id, 1).xyz;
@@ -11564,31 +11641,39 @@ void evalSurfacePatina(int id, int k, vec3 p, vec3 nBase, float footprint, float
   float L = max(body(id, 1).w, 0.1);
   float r = max(body(id, 2).w, 0.02);
   float uid = crystalUid(id);
-  int kFace = (k < CP) ? k : (k >= CP + 5000 && k < CP + 10000 ? ((k - (CP + 5000)) / 36) : 0);
-  vec3 nFlat = (kFace < CP) ? body(id, PA + kFace).xyz : nBase;
 
-  vec3 tU = cross(nFlat, ax);
-  float tULen = length(tU);
-  tU = tULen > 1e-4 ? (tU / tULen) : normalize(cross(nFlat, vec3(0.577, -0.577, 0.577)));
-  vec3 tV = cross(nFlat, tU);
+  vec3 p0 = body(id, PA).xyz;
+  vec3 t1 = p0 - ax * dot(p0, ax);
+  float t1Len = length(t1);
+  t1 = t1Len > 1e-4 ? (t1 / t1Len) : normalize(cross(ax, vec3(0.577, 0.577, 0.577)));
+  vec3 t2 = cross(ax, t1);
 
-  vec3 rel = p - rt;
-  float scaleUV = 1.0 / max(r * 2.2, 0.14);
-  float uFace = dot(rel, tU) * scaleUV;
-  float vFace = dot(rel, tV) * scaleUV;
+  vec3 cMid = rt + ax * (0.52 * L);
+  vec3 relMid = p - cMid;
+  float scaleR = 1.0 / max(r * 2.2, 0.06);
+  float scaleL = 1.0 / max(L * 0.72, 0.10);
+  vec3 lp = vec3(dot(relMid, t1) * scaleR, dot(relMid, ax) * scaleL, dot(relMid, t2) * scaleR);
+
+  // Singularity-free 3D-to-2D crystal-locked scratch projections (invariant to nFlat tilt and kFace index)
+  float uFace = lp.x * 0.80 - lp.z * 0.60;
+  float vFace = lp.y * 0.90 + (lp.x * 0.60 + lp.z * 0.80) * 0.28;
   vec2 uvFace = vec2(uFace, vFace);
-  vec3 lp = vec3(uFace, dot(rel, ax) / L, vFace);
+  vec2 uvFaceAlt = vec2(lp.x * 0.60 + lp.z * 0.80, lp.y * 0.90 - uFace * 0.28);
 
-  float uvFootprint = max(footprint * scaleUV, 0.0012);
+  vec3 tU0 = normalize(t1 * 0.80 - t2 * 0.60 + ax * 0.25);
+  vec3 tU = normalize(tU0 - nBase * dot(nBase, tU0) + vec3(1e-6));
+  vec3 tV = normalize(cross(nBase, tU));
+
+  float uvFootprint = max(footprint * scaleL, 0.0012);
   float aa = 1.0 / (1.0 + 45.0 * uvFootprint);
-  float fSeed = uid * 17.3 + float(kFace) * 11.7 + f_seed * 0.37;
+  float fSeed = uid * 17.3 + f_seed * 0.37;
   float edgeProx = 1.0 - smoothstep(0.0, r * 0.28, dEdge);
   // Single-octave 3D noise base sample on mobile; full multi-octave on desktop
   float baseN = n3(lp * 4.8 + fSeed);
   float patchEnv = smoothstep(0.42, 0.80, baseN + 0.26 * edgeProx);
 
-  float a1 = 0.38 + 0.55 * (hash(vec3(uid, float(kFace), 13.0)) - 0.5);
-  float a3 = 1.15 + 0.45 * (hash(vec3(uid, float(kFace), 47.0)) - 0.5);
+  float a1 = 0.38 + 0.55 * (hash(vec3(uid, 1.0, 13.0)) - 0.5);
+  float a3 = 1.15 + 0.45 * (hash(vec3(uid, 3.0, 47.0)) - 0.5);
 
   vec2 g1 = vec2(0.0), g2 = vec2(0.0), g3 = vec2(0.0), g4 = vec2(0.0);
   float scr1 = 0.0, scr2 = 0.0, scr4 = 0.0;
@@ -11597,18 +11682,19 @@ void evalSurfacePatina(int id, int k, vec3 p, vec3 nBase, float footprint, float
     scr1 = evalLongHairlineScratch(uvFace, lp, a1, 9.5, 1.35, 0.82, fSeed + 3.1, uvFootprint * 9.5, baseN, g1) * patchEnv;
     g1 *= patchEnv;
     if (u_isMobile <= 0.5) {
-      float a2 = -0.72 + 0.55 * (hash(vec3(uid, float(kFace), 29.0)) - 0.5);
-      float a4 = -1.35 + 0.45 * (hash(vec3(uid, float(kFace), 71.0)) - 0.5);
-      scr2 = evalLongHairlineScratch(uvFace + vec2(0.37, -0.21), lp, a2, 13.0, 1.65, 0.84, fSeed + 11.7, uvFootprint * 13.0, baseN, g2) * patchEnv;
-      scr4 = evalLongHairlineScratch(uvFace + vec2(0.51, 0.17), lp, a4, 16.0, 1.85, 0.85, fSeed + 39.3, uvFootprint * 16.0, baseN, g4) * patchEnv;
+      float a2 = -0.72 + 0.55 * (hash(vec3(uid, 2.0, 29.0)) - 0.5);
+      float a4 = -1.35 + 0.45 * (hash(vec3(uid, 4.0, 71.0)) - 0.5);
+      scr2 = evalLongHairlineScratch(uvFaceAlt + vec2(0.37, -0.21), lp, a2, 13.0, 1.65, 0.84, fSeed + 11.7, uvFootprint * 13.0, baseN, g2) * patchEnv;
+      scr4 = evalLongHairlineScratch(uvFaceAlt + vec2(0.51, 0.17), lp, a4, 16.0, 1.85, 0.85, fSeed + 39.3, uvFootprint * 16.0, baseN, g4) * patchEnv;
       g2 *= patchEnv;
       g4 *= patchEnv;
     }
   }
 
   // Faint organic growth-hillock etch steps & horizontal striation surface ledges (anti-aliased by uvFootprint)
+  float termFaceW = smoothstep(0.20, 0.65, abs(dot(nBase, ax)));
   float hillPatchN = (u_isMobile > 0.5) ? baseN : n3(lp * 3.8 + fSeed + 15.1);
-  float hillPatch = smoothstep(0.54, 0.84, hillPatchN) * ((kFace >= 8) ? 0.85 : 0.48) * aa;
+  float hillPatch = smoothstep(0.54, 0.84, hillPatchN) * mix(0.48, 0.85, termFaceW) * aa;
   float hillock = 0.0;
   float dHill = 0.0;
   if (hillPatch > 0.001) {
@@ -11624,13 +11710,15 @@ void evalSurfacePatina(int id, int k, vec3 p, vec3 nBase, float footprint, float
 
   float striaGlint = 0.0;
   float dStria = 0.0;
-  if (kFace < 8 && u_striations > 0.12) {
-    float sField = lp.y * (u_striationScale * 0.22) + 1.8 * sin(lp.y * 9.0 + uFace * 1.6 + fSeed);
+  float prismFaceW = 1.0 - smoothstep(0.35, 0.72, abs(dot(nBase, ax)));
+  float striaGate = prismFaceW * smoothstep(0.08, 0.24, u_striations);
+  if (striaGate > 0.001) {
+    float sField = lp.y * 12.0 + 1.8 * sin(lp.y * 9.0 + uFace * 1.6 + fSeed);
     float sSin = sin(sField);
     if (sSin > 0.55) {
       float striaN = (u_isMobile > 0.5) ? baseN : n3(lp * 4.5 + fSeed + 7.3);
       float sWave = pow(sSin, 12.0) * smoothstep(0.38, 0.78, striaN) * aa;
-      striaGlint = sWave * u_striations * 0.72;
+      striaGlint = sWave * u_striations * 0.72 * striaGate;
       dStria = cos(sField) * striaGlint;
     }
   }
@@ -11754,6 +11842,17 @@ vec3 refractedEnv(vec3 dir, float rough, float refAlpha) {
   return refractedEnv(dir, rough, refAlpha, 0.75);
 }
 
+// Smooth crystal-frame facet orientation phase (replaces discrete float(k) * 0.19 so thin-film & frost never jump on k changes)
+float crystalFacetPhase(int id, vec3 n) {
+  return dot(n, vec3(0.61, 0.43, 0.79)) + float(id) * 0.37;
+}
+
+float evalCrystalFrostRoll(int id, vec3 n, float uid) {
+  float v = sin(n.x * 3.7 + uid * 2.3 + f_seed * 0.31) * cos(n.y * 4.1 - n.z * 3.3 + uid * 1.7)
+          + 0.5 * sin(n.z * 5.3 + n.x * 2.9 - uid * 3.1);
+  return clamp(0.5 + 0.32 * v, 0.05, 0.95);
+}
+
 vec3 facetIridescence(int id, int k, vec3 p, vec3 rd, vec3 n, float dEdge, vec3 baseRefl) {
   float s = u_iridescence * u_rainbow;
   if (s <= 0.0) return baseRefl;
@@ -11763,7 +11862,7 @@ vec3 facetIridescence(int id, int k, vec3 p, vec3 rd, vec3 n, float dEdge, vec3 
   float r = max(body(id, 2).w, 0.02);
   float hgt = dot(p - body(id, 3).xyz, body(id, 1).xyz) / L;
   float genShift = body(id, 2).y;
-  float filmT = cosV * 2.4 + hgt * 1.35 + (dEdge / r) * 0.95 + float(k) * 0.19 + genShift;
+  float filmT = cosV * 2.4 + hgt * 1.35 + (dEdge / r) * 0.95 + crystalFacetPhase(id, n) + genShift;
   vec3 irid1 = spectralRainbow(filmT);
   vec3 irid2 = spectralRainbow(filmT * 1.62 + 0.29);
   vec3 specCol = normalize(mix(irid1, irid2, mix(0.32, 0.35, dither)) + vec3(1e-4)) * mix(1.22, 1.12, dither);
@@ -11781,10 +11880,11 @@ vec3 iridescentFilm(int id, int k, vec3 p, vec3 rd, vec3 n, float dEdge) {
   float L = max(body(id, 1).w, 0.1);
   float r = max(body(id, 2).w, 0.02);
   float hgt = dot(p - body(id, 3).xyz, body(id, 1).xyz) / L;
-  float filmT = cosV * 2.4 + hgt * 1.35 + (dEdge / r) * 0.95 + float(k) * 0.19 + body(id, 2).y;
+  float fPhase = crystalFacetPhase(id, n);
+  float filmT = cosV * 2.4 + hgt * 1.35 + (dEdge / r) * 0.95 + fPhase + body(id, 2).y;
   vec3 film = spectralRainbow(filmT * 1.18 + 0.11);
   float rim = pow(1.0 - cosV, 1.5);
-  float coat = 0.6 + 0.4 * hash(vec3(body(id, 2).z * 3.0, float(k) * 7.0, 61.0));
+  float coat = 0.6 + 0.4 * evalCrystalFrostRoll(id, n, body(id, 2).z * 3.0);
   return film * f_ambient * (0.25 + 0.75 * rim) * coat * min(s, 1.4) * 0.18 * (1.0 - 0.38 * dither);
 }
 
@@ -11813,6 +11913,7 @@ vec3 crystalBloomGlint(int id, int k, vec3 p, vec3 rd, vec3 nSmooth, float dEdge
   }
 
   // 6 pinpoint studio catch-lights around the orbit ring
+  float fPhase = crystalFacetPhase(id, nSmooth);
   for (int j = 0; j < 6; j++) {
     vec3 spotDir = (j == 0) ? vec3( 0.373644, 0.352274,  0.858281)
                  : (j == 1) ? vec3( 0.770520, 0.628793,  0.104525)
@@ -11823,7 +11924,7 @@ vec3 crystalBloomGlint(int id, int k, vec3 p, vec3 rd, vec3 nSmooth, float dEdge
     float sSmooth = dot(rSmooth, spotDir);
     if (sSmooth <= 0.86) continue;
     float facetHit = pow(sSmooth, expFacet * 1.2) * (1.0 + 0.8 * apexMask);
-    vec3 prismTint = mix(gemTint, spectralRainbow(float(k) * 0.21 + float(j) * 0.17 + body(id, 2).y), clamp((0.25 + u_iridescence * 0.3) * u_rainbow, 0.0, 0.85));
+    vec3 prismTint = mix(gemTint, spectralRainbow(fPhase + float(j) * 0.17 + body(id, 2).y), clamp((0.25 + u_iridescence * 0.3) * u_rainbow, 0.0, 0.85));
     flashSum += prismTint * (facetHit * 1.15 * glare);
   }
 
@@ -11883,7 +11984,15 @@ vec3 shadeMetallicCrystal(int id, int k, vec3 pEntry, vec3 rd, vec3 nRefl, float
   float cosFilm = sqrt(max(0.22, 1.0 - sin2Theta / (2.42 * 2.42)));
   // Smooth thin-film Bi2O3 oxide thickness sweeping across the ziggurat cluster & Greek-key terrace steps:
   // Outer rims & raised G-bars gleam in Gold -> Hot Magenta, stepping through Violet -> Peacock Cyan -> Emerald Green
-  float spatialGrad = (1.0 - hgt) * 0.46 + (pEntry.x * 0.65 - pEntry.y * 0.35) * 0.36 + float(id) * 0.11;
+  vec3 axMet = body(id, 1).xyz;
+  float LMet = max(body(id, 1).w, 0.12);
+  vec3 cMidMet = body(id, 3).xyz + axMet * (0.52 * LMet);
+  vec3 p0Met = body(id, PA).xyz;
+  vec3 t1Met = p0Met - axMet * dot(p0Met, axMet);
+  float t1MetLen = length(t1Met);
+  t1Met = t1MetLen > 1e-4 ? (t1Met / t1MetLen) : normalize(cross(axMet, vec3(0.577, 0.577, 0.577)));
+  vec3 relMet = (pEntry - cMidMet) / LMet;
+  float spatialGrad = (1.0 - hgt) * 0.46 + (dot(relMet, t1Met) * 0.65 - dot(relMet, axMet) * 0.35) * 0.36 + float(id) * 0.11;
   float opd = (0.94 + hopperStepIdx * 0.22 + spatialGrad) * cosFilm;
   vec3 biOxideCol = evalBismuthOxidePalette(opd);
   vec3 biGrazingCol = evalBismuthOxidePalette(opd + 0.18 * (1.0 - cosTheta));
@@ -11961,10 +12070,11 @@ vec3 shadeMetallicCrystal(int id, int k, vec3 pEntry, vec3 rd, vec3 nRefl, float
     specSharp += lCol * pow(cR, 84.0);
   }
 
-  // 5. Crisp metallic catch-light along 90° hopper step rims & cube facet edges
-  float stepRimGlow = (u_hopper > 0.01)
-    ? smoothstep(0.032, 0.002, hopperEdgeDist) * (0.42 + 0.48 * u_hopper)
-    : smoothstep(0.024, 0.0, dEdge / max(body(id, 2).w, 0.04)) * 0.28;
+  // 5. Crisp metallic catch-light along 90° hopper step rims & cube facet edges (smoothly blended across u_hopper)
+  float hopRimW = smoothstep(0.02, 0.28, u_hopper);
+  float edgeRimGlow = smoothstep(0.024, 0.0, dEdge / max(body(id, 2).w, 0.04)) * 0.28;
+  float hopRimGlow = smoothstep(0.032, 0.002, hopperEdgeDist) * (0.42 + 0.48 * u_hopper);
+  float stepRimGlow = mix(edgeRimGlow, hopRimGlow, hopRimW);
 
   vec3 highlightTint = mix(mix(F_cond, vec3(1.0, 0.96, 0.84), 0.32), F_cond * 1.15, iridW * 0.78);
   vec3 metalCol = F_cond * (reflLight + specBroad * mix(0.16, 0.12, iridW) * seamAO)
@@ -12121,17 +12231,19 @@ vec3 shadeBehindRay(vec3 roIn, vec3 rdIn, int skipIn, float travIn, float jitter
   bool bIsCathedral = (bK >= CP + 4000 && bK < CP + 4100);
   int bKBase = bIsGalliumMelt ? (bK - (CP + 3000)) : (bIsCathedral ? (bK - (CP + 4000)) : bK);
   float bMeltFactor = bIsGalliumMelt ? clamp(bVoidBorder, 0.0, 1.0) : 0.0;
-  float bFrostRoll = hash(vec3(bUid, float(bKBase), f_seed + 0.5));
-  float bRough = effFrost * smoothstep(bFrostRoll - 0.15, bFrostRoll + 0.15, effFrostShare) * (1.0 - smoothstep(0.0, 0.35, bMeltFactor));
   vec3 bRawN = (bK < CP) ? body(bId, PA + bK).xyz : bVoidN;
+  float bFrostRoll = evalCrystalFrostRoll(bId, bRawN, bUid);
+  float bRough = effFrost * smoothstep(bFrostRoll - 0.15, bFrostRoll + 0.15, effFrostShare) * (1.0 - smoothstep(0.0, 0.35, bMeltFactor));
   vec3 bN = faceNormal(bId, bKBase < CP ? bKBase : 18, bRawN, bP, bRough, travB * f_pixAngle, 1.0);
   if (bIsGalliumMelt) {
     bN = normalize(mix(bN, bRawN, smoothstep(0.0, 0.42, bMeltFactor)));
   }
-  float bMetalW = clamp(max(u_metallic, smoothstep(0.02, 0.35, bMeltFactor)), 0.0, 1.0);
-  if (bMetalW >= 0.995 || (u_melt > 0.45 && bMetalW >= 0.92)) {
-    vec3 mCol = shadeMetallicCrystal(bId, bKBase, bP, rdIn, bN, bRough, bIsGalliumMelt ? bVoidSeam : 1.0, travB * f_pixAngle, bMeltFactor);
-    return mix(bEnvCol, mCol, bAlpha);
+  float bMetalW = smoothstep(0.0, 0.95, clamp(max(u_metallic, smoothstep(0.02, 0.35, bMeltFactor)), 0.0, 1.0));
+  vec3 bMetalCol = (bMetalW > 0.005)
+    ? shadeMetallicCrystal(bId, bKBase, bP, rdIn, bN, bRough, bIsGalliumMelt ? bVoidSeam : 1.0, travB * f_pixAngle, bMeltFactor)
+    : vec3(0.0);
+  if (bMetalW >= 0.999 || (u_melt > 0.45 && bMetalW >= 0.92)) {
+    return mix(bEnvCol, bMetalCol, bAlpha);
   }
   float bF = fresnel(-dot(rdIn, bN), 1.0 / u_ior);
   vec3 bEntryRefl = facetIridescence(bId, bKBase, bP, rdIn, bN, 1.0, softFacetRefl(env(reflect(rdIn, bN), bRough)));
@@ -12149,7 +12261,7 @@ vec3 shadeBehindRay(vec3 roIn, vec3 rdIn, int skipIn, float travIn, float jitter
   thrB *= bTrans;
   travB += bLen;
   bP += rdB * bLen;
-  float bExitRoll = hash(vec3(bUid, float(bKf), f_seed + 0.5));
+  float bExitRoll = evalCrystalFrostRoll(bId, bExitRawN, bUid);
   float bFr = effFrost * smoothstep(bExitRoll - 0.15, bExitRoll + 0.15, effFrostShare);
   vec3 bNf = faceNormal(bId, bKf < CP ? bKf : 18, bExitRawN, bP, bFr, travB * f_pixAngle, 1.0);
   float bFo = fresnel(dot(rdB, bNf), u_ior);
@@ -12165,8 +12277,7 @@ vec3 shadeBehindRay(vec3 roIn, vec3 rdIn, int skipIn, float travIn, float jitter
   endEnv = max(endEnv, axisBg);
   colB += thrB * endEnv;
   if (bMetalW > 0.005) {
-    vec3 mCol = shadeMetallicCrystal(bId, bK, bP, rdIn, bN, bRough, 1.0, travB * f_pixAngle);
-    colB = mix(colB, mCol, bMetalW);
+    colB = mix(colB, bMetalCol, bMetalW);
   }
   return mix(bEnvCol, colB, bAlpha);
 }
@@ -12454,25 +12565,22 @@ void main() {
     bool isCathedralTerrace = (k >= CP + 4000 && k < CP + 4100);
     int kBaseFace = isGalliumMelt ? (k - (CP + 3000)) : (isCathedralTerrace ? (k - (CP + 4000)) : k);
     int kCrystal = kBaseFace;
-    int kFrostId = (kBaseFace < CP) ? kBaseFace : ((k >= CP + 10000) ? ((k - (CP + 10000)) / 4) : ((k >= CP + 5000) ? ((k - (CP + 5000)) / 2) : k));
-    float frostRoll = hash(vec3(uid, float(kFrostId), f_seed + 0.5));
-    float frostW = smoothstep(frostRoll - 0.15, frostRoll + 0.15, effFrostShare);
-    float rough = effFrost * frostW;
     bool isTinyEdgeChip = (k >= CP + 5000 && k < CP + 10000);
     bool isCornerVertexChip = (k >= CP + 10000);
     bool isHopperTerrace = (k == CP + 2000);
     float meltFactor = isGalliumMelt ? clamp(voidBorder, 0.0, 1.0) : 0.0;
     bool isOcclusionVoid = (k >= CP && k < CP + 5000 && !isHopperTerrace && !isGalliumMelt && !isCathedralTerrace);
-    bool isEdgeIncursion = isTinyEdgeChip || isCornerVertexChip || isOcclusionVoid || isHopperTerrace;
+    bool isEdgeIncursion = isTinyEdgeChip || isCornerVertexChip || isOcclusionVoid;
     bool isCornerNip = (k >= 18 && k < CP);
     vec3 rawFaceN = (isOcclusionVoid || isHopperTerrace || isGalliumMelt || isCathedralTerrace)
       ? voidWallN
       : ((isTinyEdgeChip || isCornerVertexChip) ? chipFacetN : body(id, PA + k).xyz);
+    float frostRoll = evalCrystalFrostRoll(id, rawFaceN, uid);
+    float frostW = smoothstep(frostRoll - 0.15, frostRoll + 0.15, effFrostShare);
+    float rough = effFrost * frostW * mix(1.0, 0.25, smoothstep(0.12, 0.58, u_hopper));
     if (isOcclusionVoid) {
       // Keep 3D void cavity walls smooth & clear (zero noisy texture, pure 3D geometric delineation)
       rough *= 0.20;
-    } else if (isHopperTerrace) {
-      rough *= 0.25;
     } else if (isGalliumMelt) {
       rough *= (1.0 - smoothstep(0.0, 0.35, meltFactor));
     } else if (isCathedralTerrace) {
@@ -12481,16 +12589,27 @@ void main() {
 
     vec3 adjN = rawFaceN;
     int ridgeKLo = -1, ridgeKHi = -1;
-    float metalW = clamp(max(u_metallic, smoothstep(0.02, 0.35, meltFactor)), 0.0, 1.0);
-    bool isOpaqueMetal = (metalW >= 0.995 || (u_hopper > 0.85 && metalW >= 0.92) || (u_melt > 0.45 && metalW >= 0.92));
-    bool needDEdge = !isGalliumMelt && !(isOpaqueMetal && u_hopper > 0.5) && (((hop == 0) && (u_patina > 0.01 || u_occlusion > 0.01 || u_hopper > 0.0 || u_cathedral > 0.0 || u_iridescence > 0.0 || u_bloom > 0.0)) || (g1 > 0.001 && u_edgeWear > 0.0));
+    float metalW = smoothstep(0.0, 0.95, clamp(max(u_metallic, smoothstep(0.02, 0.35, meltFactor)), 0.0, 1.0));
+    bool isOpaqueMetal = (metalW >= 0.999 || (u_melt > 0.45 && metalW >= 0.92));
+    bool needDEdge = !isGalliumMelt && !(isOpaqueMetal && u_hopper > 0.65) && (((hop == 0) && (u_patina > 0.01 || u_occlusion > 0.01 || u_hopper > 0.0 || u_cathedral > 0.0 || u_iridescence > 0.0 || u_bloom > 0.0)) || (g1 > 0.001 && u_edgeWear > 0.0));
     float dEdge = isGalliumMelt ? voidSeam : (needDEdge ? edgeDist(id, kBaseFace, p, adjN, ridgeKLo, ridgeKHi) : 1.0);
+
+    vec3 axisMain = body(id, 1).xyz, rootMain = body(id, 3).xyz;
+    float LMain = max(body(id, 1).w, 0.12);
+    vec3 cMidMain = rootMain + axisMain * (0.52 * LMain);
+    vec3 p0Main = body(id, PA).xyz;
+    vec3 t1Main = p0Main - axisMain * dot(p0Main, axisMain);
+    float t1MainLen = length(t1Main);
+    t1Main = t1MainLen > 1e-4 ? (t1Main / t1MainLen) : normalize(cross(axisMain, vec3(0.577, 0.577, 0.577)));
+    vec3 t2Main = cross(axisMain, t1Main);
+    vec3 relMidEntry = (p - cMidMain) / LMain;
+    vec3 lpEntry = vec3(dot(relMidEntry, t1Main), dot(relMidEntry, axisMain), dot(relMidEntry, t2Main));
 
     float jbChip = 0.0;
     if (!isOpaqueMetal && g1 > 0.001 && u_edgeWear > 0.0 && kBaseFace < CP) {
       float jbEdge = 1.0 - smoothstep(0.0, u_edgeWidth * body(id, 2).w, dEdge);
-      float jbNz = texture(u_incl, p * 6.0 + 0.71).b * 0.75 + texture(u_incl, p * 21.0).b * 0.35;
-      jbChip = jbEdge * smoothstep(1.0 - 0.45 * u_edgeWear, 1.05 - 0.45 * u_edgeWear, jbNz) * g1;
+      float jbNz = texture(u_incl, lpEntry * 4.5 + 0.71).b * 0.75 + texture(u_incl, lpEntry * 15.0).b * 0.35;
+      jbChip = jbEdge * smoothstep(1.0 - 0.45 * u_edgeWear, 1.05 - 0.45 * u_edgeWear, jbNz) * g1 * (1.0 - metalW);
       rough = max(rough, jbChip * 0.6);
     }
     if (isCathedralTerrace) {
@@ -12509,18 +12628,9 @@ void main() {
       n = normalize(mix(n, rawFaceN, smoothstep(0.0, 0.40, meltFactor)));
     }
     if (!isOpaqueMetal && hop == 0 && (isTinyEdgeChip || isCornerVertexChip || isCornerNip)) {
-      vec3 axis = body(id, 1).xyz, root = body(id, 3).xyz;
-      float L = max(body(id, 1).w, 0.12);
-      vec3 p0 = body(id, PA).xyz;
-      vec3 t1 = p0 - axis * dot(p0, axis);
-      float t1Len = length(t1);
-      t1 = t1Len > 1e-4 ? (t1 / t1Len) : normalize(cross(axis, vec3(0.577, 0.577, 0.577)));
-      vec3 t2 = cross(axis, t1);
-      vec3 rel = p - root;
-      vec3 lp = vec3(dot(rel, t1), dot(rel, axis), dot(rel, t2)) / L;
-      float nDamp = 1.0 / (1.0 + 40.0 * (footprint / L));
-      float conchRing = sin(length(lp) * 18.0 + dot(lp, rawFaceN) * 28.0) * nDamp;
-      vec3 ringTan = normalize(cross(rawFaceN, axis + vec3(0.01, 0.0, 0.02)));
+      float nDamp = (1.0 - metalW) / (1.0 + 40.0 * (footprint / LMain));
+      float conchRing = sin(length(lpEntry) * 18.0 + dot(lpEntry, rawFaceN) * 28.0) * nDamp;
+      vec3 ringTan = normalize(cross(rawFaceN, axisMain + vec3(0.01, 0.0, 0.02)));
       n = normalize(n + ringTan * (0.022 * conchRing));
     }
 
@@ -12628,15 +12738,17 @@ void main() {
     hopThr *= trans0;
     travC += len0;
     p = roC + rdC * len0;
-    float exitFrostRoll = hash(vec3(uid, float(kf), f_seed + 0.5));
-    float crispExitRough = (exitFrostRoll < u_frostShare * 0.65) ? (u_frost * 0.22) : 0.0;
+    float exitFrostRoll = evalCrystalFrostRoll(id, rawExitN0, uid);
+    float crispExitRough = smoothstep(exitFrostRoll - 0.12, exitFrostRoll + 0.12, u_frostShare * 0.65) * (u_frost * 0.22);
     fr = mix(effFrost * smoothstep(exitFrostRoll - 0.15, exitFrostRoll + 0.15, effFrostShare), crispExitRough, effG1);
     float dExit0 = 1.0;
     if (g1 > 0.001 && u_edgeWear > 0.0 && kf < CP) {
       vec3 tmpAdj;
       dExit0 = edgeDist(id, kf, p, tmpAdj);
+      vec3 relEx0 = (p - cMidMain) / LMain;
+      vec3 lpEx0 = vec3(dot(relEx0, t1Main), dot(relEx0, axisMain), dot(relEx0, t2Main));
       float jbExEdge = 1.0 - smoothstep(0.0, u_edgeWidth * body(id, 2).w, dExit0);
-      float jbExNz = texture(u_incl, p * 6.0 + 0.71).b * 0.75 + texture(u_incl, p * 21.0).b * 0.35;
+      float jbExNz = texture(u_incl, lpEx0 * 4.5 + 0.71).b * 0.75 + texture(u_incl, lpEx0 * 15.0).b * 0.35;
       float jbExChip = jbExEdge * smoothstep(1.0 - 0.45 * u_edgeWear, 1.05 - 0.45 * u_edgeWear, jbExNz) * g1;
       fr = max(fr, jbExChip * 0.55);
     }
@@ -12668,15 +12780,17 @@ void main() {
       hopThr *= trans;
       travC += len;
       p = roC + rdC * len;
-      exitFrostRoll = hash(vec3(uid, float(kf), f_seed + 0.5));
-      crispExitRough = (exitFrostRoll < u_frostShare * 0.65) ? (u_frost * 0.22) : 0.0;
+      exitFrostRoll = evalCrystalFrostRoll(id, rawExitNB, uid);
+      crispExitRough = smoothstep(exitFrostRoll - 0.12, exitFrostRoll + 0.12, u_frostShare * 0.65) * (u_frost * 0.22);
       fr = mix(effFrost * smoothstep(exitFrostRoll - 0.15, exitFrostRoll + 0.15, effFrostShare), crispExitRough, effG1);
       float dExitB = 1.0;
       if (g1 > 0.001 && u_edgeWear > 0.0 && kf < CP) {
         vec3 tmpAdjB;
         dExitB = edgeDist(id, kf, p, tmpAdjB);
+        vec3 relExB = (p - cMidMain) / LMain;
+        vec3 lpExB = vec3(dot(relExB, t1Main), dot(relExB, axisMain), dot(relExB, t2Main));
         float jbExEdgeB = 1.0 - smoothstep(0.0, u_edgeWidth * body(id, 2).w, dExitB);
-        float jbExNzB = texture(u_incl, p * 6.0 + 0.71).b * 0.75 + texture(u_incl, p * 21.0).b * 0.35;
+        float jbExNzB = texture(u_incl, lpExB * 4.5 + 0.71).b * 0.75 + texture(u_incl, lpExB * 15.0).b * 0.35;
         float jbExChipB = jbExEdgeB * smoothstep(1.0 - 0.45 * u_edgeWear, 1.05 - 0.45 * u_edgeWear, jbExNzB) * g1;
         fr = max(fr, jbExChipB * 0.55);
       }

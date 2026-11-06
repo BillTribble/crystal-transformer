@@ -5,7 +5,7 @@ import { buildPanel } from './panel.js';
 import { setupChrome } from './chrome.js';
 import { createLoop } from './loop.js';
 import { hexToOkhsl, okhslToHex } from './okhsl.js';
-import { buildCluster, cluster, resetEvolution, stepEvolution } from '../cluster.js';
+import { buildCluster, cluster, resetEvolution, resolveHabitSystem, stepEvolution } from '../cluster.js';
 import { createEnsoSound } from '../sound.js';
 
 const DEFAULT_ZOOM_KEY = 'crystals_default_zoom';
@@ -176,6 +176,8 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
   const morphState = {
     stageIndex: 0,
     diceRolls: 0,
+    transitionCount: 0,
+    structuralDelta: 1.0,
     fromPreset: standardPresetNames[0] || 'Classic Quartz Prism',
     toPreset: standardPresetNames[1] || 'Bismuth Hopper',
     elapsed: 0,
@@ -186,6 +188,28 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
     fromOkhsl: Object.create(null),
     toOkhsl: Object.create(null),
   };
+
+  function computeStructuralDelta(fromObj, toObj) {
+    if (!fromObj || !toObj) return 0.0;
+    const h0 = resolveHabitSystem(fromObj.habit || 'Trigonal');
+    const h1 = resolveHabitSystem(toObj.habit || 'Trigonal');
+    const habitDiff = h0 !== h1 ? 1.0 : 0.0;
+    const symDiff = Math.min(1.0, Math.abs(Number(fromObj.symmetry ?? 6) - Number(toObj.symmetry ?? 6)) / 1.5);
+    const hopperDiff = Math.min(1.0, Math.abs(Number(fromObj.hopper ?? 0) - Number(toObj.hopper ?? 0)) / 0.45);
+    const meltDiff = Math.min(1.0, Math.abs(Number(fromObj.melt ?? 0) - Number(toObj.melt ?? 0)) / 0.45);
+    const dt0 = typeof fromObj.doubleTerminated === 'boolean' ? (fromObj.doubleTerminated ? 1 : 0) : Number(fromObj.doubleTerminated ?? 1);
+    const dt1 = typeof toObj.doubleTerminated === 'boolean' ? (toObj.doubleTerminated ? 1 : 0) : Number(toObj.doubleTerminated ?? 1);
+    const dtDiff = Math.abs(dt0 - dt1);
+    const countDiff = Math.min(1.0, Math.abs(Number(fromObj.crystals ?? 4) - Number(toObj.crystals ?? 4)) / 3.0);
+    const shapeDiff = Math.min(
+      1.0,
+      Math.abs(Number(fromObj.tipAngle ?? 38) - Number(toObj.tipAngle ?? 38)) / 18.0 +
+      Math.abs(Number(fromObj.thickness ?? 0.16) - Number(toObj.thickness ?? 0.16)) / 0.14 +
+      Math.abs(Number(fromObj.twinShare ?? 0.3) - Number(toObj.twinShare ?? 0.3)) / 0.30
+    );
+    const rawDelta = Math.max(habitDiff, symDiff, hopperDiff, meltDiff, dtDiff * 0.9, countDiff * 0.85, shapeDiff * 0.85);
+    return rawDelta >= 0.22 ? Math.min(1.0, (rawDelta - 0.12) / 0.55) : 0.0;
+  }
 
   let panel = null;
 
@@ -247,6 +271,7 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
         morphState.toMap[p.key] = Number(toVal);
       }
     }
+    morphState.structuralDelta = computeStructuralDelta(morphState.fromMap, morphState.toMap);
   }
 
   function resetMorphFromPreset(presetName, holdSeconds = 2.0) {
@@ -271,6 +296,8 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
         morphState.fromMap[p.key] = Number(p.value);
       }
     }
+    morphState.structuralDelta = computeStructuralDelta(morphState.fromMap, morphState.toMap);
+    morphState.transitionCount = (morphState.transitionCount || 0) + 1;
     morphState.fromLive = true;
   }
 
@@ -813,7 +840,6 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
     // until the crystals fill the screen, then smoothly slows down. Clicking the Grow plant
     // button (#grow-btn) adds a `growBoost` surge that makes the crystals grow even more!
     if (P.growth && dt > 0 && (P.autoGrow?.value || growBoost > 0.001)) {
-      buildCluster(P, canvas.clientWidth || window.innerWidth, canvas.clientHeight || window.innerHeight);
       const curG = Number(P.growth.value);
       const maxG = P.growth.max || 3.5;
       let deltaG = 0;
@@ -907,35 +933,42 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
             targetOcclusion = 0.0;
           } else if ((occStyle === 'Auto alternate (Ovoids & Invisible Crystals)' || occStyle === 'Auto drift (1/3 time)') && P.evolve?.value) {
             occlusionDriftTime += dt;
-            // 90-second cycle (active 30s = 1/3 of the time) alternating between Ovoids (even cycles) and Invisible Crystals (odd cycles):
-            // 60s clear at 0.0 (0..60s), 12s slow fade-in (60..72s), 6s hold in the middle at 0.92 (72..78s), 12s slow fade-out (78..90s)
-            const cyc = occlusionDriftTime % 90.0;
-            const cycleIdx = Math.floor(occlusionDriftTime / 90.0);
-            const desiredType = (cycleIdx % 2 === 1) ? 1.0 : 0.0;
-            if (P.occlusionType && smoothOcclusion < 0.02 && Math.abs(Number(P.occlusionType.value) - desiredType) > 1e-3) {
+            // Synchronize Ovoid / Crystal-Negative phases strictly to the middle of major structural transitions (post-016227):
+            // - Hold windows and peak-solidity phases (morphAlpha <= 0.18 or morphAlpha >= 0.82) stay at 0.0 (100% solid crystal).
+            // - Rises smoothly to peak (0.92) right at morphAlpha = 0.50 (middle of a major structural transition) and settles
+            //   completely back to 0.0 before the crystal finishes arriving at its new form.
+            const isGliding = state === 'moving' && store.gliding;
+            const isMorphing = !isGliding && P.morphPresets?.value && morphState.holdRemaining <= 0;
+            const morphAlpha = isGliding
+              ? store.glideProgress
+              : (isMorphing ? morphState.progress : 0.0);
+            const structDelta = isGliding ? 1.0 : (isMorphing ? morphState.structuralDelta : 0.0);
+            const desiredType = ((morphState.transitionCount || 0) % 2 === 1) ? 1.0 : 0.0;
+
+            if (P.occlusionType && morphAlpha <= 0.18 && smoothOcclusion < 0.02 && Math.abs(Number(P.occlusionType.value) - desiredType) > 1e-3) {
               store.setSmooth(P.occlusionType, desiredType);
               P.occlusionType.base = desiredType;
               needsUiSync = true;
             }
-            if (cyc >= 60.0 && cyc < 72.0) {
-              const u = (cyc - 60.0) / 12.0;
-              targetOcclusion = 0.92 * (0.5 - 0.5 * Math.cos(Math.PI * u));
-            } else if (cyc >= 72.0 && cyc < 78.0) {
-              targetOcclusion = 0.92;
-            } else if (cyc >= 78.0) {
-              const u = (cyc - 78.0) / 12.0;
-              targetOcclusion = 0.92 * (0.5 + 0.5 * Math.cos(Math.PI * u));
+
+            if (structDelta > 0.01 && morphAlpha > 0.18 && morphAlpha < 0.82) {
+              const u = (morphAlpha - 0.18) / 0.64;
+              const transitionBell = Math.pow(Math.sin(Math.PI * u), 2.5);
+              targetOcclusion = 0.92 * transitionBell * structDelta;
+              smoothOcclusion = targetOcclusion;
             } else {
               targetOcclusion = 0.0;
+              smoothOcclusion = 0.0;
             }
           }
-          // Rate-limit smoothOcclusion to at most 0.92 / 12.0 per second so voids always appear/disappear over a full 12.0 seconds
-          const maxStep = (0.92 / 12.0) * dt;
-          const diff = targetOcclusion - smoothOcclusion;
-          if (Math.abs(diff) <= maxStep) {
-            smoothOcclusion = targetOcclusion;
-          } else {
-            smoothOcclusion += Math.sign(diff) * maxStep;
+          if (occStyle !== 'Auto alternate (Ovoids & Invisible Crystals)' && occStyle !== 'Auto drift (1/3 time)') {
+            const maxStep = (0.92 / 12.0) * dt;
+            const diff = targetOcclusion - smoothOcclusion;
+            if (Math.abs(diff) <= maxStep) {
+              smoothOcclusion = targetOcclusion;
+            } else {
+              smoothOcclusion += Math.sign(diff) * maxStep;
+            }
           }
           const curOcc = Number(P.occlusion.value) || 0;
           if (Math.abs(smoothOcclusion - curOcc) > 5e-4) {
