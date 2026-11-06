@@ -14,7 +14,7 @@ uint pcg(uint v) {
 }
 float hash(vec3 p) {
   uvec3 u = uvec3(ivec3(floor(p)));
-  return float(pcg(u.x + pcg(u.y + pcg(u.z)))) * (1.0 / 4294967295.0);
+  return float(pcg(u.x * 1664525u + u.y * 1013904223u + u.z * 374761393u)) * (1.0 / 4294967295.0);
 }
 
 // Dust: sparse white specks, one candidate per cell per frame.

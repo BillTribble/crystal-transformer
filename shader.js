@@ -274,47 +274,65 @@ vec4 encodeHdr(vec3 c) { return vec4(c / (1.0 + c), 1.0); }
 vec3 decodeHdr(vec4 e) { return e.rgb / max(1.0 - e.rgb, 1e-4); }
 `,
 
-  bake: `
-#define INCL ${INCL}.0
-uniform float u_slice;
-out vec4 outColor;
-
-float pnoise(vec3 p, float period) {
-  vec3 i = floor(p), f = fract(p);
-  vec3 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
-  vec3 s = vec3(f_seed * 17.3 + 7.0, f_seed * 31.1 + 3.0, f_seed * 13.7 + 11.0);
-  vec3 i0 = mod(i, period) + s;
-  vec3 i1 = mod(i + 1.0, period) + s;
-  float n000 = hash(vec3(i0.x, i0.y, i0.z));
-  float n100 = hash(vec3(i1.x, i0.y, i0.z));
-  float n010 = hash(vec3(i0.x, i1.y, i0.z));
-  float n110 = hash(vec3(i1.x, i1.y, i0.z));
-  float n001 = hash(vec3(i0.x, i0.y, i1.z));
-  float n101 = hash(vec3(i1.x, i0.y, i1.z));
-  float n011 = hash(vec3(i0.x, i1.y, i1.z));
-  float n111 = hash(vec3(i1.x, i1.y, i1.z));
-  return mix(
-    mix(mix(n000, n100, u.x), mix(n010, n110, u.x), u.y),
-    mix(mix(n001, n101, u.x), mix(n011, n111, u.x), u.y),
-    u.z) * 2.0 - 1.0;
-}
-
-void main() {
-  vec3 p = vec3(gl_FragCoord.xy, u_slice + 0.5) / INCL;
-  float n4 = pnoise(p * 4.0, 4.0);
-  float n8 = pnoise(p * 8.0, 8.0);
-  float m = 0.58 * n4 + 0.30 * n8;
-  float milk = pow(clamp((m + 0.05) * 1.6, 0.0, 1.0), 1.8);
-  vec3 w = vec3(n4, pnoise(p * 2.0 + 7.7, 2.0), -n4) * 0.65;
-  float sheet = 1.0 - smoothstep(0.0, 0.045, abs(pnoise(p * 3.0 + w * 1.2, 3.0)));
-  float n2 = pnoise(p * 2.0 + 9.0, 2.0);
-  float patchy = smoothstep(-0.05, 0.25, 0.55 * n2 + 0.28 * n4);
-  float bubbles = mix(0.25, 1.0, step(0.6, hash(vec3(gl_FragCoord.xy, u_slice) + f_seed * 977.0)));
-  float veil = sheet * patchy * bubbles;
-  float mottle = clamp((0.52 * n2 + 0.26 * n4 + 0.13 * n8) * 0.72 + 0.5, 0.0, 1.0);
-  float sparkle = hash(vec3(gl_FragCoord.xy, u_slice + 4096.0) + f_seed * 389.0);
-  outColor = vec4(milk, veil, mottle, sparkle);
-}`,
+  fillNoiseVolume(vol, seed) {
+    const N = INCL;
+    const invN = 1.0 / N;
+    const s = (Math.floor((Number(seed) || 1) * 1000) ^ 0x9e3779b9) >>> 0;
+    const gSize = 16;
+    const g = new Float32Array(gSize * gSize * gSize);
+    let st = (s + 0x6d2b79f5) >>> 0;
+    for (let i = 0; i < g.length; i++) {
+      st = (Math.imul(st ^ (st >>> 15), 0x85ebca6b) + 0x6d2b79f5) >>> 0;
+      g[i] = ((st >>> 8) * (1.0 / 8388608.0)) - 1.0;
+    }
+    function samplePeriodic(x, y, z, period) {
+      const pm = period - 1;
+      const ix0 = Math.floor(x), iy0 = Math.floor(y), iz0 = Math.floor(z);
+      const fx = x - ix0, fy = y - iy0, fz = z - iz0;
+      const ux = fx * fx * (3.0 - 2.0 * fx);
+      const uy = fy * fy * (3.0 - 2.0 * fy);
+      const uz = fz * fz * (3.0 - 2.0 * fz);
+      const x0 = ix0 & pm, y0 = (iy0 & pm) << 4, z0 = (iz0 & pm) << 8;
+      const x1 = (ix0 + 1) & pm, y1 = ((iy0 + 1) & pm) << 4, z1 = ((iz0 + 1) & pm) << 8;
+      const c00 = g[z0 + y0 + x0] + (g[z0 + y0 + x1] - g[z0 + y0 + x0]) * ux;
+      const c10 = g[z0 + y1 + x0] + (g[z0 + y1 + x1] - g[z0 + y1 + x0]) * ux;
+      const c01 = g[z1 + y0 + x0] + (g[z1 + y0 + x1] - g[z1 + y0 + x0]) * ux;
+      const c11 = g[z1 + y1 + x0] + (g[z1 + y1 + x1] - g[z1 + y1 + x0]) * ux;
+      const c0 = c00 + (c10 - c00) * uy;
+      const c1 = c01 + (c11 - c01) * uy;
+      return c0 + (c1 - c0) * uz;
+    }
+    let idx = 0;
+    let rng = (s ^ 0x27d4eb2d) >>> 0;
+    for (let z = 0; z < N; z++) {
+      const pz = (z + 0.5) * invN;
+      for (let y = 0; y < N; y++) {
+        const py = (y + 0.5) * invN;
+        for (let x = 0; x < N; x++) {
+          const px = (x + 0.5) * invN;
+          const n2 = samplePeriodic(px * 2.0 + 9.0, py * 2.0 + 9.0, pz * 2.0 + 9.0, 2);
+          const n4 = samplePeriodic(px * 4.0, py * 4.0, pz * 4.0, 4);
+          const n8 = samplePeriodic(px * 8.0, py * 8.0, pz * 8.0, 8);
+          const m = 0.58 * n4 + 0.30 * n8;
+          const mc = Math.max(0.0, Math.min(1.0, (m + 0.05) * 1.6));
+          const milk = mc * Math.sqrt(mc);
+          const sn = Math.abs(samplePeriodic(px * 4.0 + n4 * 0.78, py * 4.0 + n2 * 0.78, pz * 4.0 - n4 * 0.78, 4));
+          const sheet = sn >= 0.045 ? 0.0 : (1.0 - sn / 0.045);
+          const pt = Math.max(0.0, Math.min(1.0, ((0.55 * n2 + 0.28 * n4) + 0.05) * (1.0 / 0.30)));
+          const patchy = pt * pt * (3.0 - 2.0 * pt);
+          rng = (Math.imul(rng ^ (rng >>> 15), 0x85ebca6b) + 0x6d2b79f5) >>> 0;
+          const bubbles = (rng & 255) > 153 ? 1.0 : 0.25;
+          const veil = sheet * patchy * bubbles;
+          const mottle = Math.max(0.0, Math.min(1.0, (0.52 * n2 + 0.26 * n4 + 0.13 * n8) * 0.72 + 0.5));
+          const sparkle = (rng >>> 8) & 255;
+          vol[idx++] = Math.min(255, Math.max(0, (milk * 255.0 + 0.5) | 0));
+          vol[idx++] = Math.min(255, Math.max(0, (veil * 255.0 + 0.5) | 0));
+          vol[idx++] = Math.min(255, Math.max(0, (mottle * 255.0 + 0.5) | 0));
+          vol[idx++] = sparkle;
+        }
+      }
+    }
+  },
 
   backdrop: `
 out vec4 outColor;
@@ -2710,7 +2728,7 @@ void main() {
       : ((g1 > 0.01) ? clamp(bounces, 1, 8) : clamp(hop == 0 ? bounces : 2, 1, 6));
     int stepsB = (u_isMobile > 0.5) ? 2 : clamp(int(u_inclusionSteps + 0.5), 2, 6);
     for (int b = 1; b < maxB; b++) {
-      if (dot(o, o) >= 1e-6) break;
+      if (dot(o, o) >= 1e-6 || dot(hopThr, hopThr) < 1e-4) break;
       float Fb = fresnel(dot(rdC, nf), effIor);
       vec3 reflBDir = reflect(rdC, -nf);
       vec3 bounceRefl = facetIridescence(id, kf, p, rdC, -nf, 1.0, softFacetRefl(env(reflBDir, fr), hgtEntry));

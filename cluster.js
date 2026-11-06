@@ -121,6 +121,7 @@ function enumerateCrystalVertices(rowIdx) {
   let n = 0;
   for (let k = 0; k < 18; k++) {
     const o = base + k * 4;
+    if (d[o + 3] > 1e4) continue;
     POLY_N[n * 3] = d[o]; POLY_N[n * 3 + 1] = d[o + 1]; POLY_N[n * 3 + 2] = d[o + 2];
     POLY_W[n] = d[o + 3];
     n++;
@@ -2088,3 +2089,176 @@ cluster.snapToTarget = (P) => {
 cluster.triggerGrowBurst = triggerGrowBurst;
 cluster.surgeBranch = triggerGrowBurst;
 
+let cachedWireframeVersion = -1;
+let cachedWireframeBodies = [];
+const wfNx = new Float64Array(18);
+const wfNy = new Float64Array(18);
+const wfNz = new Float64Array(18);
+const wfW = new Float64Array(18);
+const wfVx = new Float64Array(128);
+const wfVy = new Float64Array(128);
+const wfVz = new Float64Array(128);
+const wfMask = new Int32Array(128);
+
+export function getClusterWireframe() {
+  if (cachedWireframeVersion === cluster.version && cachedWireframeBodies.length > 0) {
+    return cachedWireframeBodies;
+  }
+  const d = cluster.data;
+  const nCrystals = cluster.crystals;
+  const bodies = [];
+
+  for (let row = 0; row < nCrystals; row++) {
+    const rBase = row * ROW_W * 4;
+    const alpha = d[rBase + 8];
+    if (alpha <= 0.02) continue;
+    const axX = d[rBase + 4], axY = d[rBase + 5], axZ = d[rBase + 6], L = d[rBase + 7];
+    const r = d[rBase + 11];
+    const rtX = d[rBase + 12], rtY = d[rBase + 13], rtZ = d[rBase + 14];
+    const pBase = (row * ROW_W + PLANES_AT) * 4;
+    let np = 0;
+    for (let k = 0; k < 18; k++) {
+      const o = pBase + k * 4;
+      const w = d[o + 3];
+      if (w > 1e4) continue;
+      wfNx[np] = d[o];
+      wfNy[np] = d[o + 1];
+      wfNz[np] = d[o + 2];
+      wfW[np] = w;
+      np++;
+    }
+    if (np < 4) continue;
+
+    const epsMerge = Math.max(1e-3, r * 0.018);
+    const epsMerge2 = epsMerge * epsMerge;
+    const epsPlane = Math.max(1.2e-3, r * 0.015);
+    let nv = 0;
+
+    for (let i = 0; i < np - 2; i++) {
+      const ax0 = wfNx[i], ay0 = wfNy[i], az0 = wfNz[i], wi = wfW[i];
+      for (let j = i + 1; j < np - 1; j++) {
+        const bx = wfNx[j], by = wfNy[j], bz = wfNz[j], wj = wfW[j];
+        const abx = ay0 * bz - az0 * by, aby = az0 * bx - ax0 * bz, abz = ax0 * by - ay0 * bx;
+        for (let k = j + 1; k < np; k++) {
+          const cx = wfNx[k], cy = wfNy[k], cz = wfNz[k], wk = wfW[k];
+          const bcx = by * cz - bz * cy, bcy = bz * cx - bx * cz, bcz = bx * cy - by * cx;
+          const det = ax0 * bcx + ay0 * bcy + az0 * bcz;
+          if (Math.abs(det) < 1e-6) continue;
+          const cax = cy * az0 - cz * ay0, cay = cz * ax0 - cx * az0, caz = cx * ay0 - cy * ax0;
+          const inv = 1 / det;
+          const vx = (wi * bcx + wj * cax + wk * abx) * inv;
+          const vy = (wi * bcy + wj * cay + wk * aby) * inv;
+          const vz = (wi * bcz + wj * caz + wk * abz) * inv;
+          let inside = true;
+          for (let m = 0; m < np; m++) {
+            if (m === i || m === j || m === k) continue;
+            if (wfNx[m] * vx + wfNy[m] * vy + wfNz[m] * vz > wfW[m] + 2e-4) {
+              inside = false;
+              break;
+            }
+          }
+          if (!inside) continue;
+
+          let foundIdx = -1;
+          for (let u = 0; u < nv; u++) {
+            const dx = wfVx[u] - vx, dy = wfVy[u] - vy, dz = wfVz[u] - vz;
+            if (dx * dx + dy * dy + dz * dz <= epsMerge2) {
+              foundIdx = u;
+              break;
+            }
+          }
+          const bitTrip = (1 << i) | (1 << j) | (1 << k);
+          if (foundIdx >= 0) {
+            wfMask[foundIdx] |= bitTrip;
+          } else if (nv < 128) {
+            wfVx[nv] = vx; wfVy[nv] = vy; wfVz[nv] = vz;
+            let mask = bitTrip;
+            for (let m = 0; m < np; m++) {
+              if (Math.abs(wfNx[m] * vx + wfNy[m] * vy + wfNz[m] * vz - wfW[m]) <= epsPlane) {
+                mask |= (1 << m);
+              }
+            }
+            wfMask[nv] = mask;
+            nv++;
+          }
+        }
+      }
+    }
+    if (nv < 4) continue;
+
+    const verts = new Float32Array(nv * 3);
+    const vertHgt = new Float32Array(nv);
+    for (let u = 0; u < nv; u++) {
+      verts[u * 3] = wfVx[u];
+      verts[u * 3 + 1] = wfVy[u];
+      verts[u * 3 + 2] = wfVz[u];
+      const axial = (wfVx[u] - rtX) * axX + (wfVy[u] - rtY) * axY + (wfVz[u] - rtZ) * axZ;
+      vertHgt[u] = Math.max(0, Math.min(1, axial / Math.max(L, 0.08)));
+    }
+
+    const normals = new Float32Array(np * 3);
+    for (let p = 0; p < np; p++) {
+      normals[p * 3] = wfNx[p];
+      normals[p * 3 + 1] = wfNy[p];
+      normals[p * 3 + 2] = wfNz[p];
+    }
+
+    const faces = [];
+    const edgeSet = new Map();
+    for (let p = 0; p < np; p++) {
+      const bit = 1 << p;
+      const fVerts = [];
+      let cx = 0, cy = 0, cz = 0;
+      for (let u = 0; u < nv; u++) {
+        if ((wfMask[u] & bit) !== 0) {
+          fVerts.push(u);
+          cx += wfVx[u]; cy += wfVy[u]; cz += wfVz[u];
+        }
+      }
+      if (fVerts.length < 3) continue;
+      cx /= fVerts.length; cy /= fVerts.length; cz /= fVerts.length;
+      const nx = wfNx[p], ny = wfNy[p], nz = wfNz[p];
+      let t1x = wfVx[fVerts[0]] - cx, t1y = wfVy[fVerts[0]] - cy, t1z = wfVz[fVerts[0]] - cz;
+      const t1l = Math.hypot(t1x, t1y, t1z) || 1;
+      t1x /= t1l; t1y /= t1l; t1z /= t1l;
+      const t2x = ny * t1z - nz * t1y, t2y = nz * t1x - nx * t1z, t2z = nx * t1y - ny * t1x;
+      fVerts.sort((a, b) => {
+        const dax = wfVx[a] - cx, day = wfVy[a] - cy, daz = wfVz[a] - cz;
+        const dbx = wfVx[b] - cx, dby = wfVy[b] - cy, dbz = wfVz[b] - cz;
+        return Math.atan2(dax * t2x + day * t2y + daz * t2z, dax * t1x + day * t1y + daz * t1z) -
+               Math.atan2(dbx * t2x + dby * t2y + dbz * t2z, dbx * t1x + dby * t1y + dbz * t1z);
+      });
+      faces.push({ plane: p, indices: fVerts, cx, cy, cz });
+      for (let m = 0; m < fVerts.length; m++) {
+        const u = fVerts[m], v = fVerts[(m + 1) % fVerts.length];
+        const lo = Math.min(u, v), hi = Math.max(u, v);
+        const key = (lo << 8) | hi;
+        const prev = edgeSet.get(key);
+        if (!prev) edgeSet.set(key, { u: lo, v: hi, pA: p, pB: p });
+        else prev.pB = p;
+      }
+    }
+
+    const edges = [...edgeSet.values()];
+    bodies.push({
+      row,
+      alpha,
+      verts,
+      vertHgt,
+      nv,
+      normals,
+      np,
+      faces,
+      edges,
+      sphereZ: 0,
+      cx: d[rBase],
+      cy: d[rBase + 1],
+      cz: d[rBase + 2],
+    });
+  }
+
+  cachedWireframeVersion = cluster.version;
+  cachedWireframeBodies = bodies;
+  return bodies;
+}
+cluster.getWireframe = getClusterWireframe;

@@ -96,6 +96,7 @@ export function createLoop(canvas, P, sketch) {
     start() {
       last = 0;
       cancelAnimationFrame(raf);
+      if (frames === 0) render(0);
       raf = requestAnimationFrame(frame);
     },
     stop() { cancelAnimationFrame(raf); raf = 0; },
@@ -104,6 +105,7 @@ export function createLoop(canvas, P, sketch) {
     snapshot(width, height, pxRatio) {
       const s = sketch();
       if (!s) return Promise.reject(new Error('The sketch is not running.'));
+      s.ensureReadySync?.();
       canvas.width = width;
       canvas.height = height;
       s.resize(width, height, pxRatio);
