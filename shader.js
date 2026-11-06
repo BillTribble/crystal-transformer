@@ -214,13 +214,17 @@ vec3 env(vec3 dc, float rough) {
   vec3 d = f_toWorld * dc;
   return backdrop(d) + lights(d, rough);
 }
+float glimmerCurve(float g) {
+  float g01 = clamp(g, 0.0, 1.0);
+  return smoothstep(0.0, 0.45, g01) * mix(0.85, 1.0, smoothstep(0.45, 1.0, g01)) + max(0.0, g - 1.0);
+}
 // High-contrast analytic refraction strip lights around the refraction cone behind the cluster (active when u_glimmer > 0)
 // Matches Jack Bush's tall studio rim strip geometry (hw ≈ 0.06, hh ≈ 0.60) so wavelength dispersion overlaps
 // adjacent spectral bands into rich electric cyan, sapphire blue, warm golden-amber, and fiery orange-red facets.
 vec3 glimmerStripLights(vec3 d, float rough) {
   float g = clamp(u_glimmer, 0.0, 2.0);
   if (g <= 0.001 || d.z >= -0.05) return vec3(0.0);
-  float effG = max(g, 0.85);
+  float effG = glimmerCurve(g);
   vec3 lCol = vec3(f_lights[2 * LS + 9], f_lights[2 * LS + 10], f_lights[2 * LS + 11]);
   vec3 sum = vec3(0.0);
   for (int i = 0; i < 4; i++) {
@@ -1965,7 +1969,7 @@ vec3 refractedEnv(vec3 dir, float rough, float refAlpha, float hgt) {
   vec3 softLt = (lt / (1.0 + (2.6 - 1.5 * glare) * ltLum)) * mix(gemCol * 0.88, gemCol * 0.55 + vec3(0.45), 0.25 * glare);
   vec3 curEnv = bg + mix(lt, softLt, refAlpha);
   vec3 jbEnv = bg + lt + glimmerStripLights(d, rough) * refAlpha;
-  float jbBlend = (u_glimmer > 0.01) ? clamp(max(u_glimmer, 0.90), 0.0, 1.0) : 0.0;
+  float jbBlend = clamp(glimmerCurve(u_glimmer), 0.0, 1.0);
   return mix(curEnv, jbEnv, jbBlend);
 }
 vec3 refractedEnv(vec3 dir, float rough, float refAlpha) {
@@ -2466,6 +2470,7 @@ void main() {
   float hopCost = 0.0;
   float glimmer = clamp(u_glimmer, 0.0, 2.0);
   float g1 = clamp(glimmer, 0.0, 1.0);
+  float effG1 = clamp(glimmerCurve(glimmer), 0.0, 1.0);
 
   int maxHops = clamp(depth + 1, 1, 5);
   bool primaryEvaluated = false;
@@ -2671,7 +2676,7 @@ void main() {
     p = roC + rdC * len0;
     float exitFrostRoll = hash(vec3(uid, float(kf), f_seed + 0.5));
     float crispExitRough = (exitFrostRoll < u_frostShare * 0.65) ? (u_frost * 0.22) : 0.0;
-    fr = mix(effFrost * smoothstep(exitFrostRoll - 0.15, exitFrostRoll + 0.15, effFrostShare), crispExitRough, clamp(max(g1, 0.85), 0.0, 1.0));
+    fr = mix(effFrost * smoothstep(exitFrostRoll - 0.15, exitFrostRoll + 0.15, effFrostShare), crispExitRough, effG1);
     float dExit0 = 1.0;
     if (g1 > 0.001 && u_edgeWear > 0.0 && kf < CP) {
       vec3 tmpAdj;
@@ -2711,7 +2716,7 @@ void main() {
       p = roC + rdC * len;
       exitFrostRoll = hash(vec3(uid, float(kf), f_seed + 0.5));
       crispExitRough = (exitFrostRoll < u_frostShare * 0.65) ? (u_frost * 0.22) : 0.0;
-      fr = mix(effFrost * smoothstep(exitFrostRoll - 0.15, exitFrostRoll + 0.15, effFrostShare), crispExitRough, clamp(max(g1, 0.85), 0.0, 1.0));
+      fr = mix(effFrost * smoothstep(exitFrostRoll - 0.15, exitFrostRoll + 0.15, effFrostShare), crispExitRough, effG1);
       float dExitB = 1.0;
       if (g1 > 0.001 && u_edgeWear > 0.0 && kf < CP) {
         vec3 tmpAdjB;
@@ -2745,7 +2750,7 @@ void main() {
     vec3 reflExitDir = reflect(rdC, -nf);
     vec3 rawExitEnv = env(reflExitDir, fr) + glimmerStripLights(f_toWorld * reflExitDir, fr) * (1.0 - isRootCut);
     if (u_fire > 0.0) {
-      float effGlim = max(glimmer, 0.85);
+      float effGlim = glimmerCurve(glimmer);
       vec3 exitTan = rdC - nf * cosExitI;
       vec3 rSpread = (reflect(pathDisp, -nf) * 0.45 + exitTan * 0.25) * (u_fire * 0.75 * effGlim);
       vec3 dR = normalize(reflExitDir - rSpread);
@@ -2760,7 +2765,7 @@ void main() {
     }
     vec3 exitRefl = facetIridescence(id, kf, p, rdC, -nf, dExit, rawExitEnv / (1.0 + 0.18 * max(rawExitEnv.r, max(rawExitEnv.g, rawExitEnv.b))));
     vec3 exitFlash = (hop == 0) ? crystalBloomGlint(id, kf, p, rdC, -nf, dExit, fr) * 0.4 * (1.0 - 0.25 * dither) : vec3(0.0);
-    float exitReflW = mix(0.42 * (1.0 - 0.28 * dither) * (0.15 + 0.85 * glare), 0.48 * (1.0 - 0.85 * isRootCut), max(g1, 0.75));
+    float exitReflW = mix(0.42 * (1.0 - 0.28 * dither) * (0.15 + 0.85 * glare), 0.48 * (1.0 - 0.85 * isRootCut), effG1);
     hopCol += hopThr * (Fo * exitRefl * exitReflW + exitFlash);
     hopThr *= mix(1.0 - Fo * (0.3 + 0.7 * glare * (1.0 - 0.35 * dither)), 1.0 - Fo, g1);
 
@@ -2794,8 +2799,7 @@ void main() {
 
   if (dot(thr, thr) > 0.0) {
     float dither = clamp(u_ditherBlend, 0.0, 1.0);
-    float effGlimmer = max(glimmer, 0.85);
-    float effG1 = clamp(effGlimmer, 0.0, 1.0);
+    float effGlimmer = glimmerCurve(glimmer);
     float effIrid = u_iridescence * u_rainbow;
     float effFire = mix(u_fire, u_fire * 0.75, dither) * (1.0 + 0.15 * effGlimmer) + effIrid * 0.035;
     if (lastRefracted && effFire > 0.005 && lastFireAlpha > 1e-4) {
@@ -2937,10 +2941,11 @@ void main() {
   vec3 baseCol = sampleSceneFxaa(uv);
   float baseLuma = max(baseCol.r, max(baseCol.g, baseCol.b));
   float bloomLuma = max(bloomCol.r, max(bloomCol.g, bloomCol.b));
-  float g1 = clamp(max(u_glimmer, 0.85), 0.0, 1.0);
+  float g01 = clamp(u_glimmer, 0.0, 1.0);
+  float effG1 = smoothstep(0.0, 0.45, g01) * mix(0.85, 1.0, smoothstep(0.45, 1.0, g01));
   vec3 curHalo = (bloomCol * effBloom) / (1.0 + 0.35 * bloomLuma + 1.8 * baseLuma * baseLuma);
-  vec3 jbHalo = bloomCol * max(u_bloom, 0.35 * g1);
-  vec3 haloCol = mix(curHalo, jbHalo, g1);
+  vec3 jbHalo = bloomCol * (max(u_bloom, 0.35 * effG1) + u_rainbowGlow * 0.18 * (1.0 - 0.55 * dither));
+  vec3 haloCol = mix(curHalo, jbHalo, effG1);
   vec3 c = baseCol + haloCol;
   c = pow(aces(c), vec3(1.0 / 2.2));
   vec2 q = (fc - 0.5 * u_res) / u_res;
