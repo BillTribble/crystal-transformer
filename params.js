@@ -94,6 +94,7 @@ export default [
       { key: 'twinAngle', label: 'Branch angle °', value: 48, min: 15, max: 90, step: 1, uniform: false, desc: 'Crystallographic angle at which twin branches bud off parent shafts (Japan-law twin ≈ 84.5°).', when: { key: 'twinShare', not: [0] } },
       { key: 'cavityCurve', label: 'Geode curvature', value: 0, min: 0, max: 1, step: 0.01, uniform: false, desc: 'Curves the root matrix into a hemispherical geode bowl with points converging inward.' },
       { key: 'hopper', label: 'Hopper terraces', value: 0, min: 0, max: 1, step: 0.01, desc: 'Stepped skeletal growth terraces carved into crystal faces, as in bismuth or hopper crystals.' },
+      { key: 'cathedral', label: 'Cathedral gables', value: 0, default: 0, min: 0, max: 1, step: 0.01, desc: 'Elestial / Jacaré terraced rhombohedral sub-terminations and vertical Gothic fluted ribs climbing the prism flanks, like stacked cathedral gables catching internal light.' },
       { key: 'melt', label: 'Melt amount', value: 0, default: 0, min: 0, max: 1, step: 0.01, desc: 'Solid-to-liquid melting effect (as in hand-warmed gallium): melts the lower crystal base into a high-surface-tension liquid metal pool with a smooth concave capillary meniscus collar.' },
     ],
   },
@@ -563,7 +564,7 @@ export const presets = {
     iridescence: 0.06,
     flash: 0.18,
   },
-  // 7. Amethyst Cathedral — natural amethyst cluster: clear / smoky quartz lower 1/3 grading smoothly into deep smoky-amethyst in the upper 2/3 & termination tips, with subtle jewel-like prism reflections matching Jack Bush's original geode
+  // 7. Amethyst Cathedral — natural Elestial / Jacaré amethyst cathedral cluster: clear / smoky quartz lower 1/3 grading smoothly into deep smoky-amethyst in the upper 2/3 & termination tips, with stepped rhombohedral sub-terminations and vertical Gothic fluted ribs climbing the spire flanks
   'Amethyst Cathedral': {
     seed: 7,
     habit: 'Trigonal',
@@ -575,6 +576,7 @@ export const presets = {
     twinAngle: 52,
     cavityCurve: 0.06,
     hopper: 0,
+    cathedral: 0.88,
     crystals: 7,
     fan: 48,
     crossAt: 0.36,
@@ -1197,6 +1199,7 @@ export function randomize(store) {
     twinAngle: range(28, 86, 1),
     cavityCurve: r() < 0.25 ? range(0.35, 0.78) : range(0, 0.18),
     hopper: r() < 0.08 ? range(0.25, 0.75) : 0,
+    cathedral: (habit === 'Trigonal' || habit === 'Hexagonal') && r() < 0.25 ? range(0.45, 0.90) : 0,
     metallic: r() < 0.12 ? range(0.88, 0.98) : 0,
     crystals: Math.min(15, Math.max(3, Math.floor(range(3, 15, 1)))),
     fan: range(24, 68, 1),

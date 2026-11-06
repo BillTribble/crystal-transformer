@@ -921,6 +921,321 @@ bool intersectBismuthHopper(int row, vec3 ro, vec3 rd, float hopperAmt, float tH
   return true;
 }
 
+// 3D Elestial / Jacare Cathedral Spire Carver (task-0693, post-016223, post-016233):
+// Carves a proud Central Nave spire column (u = 0) and Ridge-Anchored Flying-Buttress pinnacles (u = +/- 0.55)
+// with flat, glassy vertical prism faces, crisp vertical Gothic flute bevels, and 3 tiered miniature
+// pointed rhombohedral roof-peaks (with re-entrant V-notches behind each sub-termination tip) climbing up each spire flank.
+void evalCathedralColumn(
+  float du, float sideExcess, float inSideWall, float dColBase, float ly, float yBase0, float cathAmt, float baseRamp,
+  out float outDCarve, out float outGu, out float outGax, out float outEdgeDist, out float outIsGable
+) {
+  float au = min(abs(du), 0.36);
+  float tierStep = 0.220;
+  float chevronSlope = 0.26;
+  float netStepDepth = 0.105;
+  float roofDrop = 0.165;
+  float sideWallSlope = 1.65;
+  float fRoofSpan = 0.26;
+  float fNotchSpan = 0.08;
+
+  float yGable0 = yBase0 - chevronSlope * au;
+  float s = (ly - yGable0) / tierStep;
+  float tierDepth = 0.0;
+  float dYEdge = abs(ly - yGable0);
+  float gableMask = 0.0;
+  float notchMask = 0.0;
+
+  if (s > 0.0) {
+    float m = clamp(floor(s), 0.0, 2.0);
+    float f = clamp(s - m, 0.0, 1.0);
+    if (f < fRoofSpan) {
+      float roofFrac = f / fRoofSpan;
+      tierDepth = m * netStepDepth + roofFrac * roofDrop;
+      dYEdge = min(f, fRoofSpan - f) * tierStep;
+      gableMask = smoothstep(-0.006, 0.006, f) * (1.0 - smoothstep(fRoofSpan - 0.006, fRoofSpan + 0.006, f));
+    } else if (f < fRoofSpan + fNotchSpan) {
+      // Re-entrant V-notch right above the miniature rhombohedral roof-peak where the next vertical shaft emerges
+      float notchFrac = (f - fRoofSpan) / fNotchSpan;
+      tierDepth = mix(m * netStepDepth + roofDrop, (m + 1.0) * netStepDepth, smoothstep(0.0, 1.0, notchFrac));
+      dYEdge = (f - fRoofSpan) * tierStep;
+      notchMask = 1.0 - smoothstep(0.0, 1.0, notchFrac);
+    } else {
+      tierDepth = (m + 1.0) * netStepDepth;
+      dYEdge = min(f - (fRoofSpan + fNotchSpan), 1.0 - f) * tierStep;
+    }
+  }
+
+  float dRaw = dColBase + sideWallSlope * sideExcess + tierDepth + gableMask * 0.12 * au;
+  outDCarve = dRaw * baseRamp * cathAmt;
+
+  float smoothSignU = clamp(du / 0.010, -1.0, 1.0);
+  float guRib = smoothSignU * (0.90 * inSideWall);
+  float guGable = smoothSignU * mix(0.40, 0.90, inSideWall);
+  outGu = mix(guRib, guGable, gableMask) * baseRamp * cathAmt;
+  outGax = (gableMask * (1.0 - 0.35 * inSideWall) * 0.92 - notchMask * 0.42) * baseRamp * cathAmt;
+  float dGableRidge = (gableMask > 0.05) ? min(au, dYEdge * 2.8) : (dYEdge * 2.8);
+  outEdgeDist = dGableRidge;
+  outIsGable = gableMask;
+}
+
+float evalCathedralFace(
+  float u, float ly, float faceSeed, float cathAmt,
+  out float outGu, out float outGax, out float outEdgeDist, out float outIsGable
+) {
+  float baseRamp = smoothstep(0.05, 0.14, ly);
+  if (baseRamp <= 1e-4 || cathAmt <= 1e-4) {
+    outGu = 0.0; outGax = 0.0; outEdgeDist = 1.0; outIsGable = 0.0;
+    return 0.0;
+  }
+  float fShift = (faceSeed - 0.5) * 0.028;
+  float absU = abs(u);
+  float sideSign = (u >= 0.0) ? 1.0 : -1.0;
+
+  // 1. Broad Central Nave Spire Column (u = 0, wCol = 0.23, taller gable peaks at ly ~ 0.28, 0.50, 0.72)
+  float sideEx0 = max(0.0, absU - 0.23);
+  float inWall0 = smoothstep(0.22, 0.24, absU) * (1.0 - smoothstep(0.27, 0.29, absU));
+  float d0, gu0, gax0, edge0, gab0;
+  evalCathedralColumn(u, sideEx0, inWall0, 0.0, ly, 0.280 + fShift, cathAmt, baseRamp, d0, gu0, gax0, edge0, gab0);
+
+  // 2. Flanking Buttress Spire Column (|u| >= 0.25 extending cleanly through the prism corner ridges with zero outer excess!)
+  float sideEx1 = max(0.0, 0.25 - absU);
+  float inWall1 = smoothstep(0.27, 0.24, absU);
+  float d1, gu1, gax1, edge1, gab1;
+  evalCathedralColumn(
+    u - sideSign * 0.46, sideEx1, inWall1, 0.032, ly,
+    0.215 + fShift * 0.5, cathAmt, baseRamp,
+    d1, gu1, gax1, edge1, gab1
+  );
+
+  // CSG union of Central Nave and Flanking Buttress columns (= min of inward carve depths)
+  float fluteDist = abs(absU - 0.24);
+  float seamDist = min(fluteDist, abs(d0 - d1) * 0.55);
+  if (d0 <= d1) {
+    outGu = gu0; outGax = gax0; outEdgeDist = min(edge0, seamDist); outIsGable = gab0;
+    return d0;
+  } else {
+    outGu = gu1; outGax = gax1; outEdgeDist = min(edge1, seamDist); outIsGable = gab1;
+    return d1;
+  }
+}
+
+bool intersectCathedralSpire(
+  int row, vec3 ro, vec3 rd, float cathAmt, float tHitMax,
+  inout float tn, inout float tf, inout int kn, out vec3 outCathN, out float outCathEdge
+) {
+  vec3 origN = (kn < CP) ? body(row, PA + kn).xyz : vec3(0.0, 1.0, 0.0);
+  outCathN = origN;
+  outCathEdge = 1e9;
+  float tStart = max(tn, 0.0);
+  if (tStart >= tHitMax || cathAmt <= 0.005) return tStart < tHitMax;
+
+  vec3 ax = body(row, 1).xyz;
+  float L = max(body(row, 1).w, 0.08);
+  float r = max(body(row, 2).w, 0.02);
+  float invR = 1.0 / r;
+  float invL = 1.0 / L;
+  vec3 rt = body(row, 3).xyz;
+  float uid = max(1.0, body(row, 2).z);
+
+  float tEnd = min(tf, tHitMax);
+  float dtSpan = tEnd - tStart;
+  if (dtSpan <= 1e-5) return true;
+
+  vec3 pStart = ro + rd * tStart;
+  float ly0 = dot(pStart - rt, ax) * invL;
+  float dly = dot(rd, ax) * invL;
+  float lyEnd = ly0 + dly * dtSpan;
+  if (max(ly0, lyEnd) < 0.04) return true;
+
+  // Find the 3 closest active prism planes (kA, kB, kC) at the chord midpoint pMid.
+  // Because any chord through a hexagonal prism interacts with the 3 prism faces on its side of the axis,
+  // the 3 closest prism planes at pMid are always the exact entry, grazed-silhouette, and exit prism flanks!
+  vec3 pMid = ro + rd * (tStart + 0.5 * dtSpan);
+  int kA = -1, kB = -1, kC = -1;
+  float bestDA = 1e9, bestDB = 1e9, bestDC = 1e9;
+  float maxValidOff = L * 1.35 + r * 2.2;
+  bool isHexPrism = dot(body(row, PA + 1).xyz, body(row, PA + 3).xyz) > 0.25;
+  for (int k = 0; k < 7; k++) {
+    if (k == 2 && isHexPrism) continue;
+    vec4 pl = body(row, PA + k);
+    if (pl.w - dot(pl.xyz, rt) > maxValidOff) continue;
+    float d = (pl.w - dot(pl.xyz, pMid)) * invR;
+    if (d < bestDA) {
+      bestDC = bestDB; kC = kB;
+      bestDB = bestDA; kB = kA;
+      bestDA = d;      kA = k;
+    } else if (d < bestDB) {
+      bestDC = bestDB; kC = kB;
+      bestDB = d;      kB = k;
+    } else if (d < bestDC) {
+      bestDC = d;      kC = k;
+    }
+  }
+  if (kA < 0) return true;
+  if (kB < 0) kB = kA;
+  if (kC < 0) kC = kB;
+
+  vec4 plA = body(row, PA + kA);
+  vec3 nA = plA.xyz;
+  vec3 tUA = cross(ax, nA);
+  float tUALen = length(tUA);
+  tUA = tUALen > 1e-4 ? (tUA / tUALen) : normalize(cross(nA, vec3(0.577, 0.577, 0.577)));
+  float dA0 = (plA.w - dot(nA, pStart)) * invR;
+  float ddA = -dot(nA, rd) * invR;
+  float uA0 = dot(pStart - rt, tUA) * invR;
+  float duA = dot(rd, tUA) * invR;
+  float seedA = fract(uid * 0.3183 + float(kA) * 0.173 + f_seed * 0.071);
+
+  vec4 plB = body(row, PA + kB);
+  vec3 nB = plB.xyz;
+  vec3 tUB = cross(ax, nB);
+  float tUBLen = length(tUB);
+  tUB = tUBLen > 1e-4 ? (tUB / tUBLen) : tUA;
+  float dB0 = (plB.w - dot(nB, pStart)) * invR;
+  float ddB = -dot(nB, rd) * invR;
+  float uB0 = dot(pStart - rt, tUB) * invR;
+  float duB = dot(rd, tUB) * invR;
+  float seedB = fract(uid * 0.3183 + float(kB) * 0.173 + f_seed * 0.071);
+
+  vec4 plC = body(row, PA + kC);
+  vec3 nC = plC.xyz;
+  vec3 tUC = cross(ax, nC);
+  float tUCLen = length(tUC);
+  tUC = tUCLen > 1e-4 ? (tUC / tUCLen) : tUA;
+  float dC0 = (plC.w - dot(nC, pStart)) * invR;
+  float ddC = -dot(nC, rd) * invR;
+  float uC0 = dot(pStart - rt, tUC) * invR;
+  float duC = dot(rd, tUC) * invR;
+  float seedC = fract(uid * 0.3183 + float(kC) * 0.173 + f_seed * 0.071);
+
+  float maxCarve = 0.46 * cathAmt;
+  // Fast bypass if ray enters top termination pyramid already deeper inside prism collar than maxCarve
+  if (kn >= 7 && dA0 > maxCarve && dB0 > maxCarve && ddA >= -0.05 && ddB >= -0.05) {
+    return true;
+  }
+
+  int nSteps = (u_isMobile > 0.5) ? 7 : 10;
+  float dtStep = dtSpan / float(nSteps);
+  float dtPrev = 0.0;
+  float dtHit = 0.0;
+  bool foundHit = false;
+
+  for (int ms = 0; ms <= 10; ms++) {
+    if (ms > nSteps) break;
+    float dt = float(ms) * dtStep;
+    float ly = ly0 + dly * dt;
+    float guA, gaxA, edA, gabA;
+    float cA = evalCathedralFace(uA0 + duA * dt, ly, seedA, cathAmt, guA, gaxA, edA, gabA);
+    float mMin = (dA0 + ddA * dt) - cA;
+    if (kB != kA) {
+      float guB, gaxB, edB, gabB;
+      float cB = evalCathedralFace(uB0 + duB * dt, ly, seedB, cathAmt, guB, gaxB, edB, gabB);
+      mMin = min(mMin, (dB0 + ddB * dt) - cB);
+    }
+    if (kC != kB && kC != kA) {
+      float guC, gaxC, edC, gabC;
+      float cC = evalCathedralFace(uC0 + duC * dt, ly, seedC, cathAmt, guC, gaxC, edC, gabC);
+      mMin = min(mMin, (dC0 + ddC * dt) - cC);
+    }
+    if (mMin >= -1e-4) {
+      dtHit = dt;
+      foundHit = true;
+      break;
+    }
+    dtPrev = dt;
+  }
+
+  // If the ray never entered the carved cathedral spire along the entire chord [tStart, tEnd],
+  // it passed completely through a 3D stepped sub-termination notch!
+  if (!foundHit) return false;
+
+  if (dtHit > 1e-5) {
+    float tLo = dtPrev, tHi = dtHit;
+    for (int bs = 0; bs < 3; bs++) {
+      float tMid = 0.5 * (tLo + tHi);
+      float ly = ly0 + dly * tMid;
+      float guA, gaxA, edA, gabA;
+      float cA = evalCathedralFace(uA0 + duA * tMid, ly, seedA, cathAmt, guA, gaxA, edA, gabA);
+      float mMin = (dA0 + ddA * tMid) - cA;
+      if (kB != kA) {
+        float guB, gaxB, edB, gabB;
+        float cB = evalCathedralFace(uB0 + duB * tMid, ly, seedB, cathAmt, guB, gaxB, edB, gabB);
+        mMin = min(mMin, (dB0 + ddB * tMid) - cB);
+      }
+      if (kC != kB && kC != kA) {
+        float guC, gaxC, edC, gabC;
+        float cC = evalCathedralFace(uC0 + duC * tMid, ly, seedC, cathAmt, guC, gaxC, edC, gabC);
+        mMin = min(mMin, (dC0 + ddC * tMid) - cC);
+      }
+      if (mMin >= 0.0) tHi = tMid;
+      else tLo = tMid;
+    }
+    dtHit = tHi;
+  }
+
+  // If the ray entered a main termination face (kn >= 7) without being clipped by the cathedral flank (dtHit == 0):
+  // Above ly = 0.85 (or on bottom termination faces), keep the termination plane untouched;
+  // on the lower/mid shoulder of top rhombohedral faces (kn in 8..13, ly0 < 0.85), carry the Elestial cathedral
+  // gable terraces seamlessly across the rhombohedral shoulder!
+  if (kn >= 7 && dtHit <= 1e-5) {
+    if (kn >= 8 && kn <= 13 && ly0 > 0.16 && ly0 < 0.85) {
+      float termFade = smoothstep(0.85, 0.64, ly0) * smoothstep(0.16, 0.28, ly0);
+      float guT, gaxT, edT, gabT;
+      evalCathedralFace(uA0, ly0, seedA, cathAmt, guT, gaxT, edT, gabT);
+      vec3 nTermCath = normalize(origN + (guT * 0.48 * tUA - gaxT * 0.42 * ax) * termFade);
+      if (dot(nTermCath, rd) > -0.06) {
+        nTermCath = normalize(nTermCath - rd * (dot(nTermCath, rd) + 0.06));
+      }
+      kn = CP + 4000 + kn;
+      outCathN = nTermCath;
+      outCathEdge = edT * r;
+    }
+    return true;
+  }
+
+  float lyH = ly0 + dly * dtHit;
+  float guA, gaxA, edA, gabA;
+  float cA = evalCathedralFace(uA0 + duA * dtHit, lyH, seedA, cathAmt, guA, gaxA, edA, gabA);
+  float mA = (dA0 + ddA * dtHit) - cA;
+
+  int kWin = kA;
+  vec3 nWin = normalize(nA + guA * tUA + gaxA * ax);
+  float edgeWin = edA;
+  float mWin = mA;
+
+  if (kB != kA) {
+    float guB, gaxB, edB, gabB;
+    float cB = evalCathedralFace(uB0 + duB * dtHit, lyH, seedB, cathAmt, guB, gaxB, edB, gabB);
+    float mB = (dB0 + ddB * dtHit) - cB;
+    vec3 nCandB = normalize(nB + guB * tUB + gaxB * ax);
+    float ridgeDiff = abs(mWin - mB);
+    edgeWin = min(min(edgeWin, edB), ridgeDiff * 0.65);
+    float wB = smoothstep(0.012, -0.012, mB - mWin);
+    nWin = normalize(mix(nWin, nCandB, wB));
+    if (mB < mWin) { kWin = kB; mWin = mB; }
+  }
+  if (kC != kB && kC != kA) {
+    float guC, gaxC, edC, gabC;
+    float cC = evalCathedralFace(uC0 + duC * dtHit, lyH, seedC, cathAmt, guC, gaxC, edC, gabC);
+    float mC = (dC0 + ddC * dtHit) - cC;
+    vec3 nCandC = normalize(nC + guC * tUC + gaxC * ax);
+    float ridgeDiff = abs(mWin - mC);
+    edgeWin = min(min(edgeWin, edC), ridgeDiff * 0.65);
+    float wC = smoothstep(0.012, -0.012, mC - mWin);
+    nWin = normalize(mix(nWin, nCandC, wC));
+    if (mC < mWin) { kWin = kC; mWin = mC; }
+  }
+
+  if (dot(nWin, rd) > -0.06) {
+    nWin = normalize(nWin - rd * (dot(nWin, rd) + 0.06));
+  }
+  tn = tStart + dtHit;
+  kn = CP + 4000 + kWin;
+  outCathN = nWin;
+  outCathEdge = edgeWin * r;
+  return tf > tn + 1e-4;
+}
+
 float crystalSDF_full(vec3 p, int row) {
   float secondD, thirdD, ridgeBevel;
   float d = crystalSDF_fast(p, row, secondD, thirdD, ridgeBevel);
@@ -1295,6 +1610,26 @@ float exitCrystal(int row, vec3 ro, vec3 rd, out int kf, out vec3 outExitN) {
       }
     }
   }
+  if (u_cathedral > 0.005 && u_hopper <= 0.01 && kf < 7) {
+    vec3 ax = body(row, 1).xyz;
+    float L = max(body(row, 1).w, 0.08);
+    float r = max(body(row, 2).w, 0.02);
+    vec3 rt = body(row, 3).xyz;
+    float uid = max(1.0, body(row, 2).z);
+    vec3 pEx = ro + rd * tf;
+    float ly = dot(pEx - rt, ax) / L;
+    vec3 nK = body(row, PA + kf).xyz;
+    vec3 tUK = cross(ax, nK);
+    float tUKLen = length(tUK);
+    tUK = tUKLen > 1e-4 ? (tUK / tUKLen) : normalize(cross(nK, vec3(0.577, 0.577, 0.577)));
+    float uEx = dot(pEx - rt, tUK) / r;
+    float seedK = fract(uid * 0.3183 + float(kf) * 0.173 + f_seed * 0.071);
+    float gu, gax, ed, gab;
+    float cBack = evalCathedralFace(uEx, ly, seedK, u_cathedral, gu, gax, ed, gab);
+    float dnK = max(dot(nK, rd), 0.25);
+    tf = max(0.0, tf - (cBack * r) / dnK);
+    outExitN = normalize(nK + 0.16 * gu * tUK + 0.22 * gax * ax);
+  }
   return max(tf, 0.0);
 }
 
@@ -1628,6 +1963,10 @@ bool traceScene(vec3 ro, vec3 rd, int skipMask, out int id, out float tHit, out 
       }
       if (u_hopper > 0.01) {
         if (!intersectBismuthHopper(i, ro, rd, u_hopper, tHit, tn, tf, kn, candVoidN)) continue;
+      } else if (u_cathedral > 0.005) {
+        float cathEdge = 1e9;
+        if (!intersectCathedralSpire(i, ro, rd, u_cathedral, tHit, tn, tf, kn, candVoidN, cathEdge)) continue;
+        candBorder = min(candBorder, cathEdge);
       }
       float tCand = max(tn, 0.0);
       if (tf > tCand + 1e-4 && tCand < tHit) {
@@ -2676,7 +3015,8 @@ vec3 shadeBehindRay(vec3 roIn, vec3 rdIn, int skipIn, float travIn, float jitter
   float effFrost = mix(u_frost, max(u_frost, 0.38), ditherFrost);
   float bUid = crystalUid(bId);
   bool bIsGalliumMelt = (bK >= CP + 3000 && bK < CP + 4000);
-  int bKBase = bIsGalliumMelt ? (bK - (CP + 3000)) : bK;
+  bool bIsCathedral = (bK >= CP + 4000 && bK < CP + 4100);
+  int bKBase = bIsGalliumMelt ? (bK - (CP + 3000)) : (bIsCathedral ? (bK - (CP + 4000)) : bK);
   float bMeltFactor = bIsGalliumMelt ? clamp(bVoidBorder, 0.0, 1.0) : 0.0;
   float bFrostRoll = hash(vec3(bUid, float(bKBase), f_seed + 0.5));
   float bRough = effFrost * smoothstep(bFrostRoll - 0.15, bFrostRoll + 0.15, effFrostShare) * (1.0 - smoothstep(0.0, 0.35, bMeltFactor));
@@ -2691,7 +3031,7 @@ vec3 shadeBehindRay(vec3 roIn, vec3 rdIn, int skipIn, float travIn, float jitter
     return mix(bEnvCol, mCol, bAlpha);
   }
   float bF = fresnel(-dot(rdIn, bN), 1.0 / u_ior);
-  vec3 bEntryRefl = facetIridescence(bId, bK, bP, rdIn, bN, 1.0, softFacetRefl(env(reflect(rdIn, bN), bRough)));
+  vec3 bEntryRefl = facetIridescence(bId, bKBase, bP, rdIn, bN, 1.0, softFacetRefl(env(reflect(rdIn, bN), bRough)));
   float bIridBoost = clamp(bF + (u_iridescence * u_rainbow) * 0.06, 0.0, 0.42) * (0.15 + 0.85 * glare);
   vec3 colB = bIridBoost * bEntryRefl;
   vec3 thrB = vec3(1.0 - bF * (0.3 + 0.7 * glare));
@@ -2963,7 +3303,7 @@ void main() {
 
     float rawAmt = clamp(u_rawAmount, 0.0, 2.0);
     float rawSurfScale = mix(0.15, 1.0, clamp(rawAmt / 0.4, 0.0, 1.0)) * mix(1.0, 1.65, max(0.0, (rawAmt - 0.4) / 1.6));
-    float effEdgeMacro = max(0.0, u_patinaMacro * u_edgeMacro * rawSurfScale) * (1.0 - smoothstep(0.20, 0.55, u_hopper));
+    float effEdgeMacro = max(0.0, u_patinaMacro * u_edgeMacro * rawSurfScale) * (1.0 - smoothstep(0.20, 0.55, u_hopper)) * (1.0 - smoothstep(0.0, 0.25, u_cathedral));
     float edgeSilAlpha = 1.0;
     vec3 chipFacetN = vec3(0.0, 1.0, 0.0);
     if (!primaryEvaluated && (u_edgeChips * effEdgeMacro > 0.005 || u_edgeIrregularity * effEdgeMacro > 0.005 || u_edgeWear * effEdgeMacro > 0.005) && k < CP) {
@@ -3007,20 +3347,22 @@ void main() {
     float rawFrostScale = mix(0.22, 1.0, clamp(rawAmt / 0.4, 0.0, 1.0)) * mix(1.0, 1.35, max(0.0, (rawAmt - 0.4) / 1.6));
     float effFrostShare = clamp((mix(u_frostShare, max(u_frostShare, 0.54), ditherFrost) + 0.14 * baseFrost) * rawFrostScale, 0.0, 0.88);
     float effFrost = clamp((mix(u_frost, max(u_frost, 0.32), ditherFrost) + 0.08 * baseFrost) * rawFrostScale, 0.0, 0.46);
-    int kFrostId = (k < CP) ? k : ((k >= CP + 10000) ? ((k - (CP + 10000)) / 4) : ((k >= CP + 5000) ? ((k - (CP + 5000)) / 2) : k));
+    bool isGalliumMelt = (k >= CP + 3000 && k < CP + 4000);
+    bool isCathedralTerrace = (k >= CP + 4000 && k < CP + 4100);
+    int kBaseFace = isGalliumMelt ? (k - (CP + 3000)) : (isCathedralTerrace ? (k - (CP + 4000)) : k);
+    int kCrystal = kBaseFace;
+    int kFrostId = (kBaseFace < CP) ? kBaseFace : ((k >= CP + 10000) ? ((k - (CP + 10000)) / 4) : ((k >= CP + 5000) ? ((k - (CP + 5000)) / 2) : k));
     float frostRoll = hash(vec3(uid, float(kFrostId), f_seed + 0.5));
     float frostW = smoothstep(frostRoll - 0.15, frostRoll + 0.15, effFrostShare);
     float rough = effFrost * frostW;
     bool isTinyEdgeChip = (k >= CP + 5000 && k < CP + 10000);
     bool isCornerVertexChip = (k >= CP + 10000);
     bool isHopperTerrace = (k == CP + 2000);
-    bool isGalliumMelt = (k >= CP + 3000 && k < CP + 4000);
-    int kCrystal = isGalliumMelt ? (k - (CP + 3000)) : k;
     float meltFactor = isGalliumMelt ? clamp(voidBorder, 0.0, 1.0) : 0.0;
-    bool isOcclusionVoid = (k >= CP && k < CP + 5000 && !isHopperTerrace && !isGalliumMelt);
+    bool isOcclusionVoid = (k >= CP && k < CP + 5000 && !isHopperTerrace && !isGalliumMelt && !isCathedralTerrace);
     bool isEdgeIncursion = isTinyEdgeChip || isCornerVertexChip || isOcclusionVoid || isHopperTerrace;
     bool isCornerNip = (k >= 18 && k < CP);
-    vec3 rawFaceN = (isOcclusionVoid || isHopperTerrace || isGalliumMelt)
+    vec3 rawFaceN = (isOcclusionVoid || isHopperTerrace || isGalliumMelt || isCathedralTerrace)
       ? voidWallN
       : ((isTinyEdgeChip || isCornerVertexChip) ? chipFacetN : body(id, PA + k).xyz);
     if (isOcclusionVoid) {
@@ -3030,28 +3372,36 @@ void main() {
       rough *= 0.25;
     } else if (isGalliumMelt) {
       rough *= (1.0 - smoothstep(0.0, 0.35, meltFactor));
+    } else if (isCathedralTerrace) {
+      rough *= mix(1.0, 0.55, smoothstep(0.0, 0.35, u_cathedral));
     }
 
     vec3 adjN = rawFaceN;
     int ridgeKLo = -1, ridgeKHi = -1;
     float metalW = clamp(max(u_metallic, smoothstep(0.02, 0.35, meltFactor)), 0.0, 1.0);
     bool isOpaqueMetal = (metalW >= 0.995 || (u_hopper > 0.85 && metalW >= 0.92) || (u_melt > 0.45 && metalW >= 0.92));
-    bool needDEdge = !isGalliumMelt && !(isOpaqueMetal && u_hopper > 0.5) && (((hop == 0) && (u_patina > 0.01 || u_occlusion > 0.01 || u_hopper > 0.0 || u_iridescence > 0.0 || u_bloom > 0.0)) || (g1 > 0.001 && u_edgeWear > 0.0));
-    float dEdge = isGalliumMelt ? voidSeam : (needDEdge ? edgeDist(id, k, p, adjN, ridgeKLo, ridgeKHi) : 1.0);
+    bool needDEdge = !isGalliumMelt && !(isOpaqueMetal && u_hopper > 0.5) && (((hop == 0) && (u_patina > 0.01 || u_occlusion > 0.01 || u_hopper > 0.0 || u_cathedral > 0.0 || u_iridescence > 0.0 || u_bloom > 0.0)) || (g1 > 0.001 && u_edgeWear > 0.0));
+    float dEdge = isGalliumMelt ? voidSeam : (needDEdge ? edgeDist(id, kBaseFace, p, adjN, ridgeKLo, ridgeKHi) : 1.0);
 
     float jbChip = 0.0;
-    if (!isOpaqueMetal && g1 > 0.001 && u_edgeWear > 0.0 && k < CP) {
+    if (!isOpaqueMetal && g1 > 0.001 && u_edgeWear > 0.0 && kBaseFace < CP) {
       float jbEdge = 1.0 - smoothstep(0.0, u_edgeWidth * body(id, 2).w, dEdge);
       float jbNz = texture(u_incl, p * 6.0 + 0.71).b * 0.75 + texture(u_incl, p * 21.0).b * 0.35;
       jbChip = jbEdge * smoothstep(1.0 - 0.45 * u_edgeWear, 1.05 - 0.45 * u_edgeWear, jbNz) * g1;
       rough = max(rough, jbChip * 0.6);
+    }
+    if (isCathedralTerrace) {
+      dEdge = min(dEdge, voidBorder);
     }
 
     // Pure 3D CSG refractive crystal facet shading (zero artificial white edge paint or cylindrical edge normal rounding)
     if (isTinyEdgeChip || isCornerVertexChip || isCornerNip) {
       rough = max(rough, 0.025 * clamp(u_edgeWear * effEdgeMacro, 0.0, 1.0));
     }
-    vec3 n = faceNormal(id, isEdgeIncursion ? 18 : kCrystal, rawFaceN, p, rough, footprint, dEdge);
+    vec3 nBaseForRefr = (isCathedralTerrace && !isOpaqueMetal && kBaseFace < CP)
+      ? normalize(mix(body(id, PA + kBaseFace).xyz, rawFaceN, 0.45))
+      : rawFaceN;
+    vec3 n = faceNormal(id, isEdgeIncursion ? 18 : kBaseFace, nBaseForRefr, p, rough, footprint, dEdge);
     if (isGalliumMelt) {
       n = normalize(mix(n, rawFaceN, smoothstep(0.0, 0.40, meltFactor)));
     }
@@ -3071,19 +3421,20 @@ void main() {
       n = normalize(n + ringTan * (0.022 * conchRing));
     }
 
-    vec3 nRefl = n;
+    vec3 nSurfFull = isCathedralTerrace ? normalize(rawFaceN + (n - nBaseForRefr)) : n;
+    vec3 nRefl = nSurfFull;
     float patinaGlint = 0.0, patinaRough = 0.0;
     if (!isOpaqueMetal && hop == 0 && !isOcclusionVoid && !isGalliumMelt) {
-      evalSurfacePatina(id, k, p, n, footprint, dEdge, nRefl, patinaGlint, patinaRough);
+      evalSurfacePatina(id, kBaseFace, p, nSurfFull, footprint, dEdge, nRefl, patinaGlint, patinaRough);
       // Keep internal refraction 100% pure & clear by only applying a tiny fraction (6%) of surface scratch normal to n
-      n = normalize(mix(n, nRefl, 0.06 * (1.0 - 0.85 * dither)));
+      n = normalize(mix(n, n + (nRefl - nSurfFull), 0.06 * (1.0 - 0.85 * dither)));
     }
     float reflRough = max(rough, patinaRough * (1.0 - 0.5 * dither));
 
     vec3 hopCol = vec3(0.0);
     vec3 hopThr = vec3(1.0);
     vec3 metalSurfCol = (metalW > 0.005)
-      ? shadeMetallicCrystal(id, kCrystal, pEntry, rd, nRefl, reflRough, dEdge, footprint, meltFactor)
+      ? shadeMetallicCrystal(id, kBaseFace, pEntry, rd, nRefl, reflRough, dEdge, footprint, meltFactor)
       : vec3(0.0);
     if (isOpaqueMetal) {
       col += thr * alpha * metalSurfCol;
@@ -3107,20 +3458,28 @@ void main() {
     if (isChippedFacet) {
       rawEntryRefl *= mix(vec3(1.0), exp(-zonedGemSigma(hgtEntry) * 0.32), 0.68 * (1.0 - 0.55 * g1));
     }
-    vec3 entryRefl = facetIridescence(id, k, p, rd, nRefl, dEdge, rawEntryRefl);
-    vec3 entryFlash = (hop == 0) ? crystalBloomGlint(id, k, p, rd, nRefl, dEdge, reflRough) * 0.55 * (1.0 - 0.25 * dither) : vec3(0.0);
+    vec3 entryRefl = facetIridescence(id, kBaseFace, p, rd, nRefl, dEdge, rawEntryRefl);
+    vec3 entryFlash = (hop == 0) ? crystalBloomGlint(id, kBaseFace, p, rd, nRefl, dEdge, reflRough) * 0.55 * (1.0 - 0.25 * dither) : vec3(0.0);
     float iridReflBoost = clamp(F + (u_iridescence * u_rainbow) * 0.04 + patinaGlint * 0.08 * (1.0 - 0.6 * dither), 0.0, mix(0.46, 0.38, dither)) * (0.18 + 0.76 * effGlare);
     float entryReflW = mix(iridReflBoost, F * 0.90, g1);
     vec3 patinaLight = (0.42 * f_ambient + 0.48 * entryRefl + vec3(0.05)) * vec3(0.96, 0.98, 1.0);
     float surfFrostSheen = (hop == 0) ? (rough * (0.04 + 0.05 * baseFrost) * (0.35 + 0.65 * pow(1.0 - cosEntry, 1.8))) : 0.0;
     vec3 frostSheenCol = (0.38 * f_ambient + 0.42 * rawEntryRefl + vec3(0.03)) * mix(vec3(0.88, 0.92, 0.98), exp(-zonedGemSigma(hgtEntry) * 0.28), 0.55);
     hopCol += (entryReflW * entryRefl + jbChip * 0.08 * f_ambient + patinaGlint * 0.12 * (1.0 - 0.55 * dither) * patinaLight + surfFrostSheen * frostSheenCol + entryFlash);
-    hopCol += iridescentFilm(id, k, p, rd, nRefl, dEdge);
+    hopCol += iridescentFilm(id, kBaseFace, p, rd, nRefl, dEdge);
+    if (isCathedralTerrace) {
+      float rCath = max(body(id, 2).w, 0.02);
+      float gableTilt = smoothstep(0.18, 0.48, dot(rawFaceN, body(id, 1).xyz));
+      float cathEdgeRim = exp(-voidBorder / max(rCath * 0.018, footprint * 1.6));
+      vec3 gemColCath = exp(-zonedGemSigma(hgtEntry) * 0.34);
+      vec3 goldViolet = mix(gemColCath, vec3(1.0, 0.84, 0.55), 0.28 * gableTilt);
+      hopCol += (0.18 * gableTilt * entryRefl + 0.14 * cathEdgeRim * (0.55 * entryRefl + 0.45 * f_ambient)) * goldViolet * u_cathedral;
+    }
     hopThr *= mix(1.0 - F * (0.3 + 0.7 * effGlare), (1.0 - F) * (1.0 - 0.6 * jbChip), g1);
 
     // Clear 3D physical delineation of voided spaces: crisp 3D border rim where the void cuts the
     // crystal face + distinct 3D interior cavity wall shading & interior facet seams (zero noisy texture)
-    if (u_occlusion > 0.002 && !isGalliumMelt && voidBorder < 1e4) {
+    if (!isCathedralTerrace && !isGalliumMelt && u_occlusion > 0.002 && voidBorder < 1e4) {
       float rVoid = max(body(id, 2).w, 0.02);
       float borderW = max(rVoid * 0.032, footprint * 2.4);
       float borderRim = exp(-voidBorder / borderW);
