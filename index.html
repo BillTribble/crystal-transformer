@@ -3836,7 +3836,8 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
   } else {
     cluster.doubleTermBlend = rawDoubleTermBlend;
   }
-  const doubleTermBlend = Math.max(0.0, Math.min(1.0, cluster.doubleTermBlend));
+  const cathVal = P.cathedral ? Math.max(0.0, Math.min(1.0, Number(P.cathedral.value) || 0.0)) : 0.0;
+  const doubleTermBlend = Math.max(0.0, Math.min(1.0, cluster.doubleTermBlend)) * (1.0 - 0.82 * cathVal);
 
   if (!Number.isFinite(cluster.smoothEffPrimaryCount)) {
     cluster.smoothEffPrimaryCount = rawEffPrimaryCount;
@@ -4098,8 +4099,8 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
     // Non-diamond crystals cross through a shared root nexus (0, 0, 0) so their longer top points
     // (+0.86 * L) and shorter bottom points (-0.56 * L) extend out past the root in asymmetric 'X' / '*' shapes.
     const dtCrossFrac = Math.max(0.10, Math.min(0.22, P.crossAt.value * 0.45 + 0.07));
-    const singleCrossFrac = Math.max(0.16, Math.min(0.32, P.crossAt.value));
-    const baseCrossFrac = singleCrossFrac + (dtCrossFrac - singleCrossFrac) * doubleTermBlend;
+    const singleCrossFrac = Math.max(0.12, Math.min(0.32, P.crossAt.value));
+    const baseCrossFrac = (singleCrossFrac + (dtCrossFrac - singleCrossFrac) * doubleTermBlend) * (1.0 - 0.48 * cathVal);
     const back = (cubicBlend * P.crossAt.value + (1 - cubicBlend) * baseCrossFrac) * curPrimL;
     const uvSpread = 0.16 + 0.89 * cubicBlend;
     const u = node.uRootU * curPrimR * uvSpread, v = node.uRootV * curPrimR * uvSpread;
@@ -4159,7 +4160,7 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
       const curTwinL = twinBaseL * gScale * presence;
       const attachFrac = Math.max(0.06, Math.min(0.22, 0.08 + 0.14 * node.uAttach));
       const attachDist = pL * attachFrac;
-      const twinBack = (0.16 - 0.02 * doubleTermBlend) * curTwinL * (1 - cubicBlend);
+      const twinBack = (0.16 - 0.02 * doubleTermBlend) * (1.0 - 0.74 * cathVal) * curTwinL * (1 - cubicBlend);
       for (let k = 0; k < 3; k++) {
         twinRoot[k] = pRoot[k] + pAxis[k] * attachDist + br[k] * (pR * 0.10) - ax[k] * twinBack + node.driftOffset[k];
         root[k] = primRoot[k] * (1 - effTwinW) + twinRoot[k] * effTwinW;
@@ -7253,7 +7254,70 @@ const presets = {
     iridescence: 0.78,
     flash: 0.22,
   },
-  // 4. Rutilated Smoky Scepter — warm cognac-amber smoky quartz with golden acicular rutile needles
+  // 4. Liquid Gallium — hand-melted orthorhombic silvery-chrome Ga crystal blocks plunging into a mirror-smooth molten metal puddle with a concave smooth-min meniscus collar
+  'Liquid Gallium': {
+    seed: 31,
+    spinStart: 22,
+    habit: 'Orthorhombic',
+    growth: 1,
+    symmetry: 4,
+    taper: 0.04,
+    chamfer: 0.38,
+    twinShare: 0.45,
+    twinAngle: 36,
+    cavityCurve: 0,
+    hopper: 0,
+    melt: 0.72,
+    metallic: 0.96,
+    crystals: 4,
+    fan: 28,
+    crossAt: 0.42,
+    lengthJitter: 0.28,
+    thickness: 0.32,
+    thicknessJitter: 0.20,
+    faceJitter: 0.12,
+    tipAngle: 42,
+    tipJitter: 0.10,
+    faceDominance: 0.14,
+    stoneColour: '#dfe5ee',
+    colourDepth: 2.2,
+    colourZoning: 0.45,
+    biColour: 0.72,
+    coreColour: '#ffe0a8',
+    ior: 2.35,
+    fire: 0.02,
+    fireSamples: 3,
+    bounces: 2,
+    depth: 1,
+    striations: 0.54,
+    striationScale: 145,
+    frostShare: 0.75,
+    frost: 0.18,
+    edgeChips: 0.08,
+    occlusion: 0,
+    edgeWear: 0.10,
+    milk: 0,
+    veils: 0,
+    phantom: 0,
+    phantomRate: 0,
+    phantomLayers: 1,
+    needles: 0,
+    fractures: 0.06,
+    fractureGlow: 1.3,
+    hueShift: 0,
+    backdropSat: 0.28,
+    backdropLight: 0.11,
+    studioEdge: '#0c0a09',
+    keyLight: 10.8,
+    rimLight: 15.5,
+    lightSize: 0.90,
+    lightSoftness: 0.18,
+    glimmer: 0.44,
+    ditherBlend: 0.08,
+    iridescence: 0.06,
+    flash: 0.18,
+  },
+  // 5. Rutilated Smoky Scepter — warm cognac-amber smoky quartz with golden acicular rutile needles
   'Rutilated Smoky Scepter': {
     seed: 14,
     habit: 'Trigonal',
@@ -7365,73 +7429,11 @@ const presets = {
     iridescence: 0.04,
     flash: 0.18,
   },
-  // 6. Liquid Gallium — hand-melted orthorhombic silvery-chrome Ga crystal blocks with frosty crystalline grain plunging into a mirror-smooth molten metal puddle with a concave smooth-min meniscus collar
-  'Liquid Gallium': {
-    seed: 31,
-    spinStart: 22,
-    habit: 'Orthorhombic',
-    growth: 1,
-    symmetry: 4,
-    taper: 0.04,
-    chamfer: 0.38,
-    twinShare: 0.45,
-    twinAngle: 36,
-    cavityCurve: 0,
-    hopper: 0,
-    melt: 0.72,
-    metallic: 0.96,
-    crystals: 4,
-    fan: 28,
-    crossAt: 0.42,
-    lengthJitter: 0.28,
-    thickness: 0.32,
-    thicknessJitter: 0.20,
-    faceJitter: 0.12,
-    tipAngle: 42,
-    tipJitter: 0.10,
-    faceDominance: 0.14,
-    stoneColour: '#dfe5ee',
-    colourDepth: 2.2,
-    colourZoning: 0.45,
-    biColour: 0.72,
-    coreColour: '#ffe0a8',
-    ior: 2.35,
-    fire: 0.02,
-    fireSamples: 3,
-    bounces: 2,
-    depth: 1,
-    striations: 0.54,
-    striationScale: 145,
-    frostShare: 0.75,
-    frost: 0.18,
-    edgeChips: 0.08,
-    occlusion: 0,
-    edgeWear: 0.10,
-    milk: 0,
-    veils: 0,
-    phantom: 0,
-    phantomRate: 0,
-    phantomLayers: 1,
-    needles: 0,
-    fractures: 0.06,
-    fractureGlow: 1.3,
-    hueShift: 0,
-    backdropSat: 0.28,
-    backdropLight: 0.11,
-    studioEdge: '#0c0a09',
-    keyLight: 10.8,
-    rimLight: 15.5,
-    lightSize: 0.90,
-    lightSoftness: 0.18,
-    glimmer: 0.44,
-    ditherBlend: 0.08,
-    iridescence: 0.06,
-    flash: 0.18,
-  },
-  // 7. Amethyst Cathedral — natural Elestial / Jacaré amethyst cathedral cluster: clear / smoky quartz lower 1/3 grading smoothly into deep smoky-amethyst in the upper 2/3 & termination tips, with stepped rhombohedral sub-terminations and vertical Gothic fluted ribs climbing the spire flanks
+  // 7. Amethyst Cathedral — natural Elestial / Jacaré amethyst cathedral cluster: clear / smoky quartz lower 1/3 grading smoothly into deep smoky-amethyst in the upper 2/3 & termination tips, with stepped rhombohedral sub-terminations and vertical Gothic fluted ribs on both top and short bottom halves
   'Amethyst Cathedral': {
     seed: 7,
     habit: 'Trigonal',
+    doubleTerminated: false,
     growth: 1,
     symmetry: 6,
     taper: 0.04,
@@ -7443,7 +7445,7 @@ const presets = {
     cathedral: 0.88,
     crystals: 7,
     fan: 48,
-    crossAt: 0.36,
+    crossAt: 0.14,
     lengthJitter: 0.28,
     thickness: 0.088,
     thicknessJitter: 0.34,
@@ -7544,57 +7546,7 @@ const presets = {
     iridescence: 0.68,
     flash: 0.22,
   },
-  // 6. Ruby Druzy Spire — vivid pigeon-blood crimson corundum spires with golden rutile silk (hot crimson vs emerald green #5)
-  'Ruby Druzy Spire': {
-    seed: 31,
-    habit: 'Trigonal',
-    growth: 1,
-    symmetry: 6,
-    taper: 0.16,
-    chamfer: 0.22,
-    twinShare: 0.42,
-    twinAngle: 58,
-    cavityCurve: 0.65,
-    hopper: 0,
-    crystals: 8,
-    fan: 60,
-    crossAt: 0.24,
-    lengthJitter: 0.42,
-    thickness: 0.098,
-    tipAngle: 64,
-    stoneColour: '#e11d48',
-    colourDepth: 3.85,
-    colourZoning: 0.62,
-    biColour: 0.42,
-    coreColour: '#fb7185',
-    ior: 1.768,
-    fire: 0.068,
-    striations: 0.12,
-    frostShare: 0.22,
-    frost: 0.12,
-    edgeChips: 0.16,
-    edgeWear: 0.12,
-    milk: 0.02,
-    veils: 0.16,
-    phantom: 0,
-    phantomRate: 0,
-    phantomLayers: 1,
-    needles: 5,
-    needleWidth: 0.002,
-    needleColour: '#fde047',
-    fractures: 0.18,
-    fractureGlow: 1.9,
-    hueShift: 180,
-    keyLight: 9,
-    rimLight: 14,
-    lightSize: 0.85,
-    lightSoftness: 0.14,
-    glimmer: 0.45,
-    ditherBlend: 0.48,
-    iridescence: 0.72,
-    flash: 0.22,
-  },
-  // 7. Blue Celestite — icy sky-blue orthorhombic strontium sulfate cluster with vitreous frosted bevels (cool sky-blue vs crimson #6)
+  // 9. Blue Celestite — icy sky-blue orthorhombic strontium sulfate cluster with vitreous frosted bevels
   'Blue Celestite': {
     seed: 77,
     habit: 'Orthorhombic',
@@ -7642,113 +7594,7 @@ const presets = {
     iridescence: 0.74,
     flash: 0.22,
   },
-  // 8. Imperial Topaz — warm golden-sherry orthorhombic prism with vertical striations & basal cleavage (warm gold-orange vs sky-blue #7)
-  'Imperial Topaz': {
-    seed: 61,
-    habit: 'Orthorhombic',
-    growth: 1,
-    symmetry: 4,
-    taper: 0.03,
-    chamfer: 0.22,
-    twinShare: 0.34,
-    twinAngle: 46,
-    cavityCurve: 0,
-    hopper: 0,
-    crystals: 4,
-    fan: 34,
-    crossAt: 0.36,
-    lengthJitter: 0.28,
-    thickness: 0.135,
-    faceJitter: 0.18,
-    tipAngle: 48,
-    tipJitter: 0.16,
-    faceDominance: 0.15,
-    stoneColour: '#f59e0b',
-    colourDepth: 2.85,
-    colourZoning: 0.68,
-    biColour: 0.62,
-    coreColour: '#fb7185',
-    ior: 1.63,
-    fire: 0.064,
-    striations: 0.24,
-    striationScale: 185,
-    frostShare: 0.22,
-    frost: 0.12,
-    edgeChips: 0.16,
-    edgeWear: 0.12,
-    milk: 0.02,
-    veils: 0.14,
-    phantom: 0,
-    phantomRate: 0,
-    phantomLayers: 1,
-    needles: 0,
-    fractures: 0.18,
-    fractureGlow: 1.9,
-    hueShift: 180,
-    keyLight: 9,
-    rimLight: 13,
-    lightSize: 0.85,
-    lightSoftness: 0.14,
-    glimmer: 0.45,
-    ditherBlend: 0.48,
-    iridescence: 0.72,
-    flash: 0.22,
-  },
-  // 9. Sapphire Kyanite — deep royal cornflower-blue triclinic blades with pearly cleavage sheen (deep blue vs golden-orange #8)
-  'Sapphire Kyanite': {
-    seed: 83,
-    habit: 'Triclinic',
-    growth: 1,
-    symmetry: 4,
-    taper: 0.04,
-    chamfer: 0.18,
-    twinShare: 0.46,
-    twinAngle: 38,
-    cavityCurve: 0,
-    hopper: 0,
-    crystals: 5,
-    fan: 48,
-    crossAt: 0.35,
-    lengthJitter: 0.32,
-    thickness: 0.118,
-    faceJitter: 0.26,
-    tipAngle: 41,
-    tipJitter: 0.24,
-    faceDominance: 0.22,
-    stoneColour: '#2563eb',
-    colourDepth: 3.45,
-    colourZoning: 0.66,
-    biColour: 0.68,
-    coreColour: '#38bdf8',
-    ior: 1.72,
-    fire: 0.068,
-    striations: 0.22,
-    striationScale: 160,
-    frostShare: 0.22,
-    frost: 0.12,
-    edgeChips: 0.16,
-    edgeWear: 0.12,
-    milk: 0.03,
-    milkBase: 0.65,
-    veils: 0.16,
-    phantom: 0,
-    phantomRate: 0,
-    phantomLayers: 1,
-    needles: 2,
-    needleColour: '#bae6fd',
-    fractures: 0.2,
-    fractureGlow: 1.9,
-    hueShift: 180,
-    keyLight: 9,
-    rimLight: 15,
-    lightSize: 0.85,
-    lightSoftness: 0.14,
-    glimmer: 0.45,
-    ditherBlend: 0.48,
-    iridescence: 0.76,
-    flash: 0.22,
-  },
-  // 10. Watermelon Tourmaline — bi-colour rubellite pink core & mint-green elbaite rim with trigonal striations (vivid pink/mint vs royal blue #9)
+  // 10. Watermelon Tourmaline — bi-colour rubellite pink core & mint-green elbaite rim with trigonal striations
   'Watermelon Tourmaline': {
     seed: 53,
     habit: 'Trigonal',
@@ -7800,119 +7646,7 @@ const presets = {
     iridescence: 0.72,
     flash: 0.22,
   },
-  // 13. High-Dispersion Diamond — adamantine octahedral crystal with Glimmer Diamond dithered internal dispersion and optical fire
-  'High-Dispersion Diamond': {
-    seed: 88,
-    habit: 'Cubic / Isometric',
-    growth: 1,
-    symmetry: 4,
-    taper: 0,
-    chamfer: 0.26,
-    twinShare: 0.35,
-    twinAngle: 60,
-    cavityCurve: 0,
-    hopper: 0,
-    crystals: 4,
-    fan: 46,
-    crossAt: 0.48,
-    lengthJitter: 0.26,
-    thickness: 0.22,
-    faceJitter: 0.14,
-    tipAngle: 54.7,
-    tipJitter: 0.12,
-    faceDominance: 0.08,
-    stoneColour: '#f8fafc',
-    colourDepth: 0.12,
-    colourZoning: 0.08,
-    biColour: 0,
-    coreColour: '#e0f2fe',
-    ior: 2.417,
-    fire: 0.14,
-    fireSamples: 8,
-    bounces: 8,
-    depth: 4,
-    striations: 0.04,
-    frostShare: 0.22,
-    frost: 0.12,
-    edgeChips: 0.16,
-    edgeWear: 0.12,
-    milk: 0.01,
-    veils: 0.14,
-    phantom: 0.12,
-    phantomRate: 0.25,
-    phantomLayers: 2,
-    needles: 0,
-    fractures: 0.18,
-    fractureGlow: 1.9,
-    hueShift: 0,
-    backdropSat: 0.22,
-    backdropLight: 0.12,
-    studioEdge: '#0b1018',
-    keyLight: 9,
-    rimLight: 13,
-    lightSize: 0.85,
-    lightSoftness: 0.14,
-    glimmer: 0.45,
-    ditherBlend: 0.48,
-    iridescence: 0.78,
-    flash: 0.22,
-  },
-  // 12. Imperial Zircon — fiery hyacinth red-orange tetragonal bipyramids with sub-adamantine luster (fiery red-gold vs white diamond #11)
-  'Imperial Zircon': {
-    seed: 28,
-    habit: 'Tetragonal',
-    growth: 1,
-    symmetry: 4,
-    taper: 0.02,
-    chamfer: 0.24,
-    twinShare: 0.36,
-    twinAngle: 56,
-    cavityCurve: 0,
-    hopper: 0,
-    crystals: 4,
-    fan: 38,
-    crossAt: 0.4,
-    lengthJitter: 0.26,
-    thickness: 0.145,
-    faceJitter: 0.14,
-    tipAngle: 52.5,
-    tipJitter: 0.14,
-    faceDominance: 0.08,
-    stoneColour: '#ea580c',
-    colourDepth: 3.15,
-    colourZoning: 0.62,
-    biColour: 0.58,
-    coreColour: '#fde047',
-    ior: 1.95,
-    fire: 0.095,
-    fireSamples: 7,
-    bounces: 7,
-    depth: 3,
-    striations: 0.08,
-    striationScale: 130,
-    frostShare: 0.22,
-    frost: 0.12,
-    edgeChips: 0.16,
-    edgeWear: 0.12,
-    milk: 0.02,
-    veils: 0.14,
-    phantom: 0,
-    phantomRate: 0,
-    phantomLayers: 1,
-    needles: 0,
-    fractures: 0.18,
-    fractureGlow: 1.9,
-    hueShift: 180,
-    keyLight: 9,
-    rimLight: 15,
-    lightSize: 0.85,
-    lightSoftness: 0.14,
-    glimmer: 0.45,
-    ditherBlend: 0.48,
-    iridescence: 0.76,
-    flash: 0.22,
-  },
-  // 13. Tabular Aquamarine — cool seafoam-cyan hexagonal beryl with flat basal pinacoid & etched prism faces (cool cyan vs fiery red-orange #12)
+  // 11. Tabular Aquamarine — cool seafoam-cyan hexagonal beryl with flat basal pinacoid & etched prism faces
   'Tabular Aquamarine': {
     seed: 91,
     habit: 'Hexagonal',
@@ -7963,59 +7697,6 @@ const presets = {
     glimmer: 0.45,
     ditherBlend: 0.48,
     iridescence: 0.72,
-    flash: 0.22,
-  },
-  // 14. Kunzite Spodumene — orchid-lilac monoclinic laths with deep vertical striations & silky pleochroic glow (orchid pink vs seafoam cyan #13)
-  'Kunzite Spodumene': {
-    seed: 39,
-    habit: 'Monoclinic',
-    growth: 1,
-    symmetry: 4,
-    taper: 0.02,
-    chamfer: 0.2,
-    twinShare: 0.4,
-    twinAngle: 42,
-    cavityCurve: 0,
-    hopper: 0,
-    crystals: 5,
-    fan: 44,
-    crossAt: 0.38,
-    lengthJitter: 0.3,
-    thickness: 0.125,
-    faceJitter: 0.22,
-    tipAngle: 44,
-    tipJitter: 0.2,
-    faceDominance: 0.18,
-    stoneColour: '#d946ef',
-    colourDepth: 2.65,
-    colourZoning: 0.64,
-    biColour: 0.58,
-    coreColour: '#fda4af',
-    ior: 1.668,
-    fire: 0.065,
-    striations: 0.24,
-    striationScale: 210,
-    frostShare: 0.22,
-    frost: 0.12,
-    edgeChips: 0.16,
-    edgeWear: 0.12,
-    milk: 0.02,
-    veils: 0.16,
-    phantom: 0,
-    phantomRate: 0,
-    phantomLayers: 1,
-    needles: 3,
-    needleColour: '#f5d0fe',
-    fractures: 0.18,
-    fractureGlow: 1.9,
-    hueShift: 180,
-    keyLight: 9,
-    rimLight: 13,
-    lightSize: 0.85,
-    lightSoftness: 0.14,
-    glimmer: 0.45,
-    ditherBlend: 0.48,
-    iridescence: 0.74,
     flash: 0.22,
   },
 };
@@ -8764,10 +8445,7 @@ function run(slug, { manifest, params, presets, randomize, sketch }) {
   let lastHudMenuKey = '';
 
   const HABIT_STUDY_NAMES = new Set([
-    'High-Dispersion Diamond',
-    'Imperial Zircon',
     'Tabular Aquamarine',
-    'Kunzite Spodumene',
   ]);
 
   function syncHudPresetDropdown() {
@@ -10337,8 +10015,19 @@ float evalCathedralFace(
   float u, float ly, float faceSeed, float cathAmt,
   out float outGu, out float outGax, out float outEdgeDist, out float outIsGable
 ) {
-  float baseRamp = smoothstep(0.05, 0.14, ly);
-  if (baseRamp <= 1e-4 || cathAmt <= 1e-4) {
+  if (cathAmt <= 1e-4) {
+    outGu = 0.0; outGax = 0.0; outEdgeDist = 1.0; outIsGable = 0.0;
+    return 0.0;
+  }
+  // Bilateral cathedral carving across BOTH the prominent upper half (ly >= 0.14) and the short lower half (ly < 0.14):
+  // mirror & compress the lower axial coordinate around the waist (ly = 0.14) so the short bottom half displays
+  // matching stepped Elestial rhombohedral sub-terminations and Gothic vertical ribs!
+  float axSign = (ly >= 0.14) ? 1.0 : -1.0;
+  float lyMapped = (ly >= 0.14)
+    ? ly
+    : (0.20 + (0.14 - ly) * 1.65);
+  float baseRamp = 1.0 - smoothstep(0.92, 1.04, lyMapped);
+  if (baseRamp <= 1e-4) {
     outGu = 0.0; outGax = 0.0; outEdgeDist = 1.0; outIsGable = 0.0;
     return 0.0;
   }
@@ -10346,19 +10035,19 @@ float evalCathedralFace(
   float absU = abs(u);
   float sideSign = (u >= 0.0) ? 1.0 : -1.0;
 
-  // 1. Broad Central Nave Spire Column (u = 0, wCol = 0.23, taller gable peaks at ly ~ 0.28, 0.50, 0.72)
+  // 1. Broad Central Nave Spire Column (u = 0, wCol = 0.23, gable peaks on both upper and short lower halves)
   float sideEx0 = max(0.0, absU - 0.23);
   float inWall0 = smoothstep(0.22, 0.24, absU) * (1.0 - smoothstep(0.27, 0.29, absU));
   float d0, gu0, gax0, edge0, gab0;
-  evalCathedralColumn(u, sideEx0, inWall0, 0.0, ly, 0.280 + fShift, cathAmt, baseRamp, d0, gu0, gax0, edge0, gab0);
+  evalCathedralColumn(u, sideEx0, inWall0, 0.0, lyMapped, 0.240 + fShift, cathAmt, baseRamp, d0, gu0, gax0, edge0, gab0);
 
   // 2. Flanking Buttress Spire Column (|u| >= 0.25 extending cleanly through the prism corner ridges with zero outer excess!)
   float sideEx1 = max(0.0, 0.25 - absU);
   float inWall1 = 1.0 - smoothstep(0.24, 0.27, absU);
   float d1, gu1, gax1, edge1, gab1;
   evalCathedralColumn(
-    u - sideSign * 0.46, sideEx1, inWall1, 0.032, ly,
-    0.215 + fShift * 0.5, cathAmt, baseRamp,
+    u - sideSign * 0.46, sideEx1, inWall1, 0.032, lyMapped,
+    0.185 + fShift * 0.5, cathAmt, baseRamp,
     d1, gu1, gax1, edge1, gab1
   );
 
@@ -10366,10 +10055,10 @@ float evalCathedralFace(
   float fluteDist = abs(absU - 0.24);
   float seamDist = min(fluteDist, abs(d0 - d1) * 0.55);
   if (d0 <= d1) {
-    outGu = gu0; outGax = gax0; outEdgeDist = min(edge0, seamDist); outIsGable = gab0;
+    outGu = gu0; outGax = gax0 * axSign; outEdgeDist = min(edge0, seamDist); outIsGable = gab0;
     return d0;
   } else {
-    outGu = gu1; outGax = gax1; outEdgeDist = min(edge1, seamDist); outIsGable = gab1;
+    outGu = gu1; outGax = gax1 * axSign; outEdgeDist = min(edge1, seamDist); outIsGable = gab1;
     return d1;
   }
 }
@@ -10400,7 +10089,7 @@ bool intersectCathedralSpire(
   float ly0 = dot(pStart - rt, ax) * invL;
   float dly = dot(rd, ax) * invL;
   float lyEnd = ly0 + dly * dtSpan;
-  if (max(ly0, lyEnd) < 0.04) return true;
+  if (max(ly0, lyEnd) < -0.45) return true;
 
   // Find the 3 closest active prism planes (kA, kB, kC) at the chord midpoint pMid.
   // Because any chord through a hexagonal prism interacts with the 3 prism faces on its side of the axis,
@@ -10529,15 +10218,18 @@ bool intersectCathedralSpire(
   }
 
   // If the ray entered a main termination face (kn >= 7) without being clipped by the cathedral flank (dtHit == 0):
-  // Above ly = 0.85 (or on bottom termination faces), keep the termination plane untouched;
-  // on the lower/mid shoulder of top rhombohedral faces (kn in 8..13, ly0 < 0.85), carry the Elestial cathedral
-  // gable terraces seamlessly across the rhombohedral shoulder!
+  // Carry the Elestial cathedral gable terraces seamlessly across BOTH top rhombohedral faces (kn in 8..13)
+  // AND short bottom rhombohedral termination faces (kn == 7 || kn in 14..16)!
   if (kn >= 7 && dtHit <= 1e-5) {
-    if (kn >= 8 && kn <= 13 && ly0 > 0.16 && ly0 < 0.85) {
-      float termFade = (1.0 - smoothstep(0.64, 0.85, ly0)) * smoothstep(0.16, 0.28, ly0);
+    bool isTopTerm = (kn >= 8 && kn <= 13 && ly0 > 0.14 && ly0 < 0.88);
+    bool isBotTerm = ((kn == 7 || (kn >= 14 && kn <= 16)) && ly0 < 0.14 && ly0 > -0.38);
+    if (isTopTerm || isBotTerm) {
+      float termFade = isTopTerm
+        ? ((1.0 - smoothstep(0.68, 0.88, ly0)) * smoothstep(0.14, 0.24, ly0))
+        : (smoothstep(-0.36, -0.08, ly0) * (1.0 - smoothstep(0.06, 0.14, ly0)));
       float guT, gaxT, edT, gabT;
       evalCathedralFace(uA0, ly0, seedA, cathAmt, guT, gaxT, edT, gabT);
-      vec3 nTermCath = normalize(origN + (guT * 0.48 * tUA - gaxT * 0.42 * ax) * termFade);
+      vec3 nTermCath = normalize(origN + (guT * 0.52 * tUA - gaxT * 0.45 * ax) * termFade);
       if (dot(nTermCath, rd) > -0.06) {
         nTermCath = normalize(nTermCath - rd * (dot(nTermCath, rd) + 0.06));
       }
@@ -11021,8 +10713,10 @@ float smaxSimple(float a, float b, float k) {
 
 float evalGalliumPuddleSDF(vec3 qGa, float meltAmt, out float outFloorClip, out vec2 outPuddleUV) {
   float m = clamp(meltAmt, 0.0, 1.0);
-  float mScale = smoothstep(0.0, 0.14, m) * mix(0.54, 1.02, clamp(m / 0.72, 0.0, 1.25));
-  vec3 pCen = vec3(-0.012, mix(-0.15, -0.016, clamp(m / 0.72, 0.0, 1.15)), 0.042);
+  float morphT = smoothstep(0.06, 0.72, m);
+  // Keep liquid metaballs full-size and advect upward toward the crystal cluster core as meltAmt transforms (post-016765)
+  float mScale = mix(1.06, 1.00, morphT);
+  vec3 pCen = vec3(-0.012, mix(0.045, -0.016, morphT), 0.042);
 
   // Tilted puddle plane (~34 deg forward slope toward viewer, matching reference photo 372c3f66)
   vec3 nP = vec3(0.055, 0.825, 0.562);
@@ -11031,7 +10725,7 @@ float evalGalliumPuddleSDF(vec3 qGa, float meltAmt, out float outFloorClip, out 
 
   vec3 rel = (qGa - pCen) / max(mScale, 0.12);
   vec2 uv = vec2(dot(rel, uP), dot(rel, vP));
-  float h = dot(rel, nP);
+  float h = dot(rel, nP) * mix(0.58, 1.0, morphT);
   outPuddleUV = uv;
 
   // Compact multi-lobed scalloped liquid basin + drooping bottom-right tongue (matching 372c3f66)
@@ -11055,12 +10749,12 @@ float evalGalliumPuddleSDF(vec3 qGa, float meltAmt, out float outFloorClip, out 
   float dh = h - hCamber;
   float dPad = (sqrt(dCore2D * dCore2D + dh * dh) - T) * mScale;
 
-  outFloorClip = -(h - (hCamber - T * 0.42)) * mScale;
+  outFloorClip = -(h - (hCamber - T * 0.42)) * mScale * morphT;
   return dPad;
 }
 
 // Pure 3D evaluation of the molten gallium puddle + 3D concave capillary meniscus collar
-// around the core crystal bases (C1-smooth everywhere, zero dRayPoly/1e9 silhouette discontinuity!).
+// around the core crystal bases, morphing from blobby liquid into the next crystal shape during transitions (post-016765).
 float evalGalliumFastStep(
   vec3 qGa, float meltAmt,
   vec3 c0, vec3 h0, vec3 c1, vec3 h1, vec3 c2, vec3 h2, vec3 c3, vec3 h3,
@@ -11079,8 +10773,18 @@ float evalGalliumFastStep(
   float kMeniscus = (0.095 + 0.115 * clamp(meltAmt, 0.0, 1.0));
   // Smooth 3D smin capillary meniscus collar that seamlessly fillets the crystal walls into the puddle
   float hMen = 0.0;
-  float dLiquid = sminPoly(dPuddle, max(dBase, dPuddle - 0.085), kMeniscus, hMen);
-  outMeltFactor = smoothstep(0.02, 0.85, 1.0 - smoothstep(-0.06, kMeniscus, dBase));
+  float dLiquidFull = sminPoly(dPuddle, max(dBase, dPuddle - 0.085), kMeniscus, hMen);
+
+  // Morph between blobby liquid puddle + meniscus (morphT = 1) and the 3D crystal cluster shape (morphT = 0)
+  float morphT = smoothstep(0.06, 0.72, clamp(meltAmt, 0.0, 1.0));
+  float midBell = sin(morphT * PI);
+  float liquidRipple = 0.028 * midBell * (
+    sin(qGa.x * 13.0 + u_time * 2.2) * cos(qGa.y * 11.0 - u_time * 1.8) +
+    0.5 * sin(qGa.z * 15.0 + u_time * 2.5)
+  );
+  float dLiquid = mix(dBase, dLiquidFull, morphT) + liquidRipple;
+  float baseMeltF = smoothstep(0.02, 0.85, 1.0 - smoothstep(-0.06, kMeniscus, dBase));
+  outMeltFactor = mix(0.85 * midBell, baseMeltF, morphT);
   return dLiquid;
 }
 
@@ -11145,11 +10849,12 @@ bool intersectGalliumMelt(
     polyN = normalize(mix(polyN, normalize(polyN + n2nd), bevelW));
   }
 
-  // 3. Tight bounding sphere around the lower molten gallium puddle & meniscus collar
+  // 3. Bounding sphere around the molten gallium puddle & morphing liquid cluster
+  float morphT = smoothstep(0.06, 0.72, clamp(meltAmt, 0.0, 1.0));
   vec3 qRo = toGalliumFrame(ro);
   vec3 qRd = toGalliumFrame(rd);
-  vec3 pudSphCen = vec3(-0.01, -0.065, 0.045);
-  float pudSphRad = 0.40;
+  vec3 pudSphCen = vec3(-0.01, mix(0.02, -0.065, morphT), 0.045);
+  float pudSphRad = mix(0.54, 0.40, morphT);
   vec3 oc = qRo - pudSphCen;
   float b = dot(oc, qRd);
   float h = b * b - dot(oc, oc) + pudSphRad * pudSphRad;
@@ -11163,29 +10868,35 @@ bool intersectGalliumMelt(
 
   float s = sqrt(h);
   float t0 = max(0.0, -b - s);
-  float t1 = min(-b + s, hasPolyHit ? polyT : (-b + s));
+  float t1 = min(-b + s, (hasPolyHit && morphT > 0.85) ? polyT : (-b + s));
 
-  // Precompute 4 core crystal base ellipsoids in qGa frame ONCE outside the march loop
+  // Precompute 4 core crystal ellipsoids in qGa frame ONCE outside the march loop
+  // As morphT -> 0 (transforming to the next crystal), elongate h0..h3 to match the full crystal spire lengths!
+  float spireStretch = 1.0 - morphT;
   vec3 c0 = toGalliumFrame(body(0, 0).xyz);
   float r0 = max(body(0, 2).w, 0.05);
-  vec3 h0 = vec3(r0 * 0.92, r0 * 1.06, r0 * 0.90);
+  float l0 = max(body(0, 1).w * 0.48, r0 * 1.1);
+  vec3 h0 = vec3(r0 * mix(0.92, 1.18, spireStretch), mix(r0 * 1.06, l0, spireStretch), r0 * mix(0.90, 1.18, spireStretch));
   vec3 c1 = (nc > 1) ? toGalliumFrame(body(1, 0).xyz) : c0;
   float r1 = (nc > 1) ? max(body(1, 2).w, 0.05) : r0;
-  vec3 h1 = vec3(r1 * 0.92, r1 * 1.04, r1 * 0.90);
+  float l1 = (nc > 1) ? max(body(1, 1).w * 0.48, r1 * 1.1) : l0;
+  vec3 h1 = vec3(r1 * mix(0.92, 1.18, spireStretch), mix(r1 * 1.04, l1, spireStretch), r1 * mix(0.90, 1.18, spireStretch));
   vec3 c2 = (nc > 2) ? toGalliumFrame(body(2, 0).xyz) : c0;
   float r2 = (nc > 2) ? max(body(2, 2).w, 0.05) : r0;
-  vec3 h2 = vec3(r2 * 0.94, r2 * 1.08, r2 * 0.92);
+  float l2 = (nc > 2) ? max(body(2, 1).w * 0.48, r2 * 1.1) : l0;
+  vec3 h2 = vec3(r2 * mix(0.94, 1.18, spireStretch), mix(r2 * 1.08, l2, spireStretch), r2 * mix(0.92, 1.18, spireStretch));
   vec3 c3 = (nc > 3) ? toGalliumFrame(body(3, 0).xyz) : c2;
   float r3 = (nc > 3) ? max(body(3, 2).w, 0.05) : r2;
-  vec3 h3 = vec3(r3 * 0.94, r3 * 1.08, r3 * 0.92);
+  float l3 = (nc > 3) ? max(body(3, 1).w * 0.48, r3 * 1.1) : l2;
+  vec3 h3 = vec3(r3 * mix(0.94, 1.18, spireStretch), mix(r3 * 1.08, l3, spireStretch), r3 * mix(0.92, 1.18, spireStretch));
 
-  // Early exit for upper crystal hits well above the puddle/meniscus zone
-  if (hasPolyHit) {
+  // Early exit only for high upper crystal hits well above the puddle/meniscus zone when morphT > 0.85
+  if (hasPolyHit && morphT > 0.85) {
     vec3 qPolyHit = qRo + qRd * polyT;
     float fClipP = -1e9;
     vec2 puvP = vec2(0.0);
     float dPudHit = evalGalliumPuddleSDF(qPolyHit, meltAmt, fClipP, puvP);
-    if (dPudHit > 0.15) {
+    if (qPolyHit.y > 0.12 && dPudHit > 0.16) {
       outId = polyId; outTHit = polyT; outTfHit = polyTf;
       outK = CP + 3000 + clamp(polyK, 0, 17);
       outN = polyN; outMeltFactor = 0.0; outEdgeDist = polyEdgeDist;
@@ -11234,7 +10945,7 @@ bool intersectGalliumMelt(
     }
     outId = polyId; outTHit = polyT; outTfHit = polyTf;
     outK = CP + 3000 + clamp(polyK, 0, 17);
-    outN = polyN; outMeltFactor = wetW; outEdgeDist = polyEdgeDist;
+    outN = polyN; outMeltFactor = max(wetW, 0.65 * sin(morphT * PI)); outEdgeDist = polyEdgeDist;
     return true;
   }
 
@@ -11275,6 +10986,12 @@ bool intersectGalliumMelt(
     float blendWall = smoothstep(0.0, 0.045, polyT - tFinal);
     nFinal = normalize(mix(polyN, nPuddleWorld, 0.55 + 0.45 * blendWall));
   }
+  // As meltAmt transitions toward 0 (post-016765), smoothly lock the morphing liquid blobs onto the exact 3D crystal facets!
+  float facetLock = 1.0 - smoothstep(0.06, 0.58, clamp(meltAmt, 0.0, 1.0));
+  if (hasPolyHit && facetLock > 0.001) {
+    tFinal = mix(tFinal, polyT, facetLock);
+    nFinal = normalize(mix(nFinal, polyN, facetLock));
+  }
   if (dot(nFinal, rd) > -0.04) {
     nFinal = normalize(nFinal - rd * (dot(nFinal, rd) + 0.04));
   }
@@ -11284,8 +11001,8 @@ bool intersectGalliumMelt(
   outTfHit = hasPolyHit ? max(tFinal + 0.12, polyTf) : (tFinal + 0.16);
   outK = CP + 3000 + clamp(hasPolyHit ? polyK : 0, 0, 17);
   outN = nFinal;
-  outMeltFactor = 1.0;
-  outEdgeDist = 1.0;
+  outMeltFactor = mix(1.0, mF0, facetLock * 0.65);
+  outEdgeDist = mix(1.0, polyEdgeDist, facetLock);
   return true;
 }
 

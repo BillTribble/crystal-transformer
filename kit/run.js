@@ -639,10 +639,7 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
   let lastHudMenuKey = '';
 
   const HABIT_STUDY_NAMES = new Set([
-    'High-Dispersion Diamond',
-    'Imperial Zircon',
     'Tabular Aquamarine',
-    'Kunzite Spodumene',
   ]);
 
   function syncHudPresetDropdown() {

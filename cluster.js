@@ -1304,7 +1304,8 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
   } else {
     cluster.doubleTermBlend = rawDoubleTermBlend;
   }
-  const doubleTermBlend = Math.max(0.0, Math.min(1.0, cluster.doubleTermBlend));
+  const cathVal = P.cathedral ? Math.max(0.0, Math.min(1.0, Number(P.cathedral.value) || 0.0)) : 0.0;
+  const doubleTermBlend = Math.max(0.0, Math.min(1.0, cluster.doubleTermBlend)) * (1.0 - 0.82 * cathVal);
 
   if (!Number.isFinite(cluster.smoothEffPrimaryCount)) {
     cluster.smoothEffPrimaryCount = rawEffPrimaryCount;
@@ -1566,8 +1567,8 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
     // Non-diamond crystals cross through a shared root nexus (0, 0, 0) so their longer top points
     // (+0.86 * L) and shorter bottom points (-0.56 * L) extend out past the root in asymmetric 'X' / '*' shapes.
     const dtCrossFrac = Math.max(0.10, Math.min(0.22, P.crossAt.value * 0.45 + 0.07));
-    const singleCrossFrac = Math.max(0.16, Math.min(0.32, P.crossAt.value));
-    const baseCrossFrac = singleCrossFrac + (dtCrossFrac - singleCrossFrac) * doubleTermBlend;
+    const singleCrossFrac = Math.max(0.12, Math.min(0.32, P.crossAt.value));
+    const baseCrossFrac = (singleCrossFrac + (dtCrossFrac - singleCrossFrac) * doubleTermBlend) * (1.0 - 0.48 * cathVal);
     const back = (cubicBlend * P.crossAt.value + (1 - cubicBlend) * baseCrossFrac) * curPrimL;
     const uvSpread = 0.16 + 0.89 * cubicBlend;
     const u = node.uRootU * curPrimR * uvSpread, v = node.uRootV * curPrimR * uvSpread;
@@ -1627,7 +1628,7 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
       const curTwinL = twinBaseL * gScale * presence;
       const attachFrac = Math.max(0.06, Math.min(0.22, 0.08 + 0.14 * node.uAttach));
       const attachDist = pL * attachFrac;
-      const twinBack = (0.16 - 0.02 * doubleTermBlend) * curTwinL * (1 - cubicBlend);
+      const twinBack = (0.16 - 0.02 * doubleTermBlend) * (1.0 - 0.74 * cathVal) * curTwinL * (1 - cubicBlend);
       for (let k = 0; k < 3; k++) {
         twinRoot[k] = pRoot[k] + pAxis[k] * attachDist + br[k] * (pR * 0.10) - ax[k] * twinBack + node.driftOffset[k];
         root[k] = primRoot[k] * (1 - effTwinW) + twinRoot[k] * effTwinW;
