@@ -82,10 +82,11 @@ export default function create({ canvas, P, model, degrade }) {
 
   function finishPass(spec) {
     const { name, prog, vs, fs, samplers } = spec;
+    const fsLog = !gl.getShaderParameter(fs, gl.COMPILE_STATUS) ? gl.getShaderInfoLog(fs) : '';
     gl.deleteShader(vs);
     gl.deleteShader(fs);
     if (!gl.getProgramParameter(prog, gl.LINK_STATUS) && !gl.isContextLost()) {
-      throw new Error('Program "' + name + '" failed to link:\n' + gl.getProgramInfoLog(prog));
+      throw new Error('Program "' + name + '" failed to link:\n' + (fsLog ? fsLog + '\n' : '') + gl.getProgramInfoLog(prog));
     }
     const loc = (n) => gl.getUniformLocation(prog, n);
     gl.useProgram(prog);

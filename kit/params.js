@@ -282,7 +282,11 @@ export function createModel(schema, storageKey, presets = {}) {
     applyPreset(name, seconds = 0.65, glideNumbers = true) {
       const resolvedName = (name === 'Glacial Ice Dendrite' && presets?.['Glacial Ice'])
         ? 'Glacial Ice'
-        : ((name === 'Stepped Bismuth Hopper' && presets?.['Bismuth Hopper']) ? 'Bismuth Hopper' : name);
+        : ((name === 'Stepped Bismuth Hopper' && presets?.['Bismuth Hopper'])
+          ? 'Bismuth Hopper'
+          : (((name === 'Gallium' || name === 'Gallium Melt' || name === 'Melting Gallium' || name === 'Gallium Crystal') && presets?.['Liquid Gallium'])
+            ? 'Liquid Gallium'
+            : name));
       const values = customPresets[resolvedName] || presets?.[resolvedName];
       if (!values) return;
       store.applyValues(values, seconds, resolvedName, glideNumbers);
@@ -373,7 +377,9 @@ export function createModel(schema, storageKey, presets = {}) {
       const rawPresetParam = sp.get('preset');
       const presetParam = (rawPresetParam === 'Stepped Bismuth Hopper' && presets?.['Bismuth Hopper'])
         ? 'Bismuth Hopper'
-        : rawPresetParam;
+        : (((rawPresetParam === 'Gallium' || rawPresetParam === 'Gallium Melt' || rawPresetParam === 'Melting Gallium' || rawPresetParam === 'Gallium Crystal') && presets?.['Liquid Gallium'])
+          ? 'Liquid Gallium'
+          : rawPresetParam);
       if (presetParam && (customPresets[presetParam] || presets?.[presetParam])) {
         store.applyPreset(presetParam, 0);
         applied = true;

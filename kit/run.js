@@ -517,6 +517,9 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
 
   function applyPreset(name, seconds, save = true) {
     const all = { ...(presets || {}), ...(store.customPresets || {}) };
+    if ((name === 'Gallium' || name === 'Gallium Melt' || name === 'Melting Gallium' || name === 'Gallium Crystal') && all['Liquid Gallium']) {
+      name = 'Liquid Gallium';
+    }
     if (!all[name] && !(name === 'Glacial Ice' && all['Blue Celestite'])) return 0;
     const s = seconds !== undefined ? seconds : (instance?.presetSeconds?.(all[name]) ?? presetSeconds);
     saveOnLanding = save;

@@ -313,7 +313,7 @@ const cubeOffR = new Float32Array(18), cubeOffL = new Float32Array(18);
  * morphologies (`Bi`, cantilevered wings, tall pagoda spires, L-brackets, parallel-ribbed slabs & fin bars).
  */
 function computeCubeBlockPlanes(
-  hopperBlend, morphType, chamfer, faceJitterAmt, fs, L, r, doubleTermBlend,
+  hopperBlend, meltBlend, morphType, chamfer, faceJitterAmt, fs, L, r, doubleTermBlend,
   outLx, outLy, outLz, outOffR, outOffL
 ) {
   const safeL = Math.max(L, 1e-4);
@@ -337,15 +337,22 @@ function computeCubeBlockPlanes(
   const biScaleZ = mType === 0 ? 0.62 : mType === 1 ? 0.76 : mType === 2 ? 0.66 : mType === 3 ? 0.54 : 1.12;
   const biTrapY  = mType === 0 ? 0.085 : mType === 1 ? -0.095 : mType === 2 ? 0.045 : mType === 3 ? -0.055 : 0.065;
 
-  const scaleX = 1.0 + (biScaleX - 1.0) * hopperBlend;
-  const scaleY = 1.0 + (biScaleY - 1.0) * hopperBlend;
-  const scaleZ = 1.0 + (biScaleZ - 1.0) * hopperBlend;
+  // Orthorhombic / truncated-bipyramidal Gallium block proportions (matching reference photo 372c3f66)
+  const gaScaleX = mType === 0 ? 0.96 : mType === 1 ? 1.08 : mType === 2 ? 0.88 : mType === 3 ? 0.94 : 1.02;
+  const gaScaleY = mType === 0 ? 1.34 : mType === 1 ? 1.16 : mType === 2 ? 1.12 : mType === 3 ? 1.04 : 1.18;
+  const gaScaleZ = mType === 0 ? 0.88 : mType === 1 ? 0.96 : mType === 2 ? 0.84 : mType === 3 ? 0.86 : 0.92;
+  const gaTrapY  = -0.085;
+
+  const scaleX = 1.0 + (biScaleX - 1.0) * hopperBlend + (gaScaleX - 1.0) * meltBlend * (1.0 - hopperBlend);
+  const scaleY = 1.0 + (biScaleY - 1.0) * hopperBlend + (gaScaleY - 1.0) * meltBlend * (1.0 - hopperBlend);
+  const scaleZ = 1.0 + (biScaleZ - 1.0) * hopperBlend + (gaScaleZ - 1.0) * meltBlend * (1.0 - hopperBlend);
   const hx = cubeHalf * scaleX;
   const hy = cubeHalf * scaleY;
   const hz = cubeHalf * scaleZ;
 
   // Express cube offsets in L-units (`outOffL`) with small `outOffR` so plane smoothing is linear across r/L changes.
   const rOverL = safeR / safeL;
+  const extraChamfer = Math.max(0.0, chamfer - 0.08);
   const fCubeVar = (k, scale = 0.07) => Math.max(0.88, Math.min(1.12, 1 + faceJitterAmt * scale * fs[k]));
 
   // Slots 0..6: Lateral side faces (0, 2, 4, 6 = cardinal +sx, +sz, -sx, -sz read by shader.js; 1, 3, 5 = vertical {110} corner bevels)
@@ -354,7 +361,7 @@ function computeCubeBlockPlanes(
     const kCube = m * 2;
     const isXFace = (m & 1) === 0;
     const faceHalf = isXFace ? hx : hz;
-    const rhoShear = (isXFace ? biTrapY : -0.042) * hopperBlend;
+    const rhoShear = (isXFace ? biTrapY : -0.042) * hopperBlend + gaTrapY * meltBlend * (1.0 - hopperBlend);
     const dSideL = faceHalf * fCubeVar(kCube, 0.08) * rOverL;
     setLocalPlane(
       outLx, outLy, outLz, outOffR, outOffL, kCube,
@@ -378,7 +385,8 @@ function computeCubeBlockPlanes(
     const kTop = 8 + idx;
     const aTop = (idx * TAU) / 6;
     const faceHalf = Math.abs(Math.cos(aTop)) * hx + Math.abs(Math.sin(aTop)) * hz;
-    const dodDistL = (faceHalf + hy) * cos45 * (0.988 - 0.056 * chamfer) * fCubeVar(kTop, 0.05) * rOverL;
+    const asymmBevel = (idx === 1 || idx === 2 || idx === 4) ? 1.18 : 0.88;
+    const dodDistL = (faceHalf + hy) * cos45 * (0.988 - 0.056 * chamfer - 0.52 * extraChamfer * asymmBevel) * fCubeVar(kTop, 0.05) * rOverL;
     setLocalPlane(
       outLx, outLy, outLz, outOffR, outOffL, kTop,
       cos45 * Math.cos(aTop), cos45, cos45 * Math.sin(aTop),
@@ -407,7 +415,8 @@ function computeCubeBlockPlanes(
   setLocalPlane(outLx, outLy, outLz, outOffR, outOffL, 16, 0, -1, 0, 0.0, botOffL);
 
   // Slot 17: Exact TOP (0, +1, 0) plane read as `dyp` by shader.js
-  setLocalPlane(outLx, outLy, outLz, outOffR, outOffL, 17, 0, 1, 0, 0.0, topBotHalfL + 0.52);
+  const topTableHalfL = topBotHalfL * (1.0 - 0.14 * extraChamfer);
+  setLocalPlane(outLx, outLy, outLz, outOffR, outOffL, 17, 0, 1, 0, 0.0, topTableHalfL + 0.52);
 }
 
 /**
@@ -1208,8 +1217,10 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
   const seedVal = P?.seed ? Number(P.seed.value) : 7;
   const evolveOn = P?.evolve ? !!P.evolve.value : true;
   const hopperVal = P?.hopper ? Math.max(0, Math.min(1, Number(P.hopper.value))) : 0;
+  const meltVal = P?.melt ? Math.max(0, Math.min(1, Number(P.melt.value))) : 0;
   const metallicVal = P?.metallic ? Math.max(0, Math.min(1, Number(P.metallic.value))) : 0;
   const hopperBlend = Math.max(0, Math.min(1, hopperVal / 0.92));
+  const meltBlend = smooth01(Math.max(0, Math.min(1, meltVal / 0.52)));
   const rawCount = P?.crystals ? Number(P.crystals.value) : (P?.count ? Number(P.count.value) : 4.0);
   const count = rawCount;
   const floatC = Math.max(3.0, Math.min(MAX_CRYSTALS, count));
@@ -1642,6 +1653,18 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
       root[2] = root[2] * (1 - 0.78 * hopperRootW) + Math.sin(tierAng) * tierRing * gScale * presence * hopperRootW;
     }
 
+    if (meltBlend > 1e-4 && hopperBlend < 0.5) {
+      // Sculptural Gallium crystal cluster staging (matching reference photo 372c3f66):
+      // Upper intergrown orthorhombic crystal blocks perched above the molten liquid pool
+      const gaBlend = meltBlend * (1 - hopperBlend);
+      const gaX = (i === 0 ? 0.01 : i === 1 ? 0.07 : i === 2 ? -0.10 : (i === 3 ? 0.24 : 0.0)) * baseL * gScale * presence;
+      const gaY = (i === 0 ? 0.14 : i === 1 ? 0.06 : i === 2 ? 0.07 : (i === 3 ? 0.09 : 0.06)) * baseL * gScale * presence;
+      const gaZ = (i === 0 ? -0.03 : i === 1 ? 0.09 : i === 2 ? 0.02 : (i === 3 ? -0.05 : 0.0)) * baseL * gScale * presence;
+      root[0] = root[0] * (1 - 0.68 * gaBlend) + gaX * gaBlend;
+      root[1] = root[1] * (1 - 0.58 * gaBlend) + (gaY + 0.095 * meltVal) * gaBlend;
+      root[2] = root[2] * (1 - 0.68 * gaBlend) + gaZ * gaBlend;
+    }
+
     // Pull emerging/shrinking crystals smoothly into the heart of the cluster core (0, 0, 0)
     // so disappearing crystals retract inside the permanent core (crystals 0..2) before vanishing.
     const corePull = i < 3 ? 1.0 : smooth01(Math.min(1.0, presence / 0.42));
@@ -1831,7 +1854,7 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
 
     if (cubeBlockBlend > 1e-4) {
       computeCubeBlockPlanes(
-        hopperBlend, node.hopperMorph || 0, dynChamfer, faceJitterAmt, fs, L, r, nodeDoubleTerm,
+        hopperBlend, meltBlend, node.hopperMorph || 0, dynChamfer, faceJitterAmt, fs, L, r, nodeDoubleTerm,
         cubeLx, cubeLy, cubeLz, cubeOffR, cubeOffL
       );
       for (let k = 0; k < 18; k++) {
@@ -1971,7 +1994,7 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
         if (r2 > maxR2) maxR2 = r2;
       }
     }
-    const sr = Math.max(Math.hypot(half + r * 0.65, rc), Math.sqrt(maxVertDist2)) * 1.05;
+    const sr = (Math.max(Math.hypot(half + r * 0.65, rc), Math.sqrt(maxVertDist2)) + (rowIdx === 0 ? 0.28 * meltVal : 0.08 * meltVal)) * 1.05;
     sphereCentres[rowIdx * 4] = scx;
     sphereCentres[rowIdx * 4 + 1] = scy;
     sphereCentres[rowIdx * 4 + 2] = scz;
@@ -1985,9 +2008,16 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
     // Smooth volume-weighted 3D centroid so emerging/shrinking crystals have zero derivative at birth/death
     const w = (nodeAlpha * nodeAlpha) * (presence * presence) * Math.max(1e-4, L * r * r);
     weightedSumX += scx * w;
-    weightedSumY += scy * w;
+    weightedSumY += (scy - 0.045 * meltVal) * w;
     weightedSumZ += scz * w;
     weightTotal += w;
+
+    if (meltVal > 1e-3 && rowIdx === 0) {
+      const puddleReachY = -0.34 * Math.min(1.0, meltVal * 1.25);
+      const puddleReachXZ = 0.34 * Math.min(1.0, meltVal * 1.25);
+      minY = Math.min(minY, puddleReachY);
+      maxR2 = Math.max(maxR2, puddleReachXZ * puddleReachXZ);
+    }
 
     if (vertCount === 0) {
       const tipY = root[1] + ax[1] * L;
