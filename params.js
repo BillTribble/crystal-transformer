@@ -393,7 +393,6 @@ export const presets = {
   // 4. Liquid Gallium — hand-melted orthorhombic silvery-chrome Ga crystal blocks plunging into a mirror-smooth molten metal puddle with a concave smooth-min meniscus collar
   'Liquid Gallium': {
     seed: 31,
-    spinStart: 22,
     habit: 'Orthorhombic',
     growth: 1,
     symmetry: 4,

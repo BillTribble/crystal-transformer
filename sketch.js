@@ -518,26 +518,47 @@ export default function create({ canvas, P, model, degrade }) {
       }
       SHADER.perFrame(P, t, rt, canvas.width, canvas.height, pxRatio, frameVals);
 
-      // Staggered non-blocking startup: rotate the 3D Quartz Crystal Wireframe smoothly using the
-      // exact same shared camera state (spinStart, tilt, f_cam, f_camPos, f_focal) & cluster geometry
-      // while WebGL2 resources, 3D noise volume, and async shader compilation progress across frames!
+      // Compile, link, and warm up a 4x4 GPU PSO pass immediately on frame 1 so the entire
+      // subsequent wireframe rotation + 1.0s cross-fade runs at 60 FPS with ZERO mid-transition freeze!
       if (!shaderReady) {
         drawWireframeOverlay(1.0, 1.0);
         wireframeFrames++;
         if (holdWireframe) return;
-        if (buildStage === 0 && wireframeFrames >= 3) {
+        if (buildStage === 0) {
           initGlResourcesAndBake();
-          return;
-        }
-        if (buildStage === 1 && wireframeFrames >= 5) {
           kickCompileAsync();
           return;
         }
-        const minWfMs = (isCapture || pinnedFillIn !== null || sp.has('fast')) ? 0 : 420;
-        if (buildStage === 2 && wireframeFrames >= 8 && (performance.now() - sketchStartPerf) >= minWfMs && isParallelCompileComplete()) {
-          finalizeCompiledPrograms();
-          shaderWarmupFrames = 0;
+        if (buildStage === 1) {
+          kickCompileAsync();
+          return;
         }
+        if (buildStage === 2 && isParallelCompileComplete()) {
+          finalizeCompiledPrograms();
+          // Warm up the Apple Metal / WebGL2 PSO at 4x4 pixels right now before the visible rotation hold & fade!
+          gl.bindBuffer(gl.UNIFORM_BUFFER, ubo);
+          gl.bufferSubData(gl.UNIFORM_BUFFER, 0, cluster.data);
+          uploadedClusterVer = cluster.version;
+          if (bakedSeed !== P.seed.value) bake();
+          drawPass(passBackdrop, hdrFbo, 4, 4);
+          gl.enable(gl.SCISSOR_TEST);
+          gl.scissor(0, 0, 4, 4);
+          drawPass(passTrace, hdrFbo, 4, 4);
+          gl.disable(gl.SCISSOR_TEST);
+          drawPass(passComposite, null, 4, 4);
+          gl.flush();
+          drawWireframeOverlay(1.0, 1.0);
+          shaderWarmupFrames = 0;
+          fillStartPerfMs = performance.now();
+        }
+        return;
+      }
+
+      // After the 4x4 PSO warm-up, rotate the 100% opaque wireframe smoothly at 60 FPS for 480ms
+      // before starting the full-res WebGL2 cross-fade so the wireframe turns with zero stutter!
+      const wfHoldMs = (isCapture || pinnedFillIn !== null || sp.has('fast')) ? 0 : 480;
+      if (!holdWireframe && pinnedFillIn === null && fillInProgress === 0.0 && (performance.now() - fillStartPerfMs) < wfHoldMs) {
+        drawWireframeOverlay(1.0, 1.0);
         return;
       }
 
@@ -560,8 +581,6 @@ export default function create({ canvas, P, model, degrade }) {
       }
       drawPass(passComposite, null, canvas.width, canvas.height);
 
-      // Wait 3 warm-up WebGL2 draw frames so any synchronous GPU PSO compilation stall on Apple Metal
-      // finishes completely underneath the 100% opaque rotating wireframe BEFORE the 1.0s fade begins!
       if (holdWireframe) {
         fillInProgress = 0.0;
         wireframeAlpha = 1.0;
@@ -572,20 +591,17 @@ export default function create({ canvas, P, model, degrade }) {
         const backdropAlpha = 1.0 - fillAlpha;
         wireframeAlpha = 1.0 - fillAlpha;
         drawWireframeOverlay(backdropAlpha, wireframeAlpha);
-      } else if (shaderWarmupFrames < 3 && fillInProgress < 1.0) {
-        shaderWarmupFrames++;
-        fillInProgress = 0.0;
-        wireframeAlpha = 1.0;
-        drawWireframeOverlay(1.0, 1.0);
       } else if (fillInProgress < 1.0) {
         if (!fillClockStarted) {
           fillClockStarted = true;
           fillStartPerfMs = performance.now();
+          drawWireframeOverlay(1.0, 1.0);
+          return;
         }
-        // Advance by bounded frame delta (max 20ms per rendered frame -> >= 50 smooth frames over 1.0s)
-        // so GPU driver stalls can never skip frames or make the transition look abrupt!
-        const stepDt = Math.min(Math.max(rawDt || 0.016, 0.004), 0.020);
-        fillInProgress = Math.min(1.0, fillInProgress + stepDt / FILL_IN_DURATION);
+        const elapsedFade = isCapture
+          ? (fillInProgress * FILL_IN_DURATION + Math.min(Math.max(rawDt || 0.016, 0.004), 0.10))
+          : Math.max(0.0, (performance.now() - fillStartPerfMs) * 0.001);
+        fillInProgress = Math.min(1.0, elapsedFade / FILL_IN_DURATION);
         const fillAlpha = 0.5 - 0.5 * Math.cos(Math.PI * fillInProgress);
         const backdropAlpha = 1.0 - fillAlpha;
         wireframeAlpha = 1.0 - fillAlpha;

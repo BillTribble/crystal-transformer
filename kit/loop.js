@@ -84,8 +84,8 @@ export function createLoop(canvas, P, sketch) {
     const inStartup = s && (!s.shaderReady || s.fillInProgress < 1.0);
     const cap = inStartup ? 0 : cappedFps();
     if (cap > 0 && last && now - last < 900 / cap) return;
-    const maxStep = inStartup ? 0.020 : 0.1;
-    const dt = last ? Math.min((now - last) * 0.001, maxStep) : 0.016;
+    const rawElapsed = last ? (now - last) * 0.001 : 0.016;
+    const dt = rawElapsed > 0.12 ? 0.016 : rawElapsed;
     last = now;
     render(dt);
   }
