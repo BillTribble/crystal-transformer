@@ -239,6 +239,7 @@ export function createModel(schema, storageKey, presets = {}) {
       const resolveTarget = (p) => {
         if (p.key === 'bloom' || p.noPreset || p.randomize === false) return p.value;
         if (values[p.key] !== undefined) return values[p.key];
+        if (p.key === 'crystals' && values.count !== undefined) return values.count;
         if (STICKY_USER_KEYS.has(p.key)) return p.value;
         if (p.key === 'distance' && byKey.defaultZoom) {
           const z = Math.max(0.4, Math.min(2.5, Number(byKey.defaultZoom.value) || 1));

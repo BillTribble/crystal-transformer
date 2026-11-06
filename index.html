@@ -1431,6 +1431,7 @@ function createModel(schema, storageKey, presets = {}) {
       const resolveTarget = (p) => {
         if (p.key === 'bloom' || p.noPreset || p.randomize === false) return p.value;
         if (values[p.key] !== undefined) return values[p.key];
+        if (p.key === 'crystals' && values.count !== undefined) return values.count;
         if (STICKY_USER_KEYS.has(p.key)) return p.value;
         if (p.key === 'distance' && byKey.defaultZoom) {
           const z = Math.max(0.4, Math.min(2.5, Number(byKey.defaultZoom.value) || 1));
@@ -3603,7 +3604,12 @@ function stepEvolution(P, dt, viewportW = 0, viewportH = 0) {
 function buildCluster(P, viewportW = 0, viewportH = 0) {
   const seedVal = P?.seed ? Number(P.seed.value) : 7;
   const evolveOn = P?.evolve ? !!P.evolve.value : true;
-  const floatC = Math.max(3.0, Math.min(MAX_CRYSTALS, P?.crystals ? Number(P.crystals.value) : 4.0));
+  const hopperVal = P?.hopper ? Math.max(0, Math.min(1, Number(P.hopper.value))) : 0;
+  const metallicVal = P?.metallic ? Math.max(0, Math.min(1, Number(P.metallic.value))) : 0;
+  const hopperBlend = smooth01(Math.max(0, Math.min(1, (hopperVal - 0.18) / 0.45)));
+  const rawCount = P?.crystals ? Number(P.crystals.value) : (P?.count ? Number(P.count.value) : 4.0);
+  const count = hopperBlend > 0.5 ? Math.min(3.0, rawCount) : rawCount;
+  const floatC = Math.max(3.0, Math.min(MAX_CRYSTALS, count));
   const nActive = Math.min(MAX_CRYSTALS, Math.ceil(floatC - 1e-4));
   cluster.floatCrystals = floatC;
 
@@ -3639,9 +3645,6 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
   const hFrom = cluster.morphHabitFrom ? resolveHabitSystem(cluster.morphHabitFrom) : '';
   const hTo = cluster.morphHabitTo ? resolveHabitSystem(cluster.morphHabitTo) : '';
   const curSys = resolveHabitSystem(curHabit);
-  const hopperVal = P.hopper ? Math.max(0, Math.min(1, Number(P.hopper.value))) : 0;
-  const metallicVal = P.metallic ? Math.max(0, Math.min(1, Number(P.metallic.value))) : 0;
-  const hopperBlend = smooth01(Math.max(0, Math.min(1, (hopperVal - 0.18) / 0.45)));
   const pyriteCubeBlend = smooth01(Math.max(0, Math.min(1, (metallicVal - 0.25) / 0.45))) * (1 - hopperBlend);
   const cubeBlockBlend = Math.max(hopperBlend, pyriteCubeBlend);
 
@@ -3690,7 +3693,10 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
     // Continuous presence & twinW with ultra-slow 2nd-order critically-damped spring (omega = 0.20..0.24 rad/s,
     // max velocity <= 0.065/s, taking ~15-18s — 3x longer than before) so appearing and disappearing
     // crystals bud and shrink very gradually across preset changes.
-    const rawPresence = smooth01(Math.max(0.0, Math.min(1.0, floatC - i)));
+    // When Bismuth Hopper (hopperBlend > 0.1) is active, cap to 3 blocks (i = 0, 1, 2) immediately for high FPS.
+    const rawPresence = (hopperBlend > 0.5 && i >= 3)
+      ? 0.0
+      : smooth01(Math.max(0.0, Math.min(1.0, floatC - i))) * (i >= 3 ? (1.0 - hopperBlend) : 1.0);
     const rawTwinW = i < 2 ? 0.0 : smooth01(Math.max(0.0, Math.min(1.0, (twinShare - node.twinRoll + 0.44) / 0.88)));
     if (!node.smoothInit) {
       node.smoothPresence = rawPresence;
@@ -3698,6 +3704,9 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
       node.smoothTwinW = rawTwinW;
       node.velTwinW = 0;
       node.smoothInit = true;
+    } else if (hopperBlend > 0.5 && i >= 3) {
+      node.smoothPresence = 0;
+      node.velPresence = 0;
     } else if (nodeDt > 0) {
       let remN = nodeDt;
       const omegaN = 0.20 + 0.04 * (0.5 + 0.5 * (node.uLen || 0));
@@ -3818,24 +3827,34 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
 
     const seedInt = Math.floor(Math.abs(P.seed ? Number(P.seed.value) : 64));
     const nodeUidInt = Math.max(1, Math.round(node.uid || (i + 1)));
-    const hopperMorph = (nodeUidInt - 1 + (seedInt % 5)) % 5;
+    // For the 3-block Bismuth Hopper cluster (i = 0, 1, 2):
+    //   Block 0: Hero broad cantilevered terraced hopper wing (morph 0)
+    //   Block 1: Tall stepped pagoda ziggurat tower interlocking at an angle (morph 1)
+    //   Block 2: Open-sided L-bracket / Greek-key sub-block on the opposite flank (morph 2)
+    const hopperMorph = i < 3 ? i : ((nodeUidInt - 1 + (seedInt % 5)) % 5);
     node.hopperMorph = hopperMorph;
 
     if (hopperBlend > 1e-4) {
-      // Varied 3D Bismuth Hopper cluster architectures (post-015966):
-      // Combine upright stepped pagoda spires (morph 1), broad cantilevered BGS wings (morph 0),
-      // angled rhombohedral L-brackets (morph 2), parallel-ribbed terrace slabs (morph 3), and
-      // jutting corner fin bars (morph 4) at distinct crystallographic tilts and azimuths.
+      // Cohesive 3-block Bismuth Hopper sculptural cluster (post-016032):
       const archMode = seedInt % 3;
+      const azBase = (0.18 + 0.08 * archMode) * Math.PI;
       const azSpread = (i === 0)
-        ? (0.18 + 0.08 * archMode) * Math.PI
-        : (0.20 * Math.PI + i * (TAU / 5.4) + 0.42 * (seedInt % 7));
+        ? azBase
+        : (i === 1)
+          ? (azBase + 0.68 * Math.PI)
+          : (i === 2)
+            ? (azBase - 0.72 * Math.PI)
+            : (0.20 * Math.PI + i * (TAU / 5.4) + 0.42 * (seedInt % 7));
       const leanDeg = (i === 0)
-        ? (archMode === 1 ? 10 : 18)
-        : (hopperMorph === 1 ? 11 + 5 * (i % 2)
-          : hopperMorph === 0 ? 24 + 8 * (i % 2)
-          : hopperMorph === 3 ? 46 + 10 * (i % 2)
-          : 34 + 14 * (i % 3));
+        ? 16
+        : (i === 1)
+          ? 14
+          : (i === 2)
+            ? 32
+            : (hopperMorph === 1 ? 11 + 5 * (i % 2)
+              : hopperMorph === 0 ? 24 + 8 * (i % 2)
+              : hopperMorph === 3 ? 46 + 10 * (i % 2)
+              : 34 + 14 * (i % 3));
       const zigLean = leanDeg * DEG;
       const zAx0 = Math.sin(zigLean) * Math.cos(azSpread);
       const zAx1 = Math.cos(zigLean);
@@ -3892,10 +3911,10 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
 
     let primBaseR = P.thickness.value * Math.pow(primBaseL, 0.65) * Math.max(0.25, 1 + P.thicknessJitter.value * 0.55 * node.uRadSym) * radMod;
     if (hopperBlend > 1e-4) {
-      // Scale sub-crystal axial length & radial span by morphology so pagoda spires tower above
-      // while cantilevered BGS wings and parallel-ribbed slabs span wide horizontally.
-      const biLenMult = hopperMorph === 1 ? 1.24 : hopperMorph === 2 ? 1.12 : hopperMorph === 3 ? 0.86 : 1.04;
-      const biRadMult = hopperMorph === 0 ? 1.20 : hopperMorph === 3 ? 1.16 : hopperMorph === 1 ? 0.88 : 1.02;
+      // Scale the 3 Bismuth Hopper blocks (0: hero cantilevered wing, 1: tall stepped pagoda tower,
+      // 2: open L-bracket sub-block) so the 3-block cluster has bold sculptural volume.
+      const biLenMult = hopperMorph === 1 ? 1.28 : hopperMorph === 2 ? 1.16 : hopperMorph === 0 ? 1.14 : 1.04;
+      const biRadMult = hopperMorph === 0 ? 1.26 : hopperMorph === 2 ? 1.12 : hopperMorph === 1 ? 0.96 : 1.02;
       primBaseL *= 1.0 + (biLenMult - 1.0) * hopperBlend;
       primBaseR *= 1.0 + (biRadMult - 1.0) * hopperBlend;
     }
@@ -3983,14 +4002,13 @@ function buildCluster(P, viewportW = 0, viewportH = 0) {
     }
 
     if (hopperBlend > 1e-4 && i > 0) {
-      // Architectural 3D Bismuth cluster offsets (spires rising above, cantilevered wings spreading out,
-      // and stepped L-brackets / fin bars cascading around the flanks like the BGS, Wikipedia & Encyclopedia specimens)
+      // Architectural 3-block Bismuth Hopper offsets (Block 1: tall pagoda tower rising on upper flank;
+      // Block 2: open L-bracket ziggurat interlocking on opposite lower-front flank)
       const tierIdx = i - 1;
       const archMode = seedInt % 3;
-      const tierRing = (0.30 + 0.09 * Math.floor(tierIdx / 2) + (hopperMorph === 0 || hopperMorph === 3 ? 0.08 : 0.0)) * baseL;
-      const tierAng = tierIdx * (TAU / 5.2) + 0.35 + 0.52 * archMode;
-      const spireLift = hopperMorph === 1 ? 0.24 : (hopperMorph === 2 ? 0.10 : -0.06);
-      const tierY = (0.20 - 0.12 * (tierIdx % 4) + spireLift) * baseL * gScale * presence;
+      const tierRing = (i === 1 ? 0.28 : i === 2 ? 0.32 : (0.30 + 0.09 * Math.floor(tierIdx / 2))) * baseL;
+      const tierAng = (i === 1 ? 0.82 : i === 2 ? -1.28 : tierIdx * (TAU / 5.2) + 0.35) + 0.38 * archMode;
+      const tierY = (i === 1 ? 0.22 : i === 2 ? -0.10 : (0.20 - 0.12 * (tierIdx % 4))) * baseL * gScale * presence;
       root[0] = root[0] * (1 - 0.78 * hopperBlend) + Math.cos(tierAng) * tierRing * gScale * presence * hopperBlend;
       root[1] = root[1] * (1 - 0.78 * hopperBlend) + tierY * hopperBlend;
       root[2] = root[2] * (1 - 0.78 * hopperBlend) + Math.sin(tierAng) * tierRing * gScale * presence * hopperBlend;
@@ -6745,67 +6763,70 @@ const presets = {
     iridescence: 0.72,
     flash: 0.28,
   },
-  // 2. Amethyst Cathedral — natural amethyst cluster: clear / frosted quartz lower 1/3 grading smoothly into deep royal purple in the upper 2/3 & termination tips, with surface frosting, horizontal growth striations, patina, and contoured ridge bevels (zero heavy internal phantom boxes)
-  'Amethyst Cathedral': {
-    seed: 7,
-    habit: 'Trigonal',
+  // 2. Bismuth Hopper — iridescent thin-film Bi2O3 oxide metallic skeletal crystal with 3 sculptural Greek-key stepped ziggurat hopper blocks
+  'Bismuth Hopper': {
+    seed: 64,
+    habit: 'Orthorhombic',
     growth: 1,
-    symmetry: 6,
-    taper: 0.03,
-    chamfer: 0.14,
-    twinShare: 0.38,
-    twinAngle: 52,
-    cavityCurve: 0.18,
-    hopper: 0,
-    crystals: 7,
-    fan: 44,
-    crossAt: 0.26,
-    lengthJitter: 0.62,
-    thickness: 0.165,
-    thicknessJitter: 0.38,
-    faceJitter: 0.36,
-    faceDominance: 0.34,
-    tipAngle: 52.5,
-    tipJitter: 0.34,
-    stoneColour: '#a855f7',
-    colourDepth: 2.25,
-    colourZoning: 0.95,
+    symmetry: 4,
+    taper: 0,
+    chamfer: 0.06,
+    twinShare: 0.62,
+    twinAngle: 86,
+    cavityCurve: 0.08,
+    hopper: 0.92,
+    metallic: 0.98,
+    count: 3,
+    crystals: 3,
+    fan: 34,
+    crossAt: 0.46,
+    lengthJitter: 0.24,
+    thickness: 0.36,
+    thicknessJitter: 0.18,
+    faceJitter: 0.10,
+    tipAngle: 28,
+    tipJitter: 0.08,
+    faceDominance: 0.12,
+    stoneColour: '#f59e0b',
+    colourDepth: 2.95,
+    colourZoning: 0.82,
     biColour: 0.85,
-    coreColour: '#f0f6ff',
-    ior: 1.544,
-    fire: 0.058,
-    fireSamples: 7,
-    bounces: 7,
-    striations: 0.76,
-    striationScale: 165,
-    frostShare: 0.54,
-    frost: 0.34,
-    edgeChips: 0.36,
-    edgeWear: 0.28,
-    milk: 0.08,
-    milkBase: 0.92,
-    veils: 0.18,
-    inclusionScale: 2.8,
-    inclusionLight: 1.25,
+    coreColour: '#ec4899',
+    ior: 2.25,
+    fire: 0.04,
+    fireSamples: 3,
+    bounces: 2,
+    depth: 1,
+    striations: 0.38,
+    striationScale: 68,
+    frostShare: 0.08,
+    frost: 0.05,
+    edgeChips: 0.06,
+    occlusion: 0,
+    edgeWear: 0.06,
+    milk: 0,
+    veils: 0,
     phantom: 0,
     phantomRate: 0,
-    phantomSize: 0.72,
     phantomLayers: 1,
     needles: 0,
-    fractures: 0.20,
-    fractureGlow: 1.55,
+    fractures: 0,
+    fractureGlow: 1.4,
     hueShift: 180,
-    keyLight: 9.5,
-    rimLight: 13.5,
-    lightSize: 0.85,
-    lightSoftness: 0.14,
-    glimmer: 0.45,
-    ditherBlend: 0.48,
-    iridescence: 0.58,
-    flash: 0.24,
+    backdropSat: 0.35,
+    backdropLight: 0.10,
+    studioEdge: '#0b0e17',
+    keyLight: 10.5,
+    rimLight: 16.5,
+    lightSize: 0.90,
+    lightSoftness: 0.15,
+    glimmer: 0.48,
+    ditherBlend: 0.08,
+    iridescence: 0.95,
+    flash: 0.26,
   },
-  // 3. High-Dispersion Diamond — adamantine octahedral crystal with Glimmer Diamond dithered internal dispersion and optical fire
-  'High-Dispersion Diamond': {
+  // 3. Glimmer Diamond — rainbow-dispersive isometric diamond cluster with dithered spectral fire
+  'Glimmer Diamond': {
     seed: 88,
     habit: 'Cubic / Isometric',
     growth: 1,
@@ -6911,6 +6932,126 @@ const presets = {
     ditherBlend: 0.48,
     iridescence: 0.68,
     flash: 0.22,
+  },
+  // 5. Pyrite Cubes — interpenetrating Spanish Navajún mirror-polished brass-gold FeS2 metallic cubes with orthogonal brushed growth striations
+  'Pyrite Cubes': {
+    seed: 52,
+    habit: 'Cubic / Isometric',
+    growth: 1,
+    symmetry: 4,
+    taper: 0,
+    chamfer: 0.04,
+    twinShare: 0.56,
+    twinAngle: 44,
+    cavityCurve: 0,
+    hopper: 0,
+    metallic: 0.98,
+    crystals: 5,
+    fan: 38,
+    crossAt: 0.44,
+    lengthJitter: 0.34,
+    thickness: 0.34,
+    thicknessJitter: 0.24,
+    faceJitter: 0.08,
+    tipAngle: 26,
+    tipJitter: 0.06,
+    faceDominance: 0.04,
+    stoneColour: '#e6c665',
+    colourDepth: 2.8,
+    colourZoning: 0.25,
+    biColour: 0.45,
+    coreColour: '#fff2b2',
+    ior: 2.4,
+    fire: 0.02,
+    fireSamples: 3,
+    bounces: 2,
+    depth: 1,
+    striations: 0.72,
+    striationScale: 135,
+    frostShare: 0.12,
+    frost: 0.06,
+    edgeChips: 0.10,
+    occlusion: 0,
+    edgeWear: 0.08,
+    milk: 0,
+    veils: 0,
+    phantom: 0,
+    phantomRate: 0,
+    phantomLayers: 1,
+    needles: 0,
+    fractures: 0.08,
+    fractureGlow: 1.4,
+    hueShift: 0,
+    backdropSat: 0.32,
+    backdropLight: 0.11,
+    studioEdge: '#0b1018',
+    keyLight: 10.5,
+    rimLight: 15,
+    lightSize: 0.92,
+    lightSoftness: 0.16,
+    glimmer: 0.42,
+    ditherBlend: 0.12,
+    iridescence: 0.04,
+    flash: 0.18,
+  },
+  // 6. Amethyst Cathedral — natural amethyst cluster: clear / frosted quartz lower 1/3 grading smoothly into deep royal purple in the upper 2/3 & termination tips, with surface frosting, horizontal growth striations, patina, and contoured ridge bevels (zero heavy internal phantom boxes)
+  'Amethyst Cathedral': {
+    seed: 7,
+    habit: 'Trigonal',
+    growth: 1,
+    symmetry: 6,
+    taper: 0.03,
+    chamfer: 0.14,
+    twinShare: 0.38,
+    twinAngle: 52,
+    cavityCurve: 0.18,
+    hopper: 0,
+    crystals: 7,
+    fan: 44,
+    crossAt: 0.26,
+    lengthJitter: 0.62,
+    thickness: 0.165,
+    thicknessJitter: 0.38,
+    faceJitter: 0.36,
+    faceDominance: 0.34,
+    tipAngle: 52.5,
+    tipJitter: 0.34,
+    stoneColour: '#a855f7',
+    colourDepth: 2.25,
+    colourZoning: 0.95,
+    biColour: 0.85,
+    coreColour: '#f0f6ff',
+    ior: 1.544,
+    fire: 0.058,
+    fireSamples: 7,
+    bounces: 7,
+    striations: 0.76,
+    striationScale: 165,
+    frostShare: 0.54,
+    frost: 0.34,
+    edgeChips: 0.36,
+    edgeWear: 0.28,
+    milk: 0.08,
+    milkBase: 0.92,
+    veils: 0.18,
+    inclusionScale: 2.8,
+    inclusionLight: 1.25,
+    phantom: 0,
+    phantomRate: 0,
+    phantomSize: 0.72,
+    phantomLayers: 1,
+    needles: 0,
+    fractures: 0.20,
+    fractureGlow: 1.55,
+    hueShift: 180,
+    keyLight: 9.5,
+    rimLight: 13.5,
+    lightSize: 0.85,
+    lightSoftness: 0.14,
+    glimmer: 0.45,
+    ditherBlend: 0.48,
+    iridescence: 0.58,
+    flash: 0.24,
   },
   // 5. Phantom Emerald Twin — lush Colombian emerald green hexagonal beryl with delicate phantom zoning & jardin veils (cool green vs warm amber #4)
   'Phantom Emerald Twin': {
@@ -7221,8 +7362,8 @@ const presets = {
     iridescence: 0.72,
     flash: 0.22,
   },
-  // 11. Glimmer Diamond — rainbow-dispersive isometric diamond cluster with dithered spectral fire (brilliant white vs pink/mint #10)
-  'Glimmer Diamond': {
+  // 13. High-Dispersion Diamond — adamantine octahedral crystal with Glimmer Diamond dithered internal dispersion and optical fire
+  'High-Dispersion Diamond': {
     seed: 88,
     habit: 'Cubic / Isometric',
     growth: 1,
@@ -7438,122 +7579,6 @@ const presets = {
     ditherBlend: 0.48,
     iridescence: 0.74,
     flash: 0.22,
-  },
-  // 15. Pyrite Cubes — interpenetrating Spanish Navajún mirror-polished brass-gold FeS2 metallic cubes with orthogonal brushed growth striations
-  'Pyrite Cubes': {
-    seed: 52,
-    habit: 'Cubic / Isometric',
-    growth: 1,
-    symmetry: 4,
-    taper: 0,
-    chamfer: 0.04,
-    twinShare: 0.56,
-    twinAngle: 44,
-    cavityCurve: 0,
-    hopper: 0,
-    metallic: 0.96,
-    crystals: 5,
-    fan: 38,
-    crossAt: 0.44,
-    lengthJitter: 0.34,
-    thickness: 0.34,
-    thicknessJitter: 0.24,
-    faceJitter: 0.08,
-    tipAngle: 26,
-    tipJitter: 0.06,
-    faceDominance: 0.04,
-    stoneColour: '#e6c665',
-    colourDepth: 2.8,
-    colourZoning: 0.25,
-    biColour: 0.45,
-    coreColour: '#fff2b2',
-    ior: 2.4,
-    fire: 0.02,
-    striations: 0.72,
-    striationScale: 135,
-    frostShare: 0.12,
-    frost: 0.06,
-    edgeChips: 0.10,
-    occlusion: 0,
-    edgeWear: 0.08,
-    milk: 0,
-    veils: 0,
-    phantom: 0,
-    phantomRate: 0,
-    phantomLayers: 1,
-    needles: 0,
-    fractures: 0.08,
-    fractureGlow: 1.4,
-    hueShift: 0,
-    backdropSat: 0.32,
-    backdropLight: 0.11,
-    studioEdge: '#0b1018',
-    keyLight: 10.5,
-    rimLight: 15,
-    lightSize: 0.92,
-    lightSoftness: 0.16,
-    glimmer: 0.42,
-    ditherBlend: 0.12,
-    iridescence: 0.04,
-    flash: 0.18,
-  },
-  // 16. Bismuth Hopper — iridescent thin-film Bi2O3 oxide metallic skeletal crystal with 3D Greek-key stepped ziggurat hopper wells
-  'Bismuth Hopper': {
-    seed: 64,
-    habit: 'Orthorhombic',
-    growth: 1,
-    symmetry: 4,
-    taper: 0,
-    chamfer: 0.06,
-    twinShare: 0.62,
-    twinAngle: 86,
-    cavityCurve: 0.08,
-    hopper: 0.92,
-    metallic: 0.94,
-    crystals: 7,
-    fan: 34,
-    crossAt: 0.46,
-    lengthJitter: 0.28,
-    thickness: 0.34,
-    thicknessJitter: 0.22,
-    faceJitter: 0.10,
-    tipAngle: 28,
-    tipJitter: 0.08,
-    faceDominance: 0.12,
-    stoneColour: '#f59e0b',
-    colourDepth: 2.95,
-    colourZoning: 0.82,
-    biColour: 0.85,
-    coreColour: '#ec4899',
-    ior: 2.25,
-    fire: 0.08,
-    striations: 0.38,
-    striationScale: 68,
-    frostShare: 0.08,
-    frost: 0.05,
-    edgeChips: 0.08,
-    occlusion: 0,
-    edgeWear: 0.08,
-    milk: 0,
-    veils: 0,
-    phantom: 0.32,
-    phantomRate: 0.55,
-    phantomLayers: 2,
-    needles: 0,
-    fractures: 0.12,
-    fractureGlow: 1.8,
-    hueShift: 180,
-    backdropSat: 0.35,
-    backdropLight: 0.10,
-    studioEdge: '#0b0e17',
-    keyLight: 10.5,
-    rimLight: 16.5,
-    lightSize: 0.90,
-    lightSoftness: 0.15,
-    glimmer: 0.48,
-    ditherBlend: 0.08,
-    iridescence: 0.95,
-    flash: 0.26,
   },
 };
 
@@ -7835,7 +7860,7 @@ function run(slug, { manifest, params, presets, randomize, sketch }) {
     stageIndex: 0,
     diceRolls: 0,
     fromPreset: standardPresetNames[0] || 'Classic Quartz Prism',
-    toPreset: standardPresetNames[1] || 'Amethyst Cathedral',
+    toPreset: standardPresetNames[1] || 'Bismuth Hopper',
     elapsed: 0,
     holdRemaining: 0,
     progress: 0,
@@ -9355,12 +9380,12 @@ float crystalSDF_fast(vec3 p, int row, out float secondD, out float thirdD, out 
 //   4: Asymmetric Cantilevered Stepped Fin Bar / Twin Hopper Bracket
 vec4 getBismuthMorphParams(int uidInt) {
   int seedShift = int(mod(floor(abs(f_seed)), 5.0));
-  int m = (uidInt - 1 + seedShift) % 5;
-  return (m == 0) ? vec4(0.36, -0.44, -6.0,  1.0)
-       : (m == 1) ? vec4(0.46,  0.35,  5.0,  0.6)
-       : (m == 2) ? vec4(0.44, -0.34,  4.0,  1.2)
-       : (m == 3) ? vec4(0.45, -0.45, -7.0, -1.0)
-                  : vec4(0.46,  0.24, -4.0,  0.8);
+  int m = (uidInt <= 3) ? (uidInt - 1) : ((uidInt - 1 + seedShift) % 5);
+  return (m == 0) ? vec4(0.18, -0.22, -5.0,  1.0)
+       : (m == 1) ? vec4(0.22,  0.18,  5.0,  0.6)
+       : (m == 2) ? vec4(0.20, -0.18,  4.0,  1.2)
+       : (m == 3) ? vec4(0.20, -0.20, -5.0, -1.0)
+                  : vec4(0.22,  0.16, -4.0,  0.8);
 }
 
 float quantStairFast(float t, float nSteps) {
@@ -9369,25 +9394,62 @@ float quantStairFast(float t, float nSteps) {
   return (idx + smoothstep(0.74, 0.95, s - idx)) / nSteps;
 }
 
-float evalBismuthFast(vec3 pQ, vec4 morphP, float hopperAmt, out float outStepIdx, out float outEdgeDist) {
+// Ultra-fast scalar solid-margin evaluator used inside the raymarch & bisection loops of intersectBismuthHopper.
+// Watertight 3D stepped ziggurat + nested hopper terraces (never punches holes through the block).
+float evalBismuthMargin(vec3 pQ, vec4 morphP, float hopperAmt) {
   float nSt = abs(morphP.z);
-  // 1. External 3D 90-degree stair-stepped silhouette across ALL 3 AXES (X, Y, Z) with per-step jump <= rimWidth (0.135)
-  //    so every ziggurat step ledge is 100% water-tight while every internal terrace ridge is 100% straight & orthogonal.
-  float yUp = clamp((pQ.y + 0.90) * 0.54, 0.0, 1.0);
-  float yDn = clamp((0.90 - pQ.y) * 0.54, 0.0, 1.0);
-  float xPos = clamp((pQ.x + 0.85) * 0.56, 0.0, 1.0);
-  float zPos = clamp((pQ.z + 0.85) * 0.56, 0.0, 1.0);
-  float stairA = quantStairFast(morphP.z > 0.0 ? yUp : yDn, 4.0);
-  float stairB = quantStairFast(morphP.y >= 0.0 ? yUp : yDn, 3.0);
-  float stairC = quantStairFast(xPos, 3.0);
-  float stairZ = quantStairFast(zPos, 3.0);
+  float yStep = clamp((morphP.z > 0.0 ? (pQ.y + 0.90) : (0.90 - pQ.y)) * 0.54, 0.0, 1.0);
+  float stairA = quantStairFast(yStep, 3.0);
+  float stairB = quantStairFast(clamp((pQ.z + 0.85) * 0.56, 0.0, 1.0), 3.0);
 
   float maxPosX =  1.002 - morphP.x * stairA * hopperAmt;
   float minNegX = -1.002 + abs(morphP.y) * stairB * hopperAmt;
-  float minNegY = -1.002 + 0.33 * stairC * hopperAmt;
-  float maxPosY =  1.002 - 0.28 * stairZ * hopperAmt;
-  float maxPosZ =  1.002 - 0.36 * stairA * hopperAmt;
-  float minNegZ = -1.002 + 0.32 * stairB * hopperAmt;
+  float minNegY = -1.002 + 0.16 * stairB * hopperAmt;
+  float maxPosY =  1.002 - 0.14 * stairA * hopperAmt;
+  float maxPosZ =  1.002 - 0.18 * stairA * hopperAmt;
+  float minNegZ = -1.002 + 0.16 * stairB * hopperAmt;
+
+  float wX = min(maxPosX - pQ.x, pQ.x - minNegX);
+  float wY = min(maxPosY - pQ.y, pQ.y - minNegY);
+  float wZ = min(maxPosZ - pQ.z, pQ.z - minNegZ);
+
+  float wFace = min(wX, min(wY, wZ));
+  float dContour = max(min(wX, wY), min(max(wX, wY), wZ));
+  if (dContour <= 0.13) {
+    return wFace;
+  }
+
+  float insideWell = smoothstep(0.13, 0.16, dContour);
+  vec2 uv = (wZ <= wX && wZ <= wY) ? pQ.xy
+          : (wX <= wY)             ? vec2(pQ.z, pQ.y)
+                                   : vec2(pQ.x, pQ.z);
+
+  float normContour = clamp((dContour - 0.13) / 0.72, 0.0, 1.0);
+  float sWell = clamp(normContour, 0.0, 0.9999) * nSt;
+  float idxW = floor(sWell);
+  float fWell = sWell - idxW;
+  float wellStair = (idxW + smoothstep(0.74, 0.95, fWell)) / nSt;
+
+  float openGap = smoothstep(0.08, 0.18, uv.x * sign(morphP.w)) * (1.0 - smoothstep(0.20, 0.32, abs(uv.y - 0.12)));
+  float concentricRidge = (1.0 - smoothstep(0.16, 0.25, abs(fWell - 0.22))) * (1.0 - 0.85 * openGap);
+
+  // Monotone stepped terrace depth with raised rim lips (max depth <= 0.36 so the 3 blocks are 100% solid & watertight)
+  float stepDepth = (0.09 + 0.26 * wellStair - 0.055 * concentricRidge) * hopperAmt * insideWell;
+  return wFace - stepDepth;
+}
+
+float evalBismuthFast(vec3 pQ, vec4 morphP, float hopperAmt, out float outStepIdx, out float outEdgeDist) {
+  float nSt = abs(morphP.z);
+  float yStep = clamp((morphP.z > 0.0 ? (pQ.y + 0.90) : (0.90 - pQ.y)) * 0.54, 0.0, 1.0);
+  float stairA = quantStairFast(yStep, 3.0);
+  float stairB = quantStairFast(clamp((pQ.z + 0.85) * 0.56, 0.0, 1.0), 3.0);
+
+  float maxPosX =  1.002 - morphP.x * stairA * hopperAmt;
+  float minNegX = -1.002 + abs(morphP.y) * stairB * hopperAmt;
+  float minNegY = -1.002 + 0.16 * stairB * hopperAmt;
+  float maxPosY =  1.002 - 0.14 * stairA * hopperAmt;
+  float maxPosZ =  1.002 - 0.18 * stairA * hopperAmt;
+  float minNegZ = -1.002 + 0.16 * stairB * hopperAmt;
 
   float wX = min(maxPosX - pQ.x, pQ.x - minNegX);
   float wY = min(maxPosY - pQ.y, pQ.y - minNegY);
@@ -9396,52 +9458,32 @@ float evalBismuthFast(vec3 pQ, vec4 morphP, float hopperAmt, out float outStepId
   float wFace = min(wX, min(wY, wZ));
   float dContour = max(min(wX, wY), min(max(wX, wY), wZ));
 
-  float insideWell = smoothstep(0.12, 0.15, dContour);
+  float insideWell = smoothstep(0.13, 0.16, dContour);
   if (insideWell <= 1e-4) {
-    outStepIdx = 0.9 * stairA + 0.6 * stairB + 0.5 * stairZ;
-    outEdgeDist = abs(dContour - 0.135);
+    outStepIdx = 0.9 * stairA + 0.6 * stairB;
+    outEdgeDist = abs(dContour - 0.145);
     return wFace;
   }
 
-  // Active 2D face coordinates for internal Greek-key / parallel-rib / L-bracket walls
   vec2 uv = (wZ <= wX && wZ <= wY) ? pQ.xy
           : (wX <= wY)             ? vec2(pQ.z, pQ.y)
                                    : vec2(pQ.x, pQ.z);
 
-  // 2. Contour-following stepped hopper tiers (4..8 steps) + morphology-specific internal ridges on all 6 faces
-  float normContour = clamp((dContour - 0.11) / 0.72, 0.0, 1.0);
-  float wellStair = quantStairFast(normContour, nSt);
-  float sWell = normContour * nSt;
-  float fWell = fract(sWell);
+  float normContour = clamp((dContour - 0.13) / 0.72, 0.0, 1.0);
+  float sWell = clamp(normContour, 0.0, 0.9999) * nSt;
+  float idxW = floor(sWell);
+  float fWell = sWell - idxW;
+  float wellStair = (idxW + smoothstep(0.74, 0.95, fWell)) / nSt;
 
-  // Open-sided L-bracket / U-channel doorway on one quadrant of the internal ridges
-  float openGap = smoothstep(0.08, 0.18, uv.x * sign(morphP.w)) * (1.0 - smoothstep(0.22, 0.34, abs(uv.y - 0.14)));
+  float openGap = smoothstep(0.08, 0.18, uv.x * sign(morphP.w)) * (1.0 - smoothstep(0.20, 0.32, abs(uv.y - 0.12)));
+  float ridgePhase = abs(fWell - 0.22);
+  float concentricRidge = (1.0 - smoothstep(0.16, 0.25, ridgePhase)) * (1.0 - 0.85 * openGap);
 
-  float ridgePhase = abs(fWell - 0.38);
-  float concentricRidge = (1.0 - smoothstep(0.14, 0.21, ridgePhase)) * (1.0 - 0.88 * openGap);
-
-  // Parallel comb ribs (active when morphP.w < 0, like the "Rainbow Metal" parallel-ribbed specimen)
-  float parCoord = (uv.x - uv.y * 0.18) * 3.5;
-  float parWave = abs(fract(parCoord) - 0.5);
-  float parallelRibs = 1.0 - smoothstep(0.14, 0.22, parWave);
-
-  // Asymmetric Greek-key inner hook bars (active when morphP.w > 0.7)
-  float dHook1 = max(abs(uv.x - 0.06) - 0.32, abs(uv.y - 0.12) - 0.062);
-  float dHook2 = max(abs(uv.x + 0.18) - 0.062, abs(uv.y + 0.04) - 0.26);
-  float greekHook = (1.0 - smoothstep(-0.012, 0.012, min(dHook1, dHook2))) * step(0.7, morphP.w);
-
-  float wallMask = (morphP.w < 0.0)
-    ? max(parallelRibs * 0.85, concentricRidge * 0.65)
-    : max(concentricRidge, greekHook);
-
-  float floorDepth = (0.18 + 0.46 * wellStair) * hopperAmt;
-  float ridgeTopDepth = (0.06 + 0.14 * wellStair) * hopperAmt;
-  float targetDepth = mix(floorDepth, ridgeTopDepth, wallMask) * insideWell;
-
-  outStepIdx = (0.65 + 2.6 * wellStair + 1.1 * stairA - 0.55 * wallMask) * insideWell + abs(morphP.w) * 0.25;
+  float stepDepth = (0.09 + 0.26 * wellStair - 0.055 * concentricRidge) * hopperAmt * insideWell;
+  outStepIdx = (0.65 + 2.6 * wellStair + 1.1 * stairA - 0.45 * concentricRidge) * insideWell + abs(morphP.w) * 0.25;
   float eWell = min(fWell, 1.0 - fWell) / nSt;
-  outEdgeDist = min(min(eWell, abs(dContour - 0.115)), (morphP.w < 0.0) ? abs(parWave - 0.18) * 0.25 : abs(ridgePhase - 0.16) / nSt);
-  return wFace - targetDepth;
+  outEdgeDist = min(min(eWell, abs(dContour - 0.145)), abs(ridgePhase - 0.18) / nSt);
+  return wFace - stepDepth;
 }
 
 float evalBismuthHopper(vec3 p, int row, float hopperAmt, out float outStepIdx, out float outEdgeDist) {
@@ -9523,22 +9565,26 @@ bool intersectBismuthHopper(int row, vec3 ro, vec3 rd, float hopperAmt, float tH
 
   float dtMax = min(tf, tHitMax) - tStart;
   if (dtMax <= 1e-4) {
-    float s0, e0;
-    return evalBismuthFast(pQ0, morphP, hopperAmt, s0, e0) >= -1e-4;
+    return evalBismuthMargin(pQ0, morphP, hopperAmt) >= -1e-4;
   }
 
-  // March along local ray pQ(dt) = pQ0 + dpQ * dt in 14 fast branchless register-only steps
-  int nSteps = (u_isMobile > 0.5) ? 9 : 14;
+  // Fast check at entry surface (ms = 0): if ray hits outer rim/wall immediately, skip march & bisection
+  float mEntry = evalBismuthMargin(pQ0, morphP, hopperAmt);
+  if (mEntry >= -1e-4) {
+    return true;
+  }
+
+  // March along local ray pQ(dt) = pQ0 + dpQ * dt in 8 fast register-only steps (6 on mobile)
+  int nSteps = (u_isMobile > 0.5) ? 6 : 8;
   float dtStep = dtMax / float(nSteps);
   float dtPrev = 0.0;
   bool foundHit = false;
   float dtHit = 0.0;
 
-  for (int ms = 0; ms <= 14; ms++) {
+  for (int ms = 1; ms <= 8; ms++) {
     if (ms > nSteps) break;
     float dt = float(ms) * dtStep;
-    float sIdx, sEdge;
-    if (evalBismuthFast(pQ0 + dpQ * dt, morphP, hopperAmt, sIdx, sEdge) >= -1e-4) {
+    if (evalBismuthMargin(pQ0 + dpQ * dt, morphP, hopperAmt) >= -1e-4) {
       dtHit = dt;
       foundHit = true;
       break;
@@ -9548,38 +9594,31 @@ bool intersectBismuthHopper(int row, vec3 ro, vec3 rd, float hopperAmt, float tH
 
   if (!foundHit) return false;
 
-  if (dtHit > 1e-4) {
-    float tLo = dtPrev, tHi = dtHit;
-    for (int bs = 0; bs < 4; bs++) {
-      float tMid = 0.5 * (tLo + tHi);
-      float sIdx, sEdge;
-      if (evalBismuthFast(pQ0 + dpQ * tMid, morphP, hopperAmt, sIdx, sEdge) >= 0.0) tHi = tMid;
-      else tLo = tMid;
-    }
-    dtHit = tHi;
+  float tLo = dtPrev, tHi = dtHit;
+  for (int bs = 0; bs < 3; bs++) {
+    float tMid = 0.5 * (tLo + tHi);
+    if (evalBismuthMargin(pQ0 + dpQ * tMid, morphP, hopperAmt) >= 0.0) tHi = tMid;
+    else tLo = tMid;
   }
+  dtHit = tHi;
 
-  // Compute 3D normal in world space via forward differences of evalBismuthFast(pQ) (only 4 evals total!)
+  // Compute 3D normal in world space via forward differences of evalBismuthMargin(pQ)
   vec3 pQH = pQ0 + dpQ * dtHit;
-  float s0, e0;
-  float m0 = evalBismuthFast(pQH, morphP, hopperAmt, s0, e0);
-  if (dtHit > 1e-4 || m0 < 0.016) {
-    float eps = 0.005;
-    float sD, eD;
-    float gx = (evalBismuthFast(pQH + vec3(eps, 0.0, 0.0), morphP, hopperAmt, sD, eD) - m0) * sxSign;
-    float gy =  evalBismuthFast(pQH + vec3(0.0, eps, 0.0), morphP, hopperAmt, sD, eD) - m0;
-    float gz =  evalBismuthFast(pQH + vec3(0.0, 0.0, eps), morphP, hopperAmt, sD, eD) - m0;
-    vec3 gLocal = -vec3(gx, gy, gz) * invHalf;
-    float gLen = length(gLocal);
-    if (gLen > 1e-5) {
-      tn = tStart + dtHit;
-      kn = CP + 2000;
-      vec3 nCand = normalize(sx * gLocal.x + ax * gLocal.y + sz * gLocal.z);
-      if (dot(nCand, rd) > -0.06) {
-        nCand = normalize(nCand - rd * (dot(nCand, rd) + 0.06));
-      }
-      outHopperN = nCand;
+  float m0 = evalBismuthMargin(pQH, morphP, hopperAmt);
+  float eps = 0.006;
+  float gx = (evalBismuthMargin(pQH + vec3(eps, 0.0, 0.0), morphP, hopperAmt) - m0) * sxSign;
+  float gy =  evalBismuthMargin(pQH + vec3(0.0, eps, 0.0), morphP, hopperAmt) - m0;
+  float gz =  evalBismuthMargin(pQH + vec3(0.0, 0.0, eps), morphP, hopperAmt) - m0;
+  vec3 gLocal = -vec3(gx, gy, gz) * invHalf;
+  float gLen = length(gLocal);
+  if (gLen > 1e-5) {
+    tn = tStart + dtHit;
+    kn = CP + 2000;
+    vec3 nCand = normalize(sx * gLocal.x + ax * gLocal.y + sz * gLocal.z);
+    if (dot(nCand, rd) > -0.06) {
+      nCand = normalize(nCand - rd * (dot(nCand, rd) + 0.06));
     }
+    outHopperN = nCand;
   }
   return true;
 }
@@ -10827,7 +10866,8 @@ vec3 shadeMetallicCrystal(int id, int k, vec3 pEntry, vec3 rd, vec3 nRefl, float
     reflLight += bounceOxide * f_ambient * (0.26 * cornerBounceW);
   }
 
-  int nc = clamp(int(f_crystals + 0.5), 0, MAX_CRYSTALS);
+  // 1 secondary metallic reflection bounce max (capped to 3 blocks when u_hopper > 0.5)
+  int nc = clamp(int(f_crystals + 0.5), 0, (u_hopper > 0.5) ? 3 : MAX_CRYSTALS);
   float bestBT = 1e9;
   int bestBId = 0, bestBK = 0;
   for (int bi = 0; bi < nc; bi++) {
@@ -10905,7 +10945,7 @@ vec3 shadeBehindRay(vec3 roIn, vec3 rdIn, int skipIn, float travIn, float jitter
   float bRough = effFrost * smoothstep(bFrostRoll - 0.15, bFrostRoll + 0.15, effFrostShare);
   vec3 bRawN = (bK < CP) ? body(bId, PA + bK).xyz : bVoidN;
   vec3 bN = faceNormal(bId, bK < CP ? bK : 18, bRawN, bP, bRough, travB * f_pixAngle, 1.0);
-  if (u_metallic >= 0.98) {
+  if (u_metallic >= 0.88 || u_hopper > 0.5) {
     vec3 mCol = shadeMetallicCrystal(bId, bK, bP, rdIn, bN, bRough, 1.0, travB * f_pixAngle);
     return mix(bEnvCol, mCol, bAlpha);
   }
@@ -11180,7 +11220,7 @@ void main() {
     float effEdgeMacro = max(0.0, u_patinaMacro * u_edgeMacro * rawSurfScale);
     float edgeSilAlpha = 1.0;
     vec3 chipFacetN = vec3(0.0, 1.0, 0.0);
-    if (!primaryEvaluated && (u_edgeChips * effEdgeMacro > 0.005 || u_edgeIrregularity * effEdgeMacro > 0.005 || u_edgeWear * effEdgeMacro > 0.005) && k < CP) {
+    if (!primaryEvaluated && u_hopper <= 0.5 && (u_edgeChips * effEdgeMacro > 0.005 || u_edgeIrregularity * effEdgeMacro > 0.005 || u_edgeWear * effEdgeMacro > 0.005) && k < CP) {
       if (!applyTinyEdgeChip(id, k, ro, rd, t, tfHit, k, edgeSilAlpha, chipFacetN)) {
         skipMask |= (1 << id);
         ro += rd * max(t, 0.0);
@@ -11243,11 +11283,13 @@ void main() {
 
     vec3 adjN = rawFaceN;
     int ridgeKLo = -1, ridgeKHi = -1;
-    bool needDEdge = ((hop == 0) && (u_patina > 0.01 || u_occlusion > 0.01 || u_hopper > 0.0 || u_iridescence > 0.0 || u_bloom > 0.0)) || (g1 > 0.001 && u_edgeWear > 0.0);
+    float metalW = clamp(u_metallic, 0.0, 1.0);
+    bool isOpaqueMetal = (metalW >= 0.88 || (u_hopper > 0.5 && metalW >= 0.5));
+    bool needDEdge = !(isOpaqueMetal && u_hopper > 0.5) && (((hop == 0) && (u_patina > 0.01 || u_occlusion > 0.01 || u_hopper > 0.0 || u_iridescence > 0.0 || u_bloom > 0.0)) || (g1 > 0.001 && u_edgeWear > 0.0));
     float dEdge = needDEdge ? edgeDist(id, k, p, adjN, ridgeKLo, ridgeKHi) : 1.0;
 
     float jbChip = 0.0;
-    if (g1 > 0.001 && u_edgeWear > 0.0 && k < CP) {
+    if (!isOpaqueMetal && g1 > 0.001 && u_edgeWear > 0.0 && k < CP) {
       float jbEdge = 1.0 - smoothstep(0.0, u_edgeWidth * body(id, 2).w, dEdge);
       float jbNz = texture(u_incl, p * 6.0 + 0.71).b * 0.75 + texture(u_incl, p * 21.0).b * 0.35;
       jbChip = jbEdge * smoothstep(1.0 - 0.45 * u_edgeWear, 1.05 - 0.45 * u_edgeWear, jbNz) * g1;
@@ -11259,7 +11301,7 @@ void main() {
       rough = max(rough, 0.025 * clamp(u_edgeWear * effEdgeMacro, 0.0, 1.0));
     }
     vec3 n = faceNormal(id, isEdgeIncursion ? 18 : k, rawFaceN, p, rough, footprint, dEdge);
-    if (hop == 0 && (isTinyEdgeChip || isCornerVertexChip || isCornerNip)) {
+    if (!isOpaqueMetal && hop == 0 && (isTinyEdgeChip || isCornerVertexChip || isCornerNip)) {
       vec3 axis = body(id, 1).xyz, root = body(id, 3).xyz;
       float L = max(body(id, 1).w, 0.12);
       vec3 p0 = body(id, PA).xyz;
@@ -11277,7 +11319,7 @@ void main() {
 
     vec3 nRefl = n;
     float patinaGlint = 0.0, patinaRough = 0.0;
-    if (hop == 0 && !isOcclusionVoid) {
+    if (!isOpaqueMetal && hop == 0 && !isOcclusionVoid) {
       evalSurfacePatina(id, k, p, n, footprint, dEdge, nRefl, patinaGlint, patinaRough);
       // Keep internal refraction 100% pure & clear by only applying a tiny fraction (6%) of surface scratch normal to n
       n = normalize(mix(n, nRefl, 0.06 * (1.0 - 0.85 * dither)));
@@ -11286,11 +11328,10 @@ void main() {
 
     vec3 hopCol = vec3(0.0);
     vec3 hopThr = vec3(1.0);
-    float metalW = clamp(u_metallic, 0.0, 1.0);
     vec3 metalSurfCol = (metalW > 0.005)
       ? shadeMetallicCrystal(id, k, pEntry, rd, nRefl, reflRough, dEdge, footprint)
       : vec3(0.0);
-    if (metalW >= 0.98) {
+    if (isOpaqueMetal) {
       col += thr * alpha * metalSurfCol;
       thr *= (1.0 - alpha);
       if (alpha >= 0.999) {

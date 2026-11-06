@@ -174,7 +174,7 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
     stageIndex: 0,
     diceRolls: 0,
     fromPreset: standardPresetNames[0] || 'Classic Quartz Prism',
-    toPreset: standardPresetNames[1] || 'Amethyst Cathedral',
+    toPreset: standardPresetNames[1] || 'Bismuth Hopper',
     elapsed: 0,
     holdRemaining: 0,
     progress: 0,

@@ -662,12 +662,12 @@ float crystalSDF_fast(vec3 p, int row, out float secondD, out float thirdD, out 
 //   4: Asymmetric Cantilevered Stepped Fin Bar / Twin Hopper Bracket
 vec4 getBismuthMorphParams(int uidInt) {
   int seedShift = int(mod(floor(abs(f_seed)), 5.0));
-  int m = (uidInt - 1 + seedShift) % 5;
-  return (m == 0) ? vec4(0.36, -0.44, -6.0,  1.0)
-       : (m == 1) ? vec4(0.46,  0.35,  5.0,  0.6)
-       : (m == 2) ? vec4(0.44, -0.34,  4.0,  1.2)
-       : (m == 3) ? vec4(0.45, -0.45, -7.0, -1.0)
-                  : vec4(0.46,  0.24, -4.0,  0.8);
+  int m = (uidInt <= 3) ? (uidInt - 1) : ((uidInt - 1 + seedShift) % 5);
+  return (m == 0) ? vec4(0.18, -0.22, -5.0,  1.0)
+       : (m == 1) ? vec4(0.22,  0.18,  5.0,  0.6)
+       : (m == 2) ? vec4(0.20, -0.18,  4.0,  1.2)
+       : (m == 3) ? vec4(0.20, -0.20, -5.0, -1.0)
+                  : vec4(0.22,  0.16, -4.0,  0.8);
 }
 
 float quantStairFast(float t, float nSteps) {
@@ -676,25 +676,62 @@ float quantStairFast(float t, float nSteps) {
   return (idx + smoothstep(0.74, 0.95, s - idx)) / nSteps;
 }
 
-float evalBismuthFast(vec3 pQ, vec4 morphP, float hopperAmt, out float outStepIdx, out float outEdgeDist) {
+// Ultra-fast scalar solid-margin evaluator used inside the raymarch & bisection loops of intersectBismuthHopper.
+// Watertight 3D stepped ziggurat + nested hopper terraces (never punches holes through the block).
+float evalBismuthMargin(vec3 pQ, vec4 morphP, float hopperAmt) {
   float nSt = abs(morphP.z);
-  // 1. External 3D 90-degree stair-stepped silhouette across ALL 3 AXES (X, Y, Z) with per-step jump <= rimWidth (0.135)
-  //    so every ziggurat step ledge is 100% water-tight while every internal terrace ridge is 100% straight & orthogonal.
-  float yUp = clamp((pQ.y + 0.90) * 0.54, 0.0, 1.0);
-  float yDn = clamp((0.90 - pQ.y) * 0.54, 0.0, 1.0);
-  float xPos = clamp((pQ.x + 0.85) * 0.56, 0.0, 1.0);
-  float zPos = clamp((pQ.z + 0.85) * 0.56, 0.0, 1.0);
-  float stairA = quantStairFast(morphP.z > 0.0 ? yUp : yDn, 4.0);
-  float stairB = quantStairFast(morphP.y >= 0.0 ? yUp : yDn, 3.0);
-  float stairC = quantStairFast(xPos, 3.0);
-  float stairZ = quantStairFast(zPos, 3.0);
+  float yStep = clamp((morphP.z > 0.0 ? (pQ.y + 0.90) : (0.90 - pQ.y)) * 0.54, 0.0, 1.0);
+  float stairA = quantStairFast(yStep, 3.0);
+  float stairB = quantStairFast(clamp((pQ.z + 0.85) * 0.56, 0.0, 1.0), 3.0);
 
   float maxPosX =  1.002 - morphP.x * stairA * hopperAmt;
   float minNegX = -1.002 + abs(morphP.y) * stairB * hopperAmt;
-  float minNegY = -1.002 + 0.33 * stairC * hopperAmt;
-  float maxPosY =  1.002 - 0.28 * stairZ * hopperAmt;
-  float maxPosZ =  1.002 - 0.36 * stairA * hopperAmt;
-  float minNegZ = -1.002 + 0.32 * stairB * hopperAmt;
+  float minNegY = -1.002 + 0.16 * stairB * hopperAmt;
+  float maxPosY =  1.002 - 0.14 * stairA * hopperAmt;
+  float maxPosZ =  1.002 - 0.18 * stairA * hopperAmt;
+  float minNegZ = -1.002 + 0.16 * stairB * hopperAmt;
+
+  float wX = min(maxPosX - pQ.x, pQ.x - minNegX);
+  float wY = min(maxPosY - pQ.y, pQ.y - minNegY);
+  float wZ = min(maxPosZ - pQ.z, pQ.z - minNegZ);
+
+  float wFace = min(wX, min(wY, wZ));
+  float dContour = max(min(wX, wY), min(max(wX, wY), wZ));
+  if (dContour <= 0.13) {
+    return wFace;
+  }
+
+  float insideWell = smoothstep(0.13, 0.16, dContour);
+  vec2 uv = (wZ <= wX && wZ <= wY) ? pQ.xy
+          : (wX <= wY)             ? vec2(pQ.z, pQ.y)
+                                   : vec2(pQ.x, pQ.z);
+
+  float normContour = clamp((dContour - 0.13) / 0.72, 0.0, 1.0);
+  float sWell = clamp(normContour, 0.0, 0.9999) * nSt;
+  float idxW = floor(sWell);
+  float fWell = sWell - idxW;
+  float wellStair = (idxW + smoothstep(0.74, 0.95, fWell)) / nSt;
+
+  float openGap = smoothstep(0.08, 0.18, uv.x * sign(morphP.w)) * (1.0 - smoothstep(0.20, 0.32, abs(uv.y - 0.12)));
+  float concentricRidge = (1.0 - smoothstep(0.16, 0.25, abs(fWell - 0.22))) * (1.0 - 0.85 * openGap);
+
+  // Monotone stepped terrace depth with raised rim lips (max depth <= 0.36 so the 3 blocks are 100% solid & watertight)
+  float stepDepth = (0.09 + 0.26 * wellStair - 0.055 * concentricRidge) * hopperAmt * insideWell;
+  return wFace - stepDepth;
+}
+
+float evalBismuthFast(vec3 pQ, vec4 morphP, float hopperAmt, out float outStepIdx, out float outEdgeDist) {
+  float nSt = abs(morphP.z);
+  float yStep = clamp((morphP.z > 0.0 ? (pQ.y + 0.90) : (0.90 - pQ.y)) * 0.54, 0.0, 1.0);
+  float stairA = quantStairFast(yStep, 3.0);
+  float stairB = quantStairFast(clamp((pQ.z + 0.85) * 0.56, 0.0, 1.0), 3.0);
+
+  float maxPosX =  1.002 - morphP.x * stairA * hopperAmt;
+  float minNegX = -1.002 + abs(morphP.y) * stairB * hopperAmt;
+  float minNegY = -1.002 + 0.16 * stairB * hopperAmt;
+  float maxPosY =  1.002 - 0.14 * stairA * hopperAmt;
+  float maxPosZ =  1.002 - 0.18 * stairA * hopperAmt;
+  float minNegZ = -1.002 + 0.16 * stairB * hopperAmt;
 
   float wX = min(maxPosX - pQ.x, pQ.x - minNegX);
   float wY = min(maxPosY - pQ.y, pQ.y - minNegY);
@@ -703,52 +740,32 @@ float evalBismuthFast(vec3 pQ, vec4 morphP, float hopperAmt, out float outStepId
   float wFace = min(wX, min(wY, wZ));
   float dContour = max(min(wX, wY), min(max(wX, wY), wZ));
 
-  float insideWell = smoothstep(0.12, 0.15, dContour);
+  float insideWell = smoothstep(0.13, 0.16, dContour);
   if (insideWell <= 1e-4) {
-    outStepIdx = 0.9 * stairA + 0.6 * stairB + 0.5 * stairZ;
-    outEdgeDist = abs(dContour - 0.135);
+    outStepIdx = 0.9 * stairA + 0.6 * stairB;
+    outEdgeDist = abs(dContour - 0.145);
     return wFace;
   }
 
-  // Active 2D face coordinates for internal Greek-key / parallel-rib / L-bracket walls
   vec2 uv = (wZ <= wX && wZ <= wY) ? pQ.xy
           : (wX <= wY)             ? vec2(pQ.z, pQ.y)
                                    : vec2(pQ.x, pQ.z);
 
-  // 2. Contour-following stepped hopper tiers (4..8 steps) + morphology-specific internal ridges on all 6 faces
-  float normContour = clamp((dContour - 0.11) / 0.72, 0.0, 1.0);
-  float wellStair = quantStairFast(normContour, nSt);
-  float sWell = normContour * nSt;
-  float fWell = fract(sWell);
+  float normContour = clamp((dContour - 0.13) / 0.72, 0.0, 1.0);
+  float sWell = clamp(normContour, 0.0, 0.9999) * nSt;
+  float idxW = floor(sWell);
+  float fWell = sWell - idxW;
+  float wellStair = (idxW + smoothstep(0.74, 0.95, fWell)) / nSt;
 
-  // Open-sided L-bracket / U-channel doorway on one quadrant of the internal ridges
-  float openGap = smoothstep(0.08, 0.18, uv.x * sign(morphP.w)) * (1.0 - smoothstep(0.22, 0.34, abs(uv.y - 0.14)));
+  float openGap = smoothstep(0.08, 0.18, uv.x * sign(morphP.w)) * (1.0 - smoothstep(0.20, 0.32, abs(uv.y - 0.12)));
+  float ridgePhase = abs(fWell - 0.22);
+  float concentricRidge = (1.0 - smoothstep(0.16, 0.25, ridgePhase)) * (1.0 - 0.85 * openGap);
 
-  float ridgePhase = abs(fWell - 0.38);
-  float concentricRidge = (1.0 - smoothstep(0.14, 0.21, ridgePhase)) * (1.0 - 0.88 * openGap);
-
-  // Parallel comb ribs (active when morphP.w < 0, like the "Rainbow Metal" parallel-ribbed specimen)
-  float parCoord = (uv.x - uv.y * 0.18) * 3.5;
-  float parWave = abs(fract(parCoord) - 0.5);
-  float parallelRibs = 1.0 - smoothstep(0.14, 0.22, parWave);
-
-  // Asymmetric Greek-key inner hook bars (active when morphP.w > 0.7)
-  float dHook1 = max(abs(uv.x - 0.06) - 0.32, abs(uv.y - 0.12) - 0.062);
-  float dHook2 = max(abs(uv.x + 0.18) - 0.062, abs(uv.y + 0.04) - 0.26);
-  float greekHook = (1.0 - smoothstep(-0.012, 0.012, min(dHook1, dHook2))) * step(0.7, morphP.w);
-
-  float wallMask = (morphP.w < 0.0)
-    ? max(parallelRibs * 0.85, concentricRidge * 0.65)
-    : max(concentricRidge, greekHook);
-
-  float floorDepth = (0.18 + 0.46 * wellStair) * hopperAmt;
-  float ridgeTopDepth = (0.06 + 0.14 * wellStair) * hopperAmt;
-  float targetDepth = mix(floorDepth, ridgeTopDepth, wallMask) * insideWell;
-
-  outStepIdx = (0.65 + 2.6 * wellStair + 1.1 * stairA - 0.55 * wallMask) * insideWell + abs(morphP.w) * 0.25;
+  float stepDepth = (0.09 + 0.26 * wellStair - 0.055 * concentricRidge) * hopperAmt * insideWell;
+  outStepIdx = (0.65 + 2.6 * wellStair + 1.1 * stairA - 0.45 * concentricRidge) * insideWell + abs(morphP.w) * 0.25;
   float eWell = min(fWell, 1.0 - fWell) / nSt;
-  outEdgeDist = min(min(eWell, abs(dContour - 0.115)), (morphP.w < 0.0) ? abs(parWave - 0.18) * 0.25 : abs(ridgePhase - 0.16) / nSt);
-  return wFace - targetDepth;
+  outEdgeDist = min(min(eWell, abs(dContour - 0.145)), abs(ridgePhase - 0.18) / nSt);
+  return wFace - stepDepth;
 }
 
 float evalBismuthHopper(vec3 p, int row, float hopperAmt, out float outStepIdx, out float outEdgeDist) {
@@ -830,22 +847,26 @@ bool intersectBismuthHopper(int row, vec3 ro, vec3 rd, float hopperAmt, float tH
 
   float dtMax = min(tf, tHitMax) - tStart;
   if (dtMax <= 1e-4) {
-    float s0, e0;
-    return evalBismuthFast(pQ0, morphP, hopperAmt, s0, e0) >= -1e-4;
+    return evalBismuthMargin(pQ0, morphP, hopperAmt) >= -1e-4;
   }
 
-  // March along local ray pQ(dt) = pQ0 + dpQ * dt in 14 fast branchless register-only steps
-  int nSteps = (u_isMobile > 0.5) ? 9 : 14;
+  // Fast check at entry surface (ms = 0): if ray hits outer rim/wall immediately, skip march & bisection
+  float mEntry = evalBismuthMargin(pQ0, morphP, hopperAmt);
+  if (mEntry >= -1e-4) {
+    return true;
+  }
+
+  // March along local ray pQ(dt) = pQ0 + dpQ * dt in 8 fast register-only steps (6 on mobile)
+  int nSteps = (u_isMobile > 0.5) ? 6 : 8;
   float dtStep = dtMax / float(nSteps);
   float dtPrev = 0.0;
   bool foundHit = false;
   float dtHit = 0.0;
 
-  for (int ms = 0; ms <= 14; ms++) {
+  for (int ms = 1; ms <= 8; ms++) {
     if (ms > nSteps) break;
     float dt = float(ms) * dtStep;
-    float sIdx, sEdge;
-    if (evalBismuthFast(pQ0 + dpQ * dt, morphP, hopperAmt, sIdx, sEdge) >= -1e-4) {
+    if (evalBismuthMargin(pQ0 + dpQ * dt, morphP, hopperAmt) >= -1e-4) {
       dtHit = dt;
       foundHit = true;
       break;
@@ -855,38 +876,31 @@ bool intersectBismuthHopper(int row, vec3 ro, vec3 rd, float hopperAmt, float tH
 
   if (!foundHit) return false;
 
-  if (dtHit > 1e-4) {
-    float tLo = dtPrev, tHi = dtHit;
-    for (int bs = 0; bs < 4; bs++) {
-      float tMid = 0.5 * (tLo + tHi);
-      float sIdx, sEdge;
-      if (evalBismuthFast(pQ0 + dpQ * tMid, morphP, hopperAmt, sIdx, sEdge) >= 0.0) tHi = tMid;
-      else tLo = tMid;
-    }
-    dtHit = tHi;
+  float tLo = dtPrev, tHi = dtHit;
+  for (int bs = 0; bs < 3; bs++) {
+    float tMid = 0.5 * (tLo + tHi);
+    if (evalBismuthMargin(pQ0 + dpQ * tMid, morphP, hopperAmt) >= 0.0) tHi = tMid;
+    else tLo = tMid;
   }
+  dtHit = tHi;
 
-  // Compute 3D normal in world space via forward differences of evalBismuthFast(pQ) (only 4 evals total!)
+  // Compute 3D normal in world space via forward differences of evalBismuthMargin(pQ)
   vec3 pQH = pQ0 + dpQ * dtHit;
-  float s0, e0;
-  float m0 = evalBismuthFast(pQH, morphP, hopperAmt, s0, e0);
-  if (dtHit > 1e-4 || m0 < 0.016) {
-    float eps = 0.005;
-    float sD, eD;
-    float gx = (evalBismuthFast(pQH + vec3(eps, 0.0, 0.0), morphP, hopperAmt, sD, eD) - m0) * sxSign;
-    float gy =  evalBismuthFast(pQH + vec3(0.0, eps, 0.0), morphP, hopperAmt, sD, eD) - m0;
-    float gz =  evalBismuthFast(pQH + vec3(0.0, 0.0, eps), morphP, hopperAmt, sD, eD) - m0;
-    vec3 gLocal = -vec3(gx, gy, gz) * invHalf;
-    float gLen = length(gLocal);
-    if (gLen > 1e-5) {
-      tn = tStart + dtHit;
-      kn = CP + 2000;
-      vec3 nCand = normalize(sx * gLocal.x + ax * gLocal.y + sz * gLocal.z);
-      if (dot(nCand, rd) > -0.06) {
-        nCand = normalize(nCand - rd * (dot(nCand, rd) + 0.06));
-      }
-      outHopperN = nCand;
+  float m0 = evalBismuthMargin(pQH, morphP, hopperAmt);
+  float eps = 0.006;
+  float gx = (evalBismuthMargin(pQH + vec3(eps, 0.0, 0.0), morphP, hopperAmt) - m0) * sxSign;
+  float gy =  evalBismuthMargin(pQH + vec3(0.0, eps, 0.0), morphP, hopperAmt) - m0;
+  float gz =  evalBismuthMargin(pQH + vec3(0.0, 0.0, eps), morphP, hopperAmt) - m0;
+  vec3 gLocal = -vec3(gx, gy, gz) * invHalf;
+  float gLen = length(gLocal);
+  if (gLen > 1e-5) {
+    tn = tStart + dtHit;
+    kn = CP + 2000;
+    vec3 nCand = normalize(sx * gLocal.x + ax * gLocal.y + sz * gLocal.z);
+    if (dot(nCand, rd) > -0.06) {
+      nCand = normalize(nCand - rd * (dot(nCand, rd) + 0.06));
     }
+    outHopperN = nCand;
   }
   return true;
 }
@@ -2134,7 +2148,8 @@ vec3 shadeMetallicCrystal(int id, int k, vec3 pEntry, vec3 rd, vec3 nRefl, float
     reflLight += bounceOxide * f_ambient * (0.26 * cornerBounceW);
   }
 
-  int nc = clamp(int(f_crystals + 0.5), 0, MAX_CRYSTALS);
+  // 1 secondary metallic reflection bounce max (capped to 3 blocks when u_hopper > 0.5)
+  int nc = clamp(int(f_crystals + 0.5), 0, (u_hopper > 0.5) ? 3 : MAX_CRYSTALS);
   float bestBT = 1e9;
   int bestBId = 0, bestBK = 0;
   for (int bi = 0; bi < nc; bi++) {
@@ -2212,7 +2227,7 @@ vec3 shadeBehindRay(vec3 roIn, vec3 rdIn, int skipIn, float travIn, float jitter
   float bRough = effFrost * smoothstep(bFrostRoll - 0.15, bFrostRoll + 0.15, effFrostShare);
   vec3 bRawN = (bK < CP) ? body(bId, PA + bK).xyz : bVoidN;
   vec3 bN = faceNormal(bId, bK < CP ? bK : 18, bRawN, bP, bRough, travB * f_pixAngle, 1.0);
-  if (u_metallic >= 0.98) {
+  if (u_metallic >= 0.88 || u_hopper > 0.5) {
     vec3 mCol = shadeMetallicCrystal(bId, bK, bP, rdIn, bN, bRough, 1.0, travB * f_pixAngle);
     return mix(bEnvCol, mCol, bAlpha);
   }
@@ -2487,7 +2502,7 @@ void main() {
     float effEdgeMacro = max(0.0, u_patinaMacro * u_edgeMacro * rawSurfScale);
     float edgeSilAlpha = 1.0;
     vec3 chipFacetN = vec3(0.0, 1.0, 0.0);
-    if (!primaryEvaluated && (u_edgeChips * effEdgeMacro > 0.005 || u_edgeIrregularity * effEdgeMacro > 0.005 || u_edgeWear * effEdgeMacro > 0.005) && k < CP) {
+    if (!primaryEvaluated && u_hopper <= 0.5 && (u_edgeChips * effEdgeMacro > 0.005 || u_edgeIrregularity * effEdgeMacro > 0.005 || u_edgeWear * effEdgeMacro > 0.005) && k < CP) {
       if (!applyTinyEdgeChip(id, k, ro, rd, t, tfHit, k, edgeSilAlpha, chipFacetN)) {
         skipMask |= (1 << id);
         ro += rd * max(t, 0.0);
@@ -2550,11 +2565,13 @@ void main() {
 
     vec3 adjN = rawFaceN;
     int ridgeKLo = -1, ridgeKHi = -1;
-    bool needDEdge = ((hop == 0) && (u_patina > 0.01 || u_occlusion > 0.01 || u_hopper > 0.0 || u_iridescence > 0.0 || u_bloom > 0.0)) || (g1 > 0.001 && u_edgeWear > 0.0);
+    float metalW = clamp(u_metallic, 0.0, 1.0);
+    bool isOpaqueMetal = (metalW >= 0.88 || (u_hopper > 0.5 && metalW >= 0.5));
+    bool needDEdge = !(isOpaqueMetal && u_hopper > 0.5) && (((hop == 0) && (u_patina > 0.01 || u_occlusion > 0.01 || u_hopper > 0.0 || u_iridescence > 0.0 || u_bloom > 0.0)) || (g1 > 0.001 && u_edgeWear > 0.0));
     float dEdge = needDEdge ? edgeDist(id, k, p, adjN, ridgeKLo, ridgeKHi) : 1.0;
 
     float jbChip = 0.0;
-    if (g1 > 0.001 && u_edgeWear > 0.0 && k < CP) {
+    if (!isOpaqueMetal && g1 > 0.001 && u_edgeWear > 0.0 && k < CP) {
       float jbEdge = 1.0 - smoothstep(0.0, u_edgeWidth * body(id, 2).w, dEdge);
       float jbNz = texture(u_incl, p * 6.0 + 0.71).b * 0.75 + texture(u_incl, p * 21.0).b * 0.35;
       jbChip = jbEdge * smoothstep(1.0 - 0.45 * u_edgeWear, 1.05 - 0.45 * u_edgeWear, jbNz) * g1;
@@ -2566,7 +2583,7 @@ void main() {
       rough = max(rough, 0.025 * clamp(u_edgeWear * effEdgeMacro, 0.0, 1.0));
     }
     vec3 n = faceNormal(id, isEdgeIncursion ? 18 : k, rawFaceN, p, rough, footprint, dEdge);
-    if (hop == 0 && (isTinyEdgeChip || isCornerVertexChip || isCornerNip)) {
+    if (!isOpaqueMetal && hop == 0 && (isTinyEdgeChip || isCornerVertexChip || isCornerNip)) {
       vec3 axis = body(id, 1).xyz, root = body(id, 3).xyz;
       float L = max(body(id, 1).w, 0.12);
       vec3 p0 = body(id, PA).xyz;
@@ -2584,7 +2601,7 @@ void main() {
 
     vec3 nRefl = n;
     float patinaGlint = 0.0, patinaRough = 0.0;
-    if (hop == 0 && !isOcclusionVoid) {
+    if (!isOpaqueMetal && hop == 0 && !isOcclusionVoid) {
       evalSurfacePatina(id, k, p, n, footprint, dEdge, nRefl, patinaGlint, patinaRough);
       // Keep internal refraction 100% pure & clear by only applying a tiny fraction (6%) of surface scratch normal to n
       n = normalize(mix(n, nRefl, 0.06 * (1.0 - 0.85 * dither)));
@@ -2593,11 +2610,10 @@ void main() {
 
     vec3 hopCol = vec3(0.0);
     vec3 hopThr = vec3(1.0);
-    float metalW = clamp(u_metallic, 0.0, 1.0);
     vec3 metalSurfCol = (metalW > 0.005)
       ? shadeMetallicCrystal(id, k, pEntry, rd, nRefl, reflRough, dEdge, footprint)
       : vec3(0.0);
-    if (metalW >= 0.98) {
+    if (isOpaqueMetal) {
       col += thr * alpha * metalSurfCol;
       thr *= (1.0 - alpha);
       if (alpha >= 0.999) {

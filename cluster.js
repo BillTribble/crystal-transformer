@@ -1171,7 +1171,12 @@ export function stepEvolution(P, dt, viewportW = 0, viewportH = 0) {
 export function buildCluster(P, viewportW = 0, viewportH = 0) {
   const seedVal = P?.seed ? Number(P.seed.value) : 7;
   const evolveOn = P?.evolve ? !!P.evolve.value : true;
-  const floatC = Math.max(3.0, Math.min(MAX_CRYSTALS, P?.crystals ? Number(P.crystals.value) : 4.0));
+  const hopperVal = P?.hopper ? Math.max(0, Math.min(1, Number(P.hopper.value))) : 0;
+  const metallicVal = P?.metallic ? Math.max(0, Math.min(1, Number(P.metallic.value))) : 0;
+  const hopperBlend = smooth01(Math.max(0, Math.min(1, (hopperVal - 0.18) / 0.45)));
+  const rawCount = P?.crystals ? Number(P.crystals.value) : (P?.count ? Number(P.count.value) : 4.0);
+  const count = hopperBlend > 0.5 ? Math.min(3.0, rawCount) : rawCount;
+  const floatC = Math.max(3.0, Math.min(MAX_CRYSTALS, count));
   const nActive = Math.min(MAX_CRYSTALS, Math.ceil(floatC - 1e-4));
   cluster.floatCrystals = floatC;
 
@@ -1207,9 +1212,6 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
   const hFrom = cluster.morphHabitFrom ? resolveHabitSystem(cluster.morphHabitFrom) : '';
   const hTo = cluster.morphHabitTo ? resolveHabitSystem(cluster.morphHabitTo) : '';
   const curSys = resolveHabitSystem(curHabit);
-  const hopperVal = P.hopper ? Math.max(0, Math.min(1, Number(P.hopper.value))) : 0;
-  const metallicVal = P.metallic ? Math.max(0, Math.min(1, Number(P.metallic.value))) : 0;
-  const hopperBlend = smooth01(Math.max(0, Math.min(1, (hopperVal - 0.18) / 0.45)));
   const pyriteCubeBlend = smooth01(Math.max(0, Math.min(1, (metallicVal - 0.25) / 0.45))) * (1 - hopperBlend);
   const cubeBlockBlend = Math.max(hopperBlend, pyriteCubeBlend);
 
@@ -1258,7 +1260,10 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
     // Continuous presence & twinW with ultra-slow 2nd-order critically-damped spring (omega = 0.20..0.24 rad/s,
     // max velocity <= 0.065/s, taking ~15-18s — 3x longer than before) so appearing and disappearing
     // crystals bud and shrink very gradually across preset changes.
-    const rawPresence = smooth01(Math.max(0.0, Math.min(1.0, floatC - i)));
+    // When Bismuth Hopper (hopperBlend > 0.1) is active, cap to 3 blocks (i = 0, 1, 2) immediately for high FPS.
+    const rawPresence = (hopperBlend > 0.5 && i >= 3)
+      ? 0.0
+      : smooth01(Math.max(0.0, Math.min(1.0, floatC - i))) * (i >= 3 ? (1.0 - hopperBlend) : 1.0);
     const rawTwinW = i < 2 ? 0.0 : smooth01(Math.max(0.0, Math.min(1.0, (twinShare - node.twinRoll + 0.44) / 0.88)));
     if (!node.smoothInit) {
       node.smoothPresence = rawPresence;
@@ -1266,6 +1271,9 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
       node.smoothTwinW = rawTwinW;
       node.velTwinW = 0;
       node.smoothInit = true;
+    } else if (hopperBlend > 0.5 && i >= 3) {
+      node.smoothPresence = 0;
+      node.velPresence = 0;
     } else if (nodeDt > 0) {
       let remN = nodeDt;
       const omegaN = 0.20 + 0.04 * (0.5 + 0.5 * (node.uLen || 0));
@@ -1386,24 +1394,34 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
 
     const seedInt = Math.floor(Math.abs(P.seed ? Number(P.seed.value) : 64));
     const nodeUidInt = Math.max(1, Math.round(node.uid || (i + 1)));
-    const hopperMorph = (nodeUidInt - 1 + (seedInt % 5)) % 5;
+    // For the 3-block Bismuth Hopper cluster (i = 0, 1, 2):
+    //   Block 0: Hero broad cantilevered terraced hopper wing (morph 0)
+    //   Block 1: Tall stepped pagoda ziggurat tower interlocking at an angle (morph 1)
+    //   Block 2: Open-sided L-bracket / Greek-key sub-block on the opposite flank (morph 2)
+    const hopperMorph = i < 3 ? i : ((nodeUidInt - 1 + (seedInt % 5)) % 5);
     node.hopperMorph = hopperMorph;
 
     if (hopperBlend > 1e-4) {
-      // Varied 3D Bismuth Hopper cluster architectures (post-015966):
-      // Combine upright stepped pagoda spires (morph 1), broad cantilevered BGS wings (morph 0),
-      // angled rhombohedral L-brackets (morph 2), parallel-ribbed terrace slabs (morph 3), and
-      // jutting corner fin bars (morph 4) at distinct crystallographic tilts and azimuths.
+      // Cohesive 3-block Bismuth Hopper sculptural cluster (post-016032):
       const archMode = seedInt % 3;
+      const azBase = (0.18 + 0.08 * archMode) * Math.PI;
       const azSpread = (i === 0)
-        ? (0.18 + 0.08 * archMode) * Math.PI
-        : (0.20 * Math.PI + i * (TAU / 5.4) + 0.42 * (seedInt % 7));
+        ? azBase
+        : (i === 1)
+          ? (azBase + 0.68 * Math.PI)
+          : (i === 2)
+            ? (azBase - 0.72 * Math.PI)
+            : (0.20 * Math.PI + i * (TAU / 5.4) + 0.42 * (seedInt % 7));
       const leanDeg = (i === 0)
-        ? (archMode === 1 ? 10 : 18)
-        : (hopperMorph === 1 ? 11 + 5 * (i % 2)
-          : hopperMorph === 0 ? 24 + 8 * (i % 2)
-          : hopperMorph === 3 ? 46 + 10 * (i % 2)
-          : 34 + 14 * (i % 3));
+        ? 16
+        : (i === 1)
+          ? 14
+          : (i === 2)
+            ? 32
+            : (hopperMorph === 1 ? 11 + 5 * (i % 2)
+              : hopperMorph === 0 ? 24 + 8 * (i % 2)
+              : hopperMorph === 3 ? 46 + 10 * (i % 2)
+              : 34 + 14 * (i % 3));
       const zigLean = leanDeg * DEG;
       const zAx0 = Math.sin(zigLean) * Math.cos(azSpread);
       const zAx1 = Math.cos(zigLean);
@@ -1460,10 +1478,10 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
 
     let primBaseR = P.thickness.value * Math.pow(primBaseL, 0.65) * Math.max(0.25, 1 + P.thicknessJitter.value * 0.55 * node.uRadSym) * radMod;
     if (hopperBlend > 1e-4) {
-      // Scale sub-crystal axial length & radial span by morphology so pagoda spires tower above
-      // while cantilevered BGS wings and parallel-ribbed slabs span wide horizontally.
-      const biLenMult = hopperMorph === 1 ? 1.24 : hopperMorph === 2 ? 1.12 : hopperMorph === 3 ? 0.86 : 1.04;
-      const biRadMult = hopperMorph === 0 ? 1.20 : hopperMorph === 3 ? 1.16 : hopperMorph === 1 ? 0.88 : 1.02;
+      // Scale the 3 Bismuth Hopper blocks (0: hero cantilevered wing, 1: tall stepped pagoda tower,
+      // 2: open L-bracket sub-block) so the 3-block cluster has bold sculptural volume.
+      const biLenMult = hopperMorph === 1 ? 1.28 : hopperMorph === 2 ? 1.16 : hopperMorph === 0 ? 1.14 : 1.04;
+      const biRadMult = hopperMorph === 0 ? 1.26 : hopperMorph === 2 ? 1.12 : hopperMorph === 1 ? 0.96 : 1.02;
       primBaseL *= 1.0 + (biLenMult - 1.0) * hopperBlend;
       primBaseR *= 1.0 + (biRadMult - 1.0) * hopperBlend;
     }
@@ -1551,14 +1569,13 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
     }
 
     if (hopperBlend > 1e-4 && i > 0) {
-      // Architectural 3D Bismuth cluster offsets (spires rising above, cantilevered wings spreading out,
-      // and stepped L-brackets / fin bars cascading around the flanks like the BGS, Wikipedia & Encyclopedia specimens)
+      // Architectural 3-block Bismuth Hopper offsets (Block 1: tall pagoda tower rising on upper flank;
+      // Block 2: open L-bracket ziggurat interlocking on opposite lower-front flank)
       const tierIdx = i - 1;
       const archMode = seedInt % 3;
-      const tierRing = (0.30 + 0.09 * Math.floor(tierIdx / 2) + (hopperMorph === 0 || hopperMorph === 3 ? 0.08 : 0.0)) * baseL;
-      const tierAng = tierIdx * (TAU / 5.2) + 0.35 + 0.52 * archMode;
-      const spireLift = hopperMorph === 1 ? 0.24 : (hopperMorph === 2 ? 0.10 : -0.06);
-      const tierY = (0.20 - 0.12 * (tierIdx % 4) + spireLift) * baseL * gScale * presence;
+      const tierRing = (i === 1 ? 0.28 : i === 2 ? 0.32 : (0.30 + 0.09 * Math.floor(tierIdx / 2))) * baseL;
+      const tierAng = (i === 1 ? 0.82 : i === 2 ? -1.28 : tierIdx * (TAU / 5.2) + 0.35) + 0.38 * archMode;
+      const tierY = (i === 1 ? 0.22 : i === 2 ? -0.10 : (0.20 - 0.12 * (tierIdx % 4))) * baseL * gScale * presence;
       root[0] = root[0] * (1 - 0.78 * hopperBlend) + Math.cos(tierAng) * tierRing * gScale * presence * hopperBlend;
       root[1] = root[1] * (1 - 0.78 * hopperBlend) + tierY * hopperBlend;
       root[2] = root[2] * (1 - 0.78 * hopperBlend) + Math.sin(tierAng) * tierRing * gScale * presence * hopperBlend;
