@@ -861,6 +861,26 @@ void main() {
 }`;
 
 /**
+ * Detect mobile / tablet browsers (Android Chrome, iOS Safari, coarse-pointer touch devices)
+ * with deterministic `?mobile=1` and `?desktop=1` URL query overrides for testing.
+ */
+function detectMobileDevice() {
+  if (typeof window === 'undefined') return false;
+  try {
+    const sp = new URLSearchParams(window.location ? window.location.search : '');
+    const m = sp.get('mobile');
+    if (m === '1' || m === 'true') return true;
+    if (m === '0' || m === 'false' || sp.get('desktop') === '1' || sp.get('desktop') === 'true') return false;
+  } catch { /* ignore */ }
+  const ua = (typeof navigator !== 'undefined' && navigator.userAgent) || '';
+  if (/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini|Mobile/i.test(ua)) return true;
+  if (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) return true;
+  const sw = (window.screen && window.screen.width) || window.innerWidth || 1280;
+  const sh = (window.screen && window.screen.height) || window.innerHeight || 800;
+  return Math.max(sw, sh) <= 960 && Math.min(sw, sh) < 768;
+}
+
+/**
  * Compile both stages and link them. Throws with the info log on failure, unless the
  * context is lost (the sketch rebuilds when it's restored).
  * @param {WebGL2RenderingContext} gl
@@ -869,28 +889,26 @@ void main() {
  * @param {string} name used in error messages
  */
 function program(gl, vert, frag, name) {
-  const compile = (/** @type {number} */ type, /** @type {string} */ src, /** @type {string} */ stage) => {
-    const sh = /** @type {WebGLShader} */ (gl.createShader(type));
-    gl.shaderSource(sh, src);
-    gl.compileShader(sh);
-    if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS) && !gl.isContextLost()) {
-      const log = gl.getShaderInfoLog(sh);
-      gl.deleteShader(sh);
-      throw new Error('Shader "' + name + '" (' + stage + ') failed to compile:\n' + log);
-    }
-    return sh;
-  };
-  const vs = compile(gl.VERTEX_SHADER, vert, 'vertex');
-  const fs = compile(gl.FRAGMENT_SHADER, frag, 'fragment');
+  const vs = /** @type {WebGLShader} */ (gl.createShader(gl.VERTEX_SHADER));
+  gl.shaderSource(vs, vert);
+  gl.compileShader(vs);
+  const fs = /** @type {WebGLShader} */ (gl.createShader(gl.FRAGMENT_SHADER));
+  gl.shaderSource(fs, frag);
+  gl.compileShader(fs);
   const prog = /** @type {WebGLProgram} */ (gl.createProgram());
   gl.attachShader(prog, vs);
   gl.attachShader(prog, fs);
   gl.linkProgram(prog);
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS) && !gl.isContextLost()) {
+    const vsLog = !gl.getShaderParameter(vs, gl.COMPILE_STATUS) ? gl.getShaderInfoLog(vs) : '';
+    const fsLog = !gl.getShaderParameter(fs, gl.COMPILE_STATUS) ? gl.getShaderInfoLog(fs) : '';
+    const progLog = gl.getProgramInfoLog(prog);
+    gl.deleteShader(vs);
+    gl.deleteShader(fs);
+    throw new Error('Program "' + name + '" failed to link:\n' + (vsLog ? vsLog + '\n' : '') + (fsLog ? fsLog + '\n' : '') + progLog);
+  }
   gl.deleteShader(vs);
   gl.deleteShader(fs);
-  if (!gl.getProgramParameter(prog, gl.LINK_STATUS) && !gl.isContextLost()) {
-    throw new Error('Program "' + name + '" failed to link:\n' + gl.getProgramInfoLog(prog));
-  }
   return prog;
 }
 
@@ -956,9 +974,10 @@ function frameUniforms(spec) {
  * @param {import('./types').Param[]} params from shaderParams()
  * @param {FrameUniform[]} list from frameUniforms()
  */
-function shaderHeader(params, list) {
+function shaderHeader(params, list, mobileQuality = false) {
   const type = (/** @type {number} */ n) => (n === 9 ? 'mat3' : ['', 'float', 'vec2', 'vec3', 'vec4'][n]);
   return '#version 300 es\nprecision highp float;\nprecision highp int;\n' +
+    '#define MOBILE_QUALITY ' + (mobileQuality ? '1' : '0') + '\n' +
     'uniform vec2 u_res;\nuniform vec2 u_screen;\nuniform float u_time;\nuniform float u_realTime;\n' +
     paramDecls(params) +
     list.map((f) => f.array ? 'uniform float ' + f.name + '[' + f.n + '];' : 'uniform ' + type(f.n) + ' ' + f.name + ';').join('\n') + '\n';
@@ -1020,7 +1039,7 @@ function probeFloatTargets(gl) {
 }
 
 
-    return { FULLSCREEN_VERT, program, shaderParams, paramDecls, uploadParams, frameUniforms, shaderHeader, uploadFrame, probeFloatTargets };
+    return { FULLSCREEN_VERT, detectMobileDevice, program, shaderParams, paramDecls, uploadParams, frameUniforms, shaderHeader, uploadFrame, probeFloatTargets };
   })();
 
   // === Module: kit/chrome.js ===
@@ -1142,40 +1161,64 @@ function setupChrome(persist, onPane, shortcuts = {}) {
 
   // === Module: kit/loop.js ===
   const __mod_loop = (() => {
-// The frame loop: timing, canvas sizing and adaptive quality. Allocation-free per frame.
+  const { detectMobileDevice } = __mod_gl;
+// The frame loop: timing, canvas sizing, mobile dynamic resolution governor, and background pause.
 
-const MIN_SCALE = 0.35;
+const MOBILE_MAX_REST_DPR = 1.35;
 function createLoop(canvas, P, sketch) {
   const P_timeScale = P.timeScale;
   const P_renderScale = P.renderScale, P_maxDpr = P.maxDpr;
-  const P_targetFps = P.targetFps, P_maxFps = P.maxFps;
+  const P_maxFps = P.maxFps;
 
   let raf = 0, last = 0, sceneTime = 0, realTime = 0;
   let fpsAccum = 0, fpsFrames = 0;
   let lastW = 0, lastH = 0, lastRatio = 0, frames = 0;
 
   let dynScale = 1;
-  let winTime = 0, winFrames = 0, sinceChange = 0, ceiling = 1, ceilingAge = 0;
-  let judgingDrop = false, preDropScale = 1, preDropAvg = 0, holdDown = 0, holdDownLen = 5;
-  let settling = false;
+  let running = false;
+  let shaderFirstReadyAt = 0;
+  let lastInteractAt = 0;
 
-  // Automatic resolution downgrading is disabled so watching on phones or desktops
-  // never degrades render quality over time; resolution is controlled solely by P_renderScale & P_maxDpr.
-  function adaptive() { return false; }
+  function computeMobileDynScale(s, nowMs) {
+    if (loop.fixed) return 1;
+    if (!s || !s.shaderReady) {
+      shaderFirstReadyAt = 0;
+      return 0.40;
+    }
+    if (!shaderFirstReadyAt) shaderFirstReadyAt = nowMs;
+    const readyElapsed = nowMs - shaderFirstReadyAt;
+    // Progressive cold-start ramp on mobile: 0.40x on Frame 1 (< 5ms GPU draw), 0.72x over 150..420ms, 1.00x settled
+    let startupScale = 1.0;
+    if (readyElapsed < 150) startupScale = 0.40;
+    else if (readyElapsed < 420) startupScale = 0.72;
+
+    if (loop.interacting) {
+      lastInteractAt = nowMs;
+      return Math.min(startupScale, 0.68);
+    }
+    if (lastInteractAt > 0 && (nowMs - lastInteractAt) < 250) {
+      return Math.min(startupScale, 0.68);
+    }
+    return startupScale;
+  }
 
   function adapt(_dt) {
-    dynScale = 1;
+    const isMobile = detectMobileDevice();
+    if (!isMobile || loop.fixed) {
+      dynScale = 1;
+      return;
+    }
+    dynScale = computeMobileDynScale(sketch(), performance.now());
   }
 
   function resizeIfNeeded(s) {
-    const isMobile = Boolean(
-      (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) ||
-      /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent || '') ||
-      Math.min(window.innerWidth, window.innerHeight) < 768
-    );
-    const dpr = Math.min(window.devicePixelRatio || 1, isMobile ? 1.0 : 2);
-    const maxDpr = isMobile ? Math.min(P_maxDpr ? P_maxDpr.value : 1.0, 1.0) : (P_maxDpr ? P_maxDpr.value : 1.5);
-    const scale = P_renderScale ? P_renderScale.value : 1;
+    const isMobile = detectMobileDevice();
+    const rawDpr = window.devicePixelRatio || 1;
+    const dpr = Math.min(rawDpr, isMobile ? MOBILE_MAX_REST_DPR : 2);
+    const maxDpr = isMobile
+      ? Math.min(P_maxDpr ? P_maxDpr.value : 1.25, MOBILE_MAX_REST_DPR)
+      : (P_maxDpr ? P_maxDpr.value : 1.5);
+    const scale = (P_renderScale ? P_renderScale.value : 1) * (isMobile && !loop.fixed ? dynScale : 1);
     const ratio = Math.min(dpr, maxDpr) * scale;
     const cw = canvas.clientWidth, ch = canvas.clientHeight;
     const w = Math.max(1, Math.round(cw * ratio));
@@ -1201,6 +1244,7 @@ function createLoop(canvas, P, sketch) {
     sceneTime += sdt;
     adapt(dt);
     if (loop.onTick) loop.onTick(dt, sdt);
+    adapt(dt);
     resizeIfNeeded(s);
     s.frame(sceneTime, sdt, realTime, dt);
     frames++;
@@ -1210,7 +1254,7 @@ function createLoop(canvas, P, sketch) {
     if (fpsAccum >= 0.5) {
       if (loop.onStats) {
         loop.onStats(canvas.width + '×' + canvas.height + 'dp @ ' + Math.round(fpsFrames / fpsAccum) + 'fps' +
-          (adaptive() ? ' (' + Math.round(dynScale * 100) + '%)' : ''));
+          (dynScale < 0.99 ? ' (' + Math.round(dynScale * 100) + '%)' : ''));
       }
       fpsAccum = 0;
       fpsFrames = 0;
@@ -1222,6 +1266,14 @@ function createLoop(canvas, P, sketch) {
   }
 
   function frame(now) {
+    if (!running) {
+      raf = 0;
+      return;
+    }
+    if (typeof document !== 'undefined' && document.hidden) {
+      raf = 0;
+      return;
+    }
     raf = requestAnimationFrame(frame);
     const s = sketch();
     const inStartup = s && (!s.shaderReady || s.fillInProgress < 1.0);
@@ -1233,21 +1285,45 @@ function createLoop(canvas, P, sketch) {
     render(dt);
   }
 
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) {
+        if (raf) {
+          cancelAnimationFrame(raf);
+          raf = 0;
+        }
+      } else if (running && !raf) {
+        last = performance.now();
+        raf = requestAnimationFrame(frame);
+      }
+    });
+  }
+
   const loop = {
     fixed: false,
+    interacting: false,
     onStats: null,
     onTick: null,
     paused: false,
     get frames() { return frames; },
+    get dynScale() { return dynScale; },
     start() {
+      running = true;
       cancelAnimationFrame(raf);
       if (frames === 0) render(0);
       last = performance.now();
-      raf = requestAnimationFrame(frame);
+      if (typeof document === 'undefined' || !document.hidden) {
+        raf = requestAnimationFrame(frame);
+      }
     },
-    stop() { cancelAnimationFrame(raf); raf = 0; },
+    stop() { running = false; cancelAnimationFrame(raf); raf = 0; },
     step(dt) { render(dt); },
-    degrade(_factor) { dynScale = 1; },
+    degrade(factor) {
+      if (detectMobileDevice() && !loop.fixed) {
+        dynScale = Math.max(0.40, Math.min(1.0, Number(factor) || 0.68));
+        lastInteractAt = performance.now();
+      }
+    },
     snapshot(width, height, pxRatio) {
       const s = sketch();
       if (!s) return Promise.reject(new Error('The sketch is not running.'));
@@ -1982,7 +2058,7 @@ function noSuggestions(input) {
   input.setAttribute('autocorrect', 'off');
   input.setAttribute('autocapitalize', 'off');
 }
-function buildPanel({ slug, store, onEdited, presets, onPreset, onRandomize, onSkipTrack }) {
+function buildPanel({ slug, store, onEdited, presets, onPreset, onRandomize, onSkipTrack, lazyRows = false }) {
   const controls = document.getElementById('controls');
   const copyBtn = document.getElementById('copy');
   const shareBtn = document.getElementById('share-url');
@@ -2339,49 +2415,58 @@ function buildPanel({ slug, store, onEdited, presets, onPreset, onRandomize, onS
   });
 
   const groupEntries = [];
-  for (const group of store.groups) {
-    const det = el('details', 'group');
-    det.open = true;
-    det.appendChild(el('summary', null, group.group));
-    const groupRows = [];
-    for (const p of group.params) {
-      const rowWrap = buildRow(p);
-      det.appendChild(rowWrap);
-      groupRows.push(rows[rows.length - 1]);
-      if (p.key === 'soundTrack') {
-        const nowRow = el('div', 'row row-track-now');
-        nowRow.id = 'current-track-row';
-        const nowLbl = el('span', 'lbl', 'Current track');
-        const nowName = el('span', 'current-track-name', String(p.value || ''));
-        nowName.id = 'current-track-name';
-        nowName.title = String(p.value || '');
-        const skipBtn = el('button', 'mini-btn skip-track-btn', 'Next track →');
-        skipBtn.type = 'button';
-        skipBtn.id = 'skip-track-btn';
-        skipBtn.title = 'Skip forward to the next Enso ambient track';
-        skipBtn.addEventListener('click', () => {
-          onSkipTrack?.();
-          nowName.textContent = String(p.value || '');
-          nowName.title = String(p.value || '');
-        });
-        nowRow.append(nowLbl, nowName, skipBtn);
-        det.appendChild(nowRow);
-        const origSync = rows[rows.length - 1].sync;
-        rows[rows.length - 1].sync = () => {
-          origSync();
-          nowName.textContent = String(p.value || '');
-          nowName.title = String(p.value || '');
-        };
-      }
-    }
-    controls.appendChild(det);
-    groupEntries.push({ group, det, rows: groupRows });
-  }
-
   const emptySearchEl = el('div', 'settings-search-empty', 'No matching settings');
   emptySearchEl.id = 'settings-search-empty';
   emptySearchEl.hidden = true;
-  controls.appendChild(emptySearchEl);
+  let rowsBuilt = false;
+
+  function ensureRowsBuilt() {
+    if (rowsBuilt) return;
+    rowsBuilt = true;
+    for (const group of store.groups) {
+      const det = el('details', 'group');
+      det.open = true;
+      det.appendChild(el('summary', null, group.group));
+      const groupRows = [];
+      for (const p of group.params) {
+        const rowWrap = buildRow(p);
+        det.appendChild(rowWrap);
+        groupRows.push(rows[rows.length - 1]);
+        if (p.key === 'soundTrack') {
+          const nowRow = el('div', 'row row-track-now');
+          nowRow.id = 'current-track-row';
+          const nowLbl = el('span', 'lbl', 'Current track');
+          const nowName = el('span', 'current-track-name', String(p.value || ''));
+          nowName.id = 'current-track-name';
+          nowName.title = String(p.value || '');
+          const skipBtn = el('button', 'mini-btn skip-track-btn', 'Next track →');
+          skipBtn.type = 'button';
+          skipBtn.id = 'skip-track-btn';
+          skipBtn.title = 'Skip forward to the next Enso ambient track';
+          skipBtn.addEventListener('click', () => {
+            onSkipTrack?.();
+            nowName.textContent = String(p.value || '');
+            nowName.title = String(p.value || '');
+          });
+          nowRow.append(nowLbl, nowName, skipBtn);
+          det.appendChild(nowRow);
+          const origSync = rows[rows.length - 1].sync;
+          rows[rows.length - 1].sync = () => {
+            origSync();
+            nowName.textContent = String(p.value || '');
+            nowName.title = String(p.value || '');
+          };
+        }
+      }
+      controls.appendChild(det);
+      groupEntries.push({ group, det, rows: groupRows });
+    }
+    controls.appendChild(emptySearchEl);
+  }
+
+  if (!lazyRows || document.body.dataset.pane === 'open') {
+    ensureRowsBuilt();
+  }
 
   function applySearchFilter() {
     const q = searchInput.value.trim().toLowerCase();
@@ -2440,11 +2525,24 @@ function buildPanel({ slug, store, onEdited, presets, onPreset, onRandomize, onS
 
   const panel = {
     syncPresetTicker,
-    syncAll() {
+    ensureRowsBuilt,
+    onPaneChange(open) {
+      if (open) {
+        ensureRowsBuilt();
+        panel.syncAll(true);
+        panel.refreshStatus(true);
+      }
+    },
+    syncAll(force = false) {
+      syncPresetTicker();
+      if (!force && document.body.dataset.pane !== 'open') return;
+      ensureRowsBuilt();
       for (const r of rows) r.sync();
       rebuildPresetMenu();
     },
-    refreshStatus() {
+    refreshStatus(force = false) {
+      if (!force && document.body.dataset.pane !== 'open') return;
+      ensureRowsBuilt();
       applySearchFilter();
       const n = store.changedCount();
       statusEl.textContent = n === 0 ? 'No changes' : n + (n === 1 ? ' change' : ' changes');
@@ -7835,10 +7933,12 @@ function randomize(store) {
   const { buildPanel } = __mod_panel;
   const { setupChrome } = __mod_chrome;
   const { createLoop } = __mod_loop;
+  const { detectMobileDevice } = __mod_gl;
   const { hexToOkhsl, okhslToHex } = __mod_okhsl;
   const { buildCluster, cluster, resetEvolution, resolveHabitSystem, stepEvolution } = __mod_cluster;
   const { createEnsoSound } = __mod_sound;
 // Boots the crystal ray-tracer: params -> saved overrides -> pane -> interactive orbit/zoom -> loop.
+
 
 
 
@@ -7862,15 +7962,11 @@ const NON_MORPH_KEYS = new Set([
   ...SOUND_PARAM_KEYS,
 ]);
 function isMobileDevice() {
-  return Boolean(
-    (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) ||
-    /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent || '') ||
-    Math.min(window.innerWidth, window.innerHeight) < 768
-  );
+  return detectMobileDevice();
 }
 function computeDeviceDpr() {
   const isMobile = isMobileDevice();
-  const dpr = Math.min(window.devicePixelRatio || 1, isMobile ? 1.0 : 1.5);
+  const dpr = Math.min(window.devicePixelRatio || 1, isMobile ? 1.25 : 1.5);
   return dpr;
 }
 function computeComplementaryBg(stoneHex, colourDepth) {
@@ -7921,9 +8017,9 @@ function run(slug, { manifest, params, presets, randomize, sketch }) {
   if (!P.trackName && P.soundTrack) P.trackName = P.soundTrack;
   if (isMobileDevice()) {
     if (P.maxDpr && !sp.has('maxDpr')) {
-      P.maxDpr.value = 1.0;
-      P.maxDpr.base = 1.0;
-      P.maxDpr.default = 1.0;
+      P.maxDpr.value = 1.25;
+      P.maxDpr.base = 1.25;
+      P.maxDpr.default = 1.25;
     }
     if (P.fxaa && !sp.has('fxaa')) {
       P.fxaa.value = 1;
@@ -8390,7 +8486,7 @@ function run(slug, { manifest, params, presets, randomize, sketch }) {
     store.scheduleSave();
   }
 
-  const chrome = setupChrome(!capture, () => {}, {
+  const chrome = setupChrome(!capture, (open) => { panel?.onPaneChange?.(open); }, {
     onRandomize: doRandomize,
     onGrow: growMore,
     onSound: toggleSound,
@@ -8439,6 +8535,7 @@ function run(slug, { manifest, params, presets, randomize, sketch }) {
     slug,
     store,
     presets,
+    lazyRows: detectMobileDevice() && location.hash !== '#settings',
     onPreset: (name, seconds) => applyPreset(name, seconds),
     onRandomize: doRandomize,
     onSkipTrack: () => sound.nextTrack(1),
@@ -8876,6 +8973,9 @@ function run(slug, { manifest, params, presets, randomize, sketch }) {
     }
 
     const state = store.tick(dt);
+    loop.interacting = Boolean(
+      dragging || activePointers.size > 0 || Math.abs(velYaw) > 15 || Math.abs(velPitch) > 15 || state === 'moving'
+    );
     if (state === 'moving') {
       cluster.morphHabitFrom = store.glideHabitFrom;
       cluster.morphHabitTo = store.glideHabitTo;
@@ -9169,10 +9269,22 @@ const __default_shader = {
     f.f_crystals[0] = cluster.crystals;
     const mIdx = MIRROR_MODES.indexOf(String(P.mirrorMode?.value || 'Plain (None)'));
     f.f_mirrorMode[0] = mIdx > 0 ? mIdx : 0;
-    const isMob = typeof window !== 'undefined' && (
-      (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) ||
-      /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent || '')
-    );
+    let isMob = false;
+    if (typeof window !== 'undefined') {
+      const sp = new URLSearchParams(window.location ? window.location.search : '');
+      const mq = sp.get('mobile');
+      if (mq === '1' || mq === 'true') isMob = true;
+      else if (mq === '0' || mq === 'false' || sp.get('desktop') === '1' || sp.get('desktop') === 'true') isMob = false;
+      else {
+        const ua = (typeof navigator !== 'undefined' && navigator.userAgent) || '';
+        isMob = Boolean(
+          /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini|Mobile/i.test(ua) ||
+          (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) ||
+          (Math.max((window.screen && window.screen.width) || window.innerWidth || 1280, (window.screen && window.screen.height) || window.innerHeight || 800) <= 960 &&
+            Math.min(window.innerWidth || 1280, window.innerHeight || 800) < 768)
+        );
+      }
+    }
     f.u_isMobile[0] = isMob ? 1.0 : 0.0;
 
     // Orbit turn: spinStart is updated both by interactive mouse/touch drag and by autoRotate in run.js
@@ -9268,6 +9380,41 @@ const __default_shader = {
     }
   },
 
+  commonPost: `
+#define PI  3.14159265359
+#define TAU 6.28318530718
+${FILM_GLSL}
+vec3 lin(vec3 c) { return pow(max(c, vec3(0.0)), vec3(2.2)); }
+float glimmerCurve(float g) {
+  float g01 = clamp(g, 0.0, 1.0);
+  return smoothstep(0.0, 0.45, g01) * mix(0.85, 1.0, smoothstep(0.45, 1.0, g01)) + max(0.0, g - 1.0);
+}
+vec3 spectralRainbow(float t) {
+  vec3 x = fract(t + vec3(0.0, 0.66667, 0.33333));
+  vec3 wave = clamp(abs(x * 6.0 - 3.0) - 1.0, 0.0, 1.0);
+  return wave * wave * (3.0 - 2.0 * wave);
+}
+#if MOBILE_QUALITY
+vec3 ditherIgn8(vec2 fc) {
+  float a = fract(52.9829189 * fract(dot(fc, vec2(0.06711056, 0.00583715))));
+  float b = fract(52.9829189 * fract(dot(fc + vec2(17.0, 31.0), vec2(0.06711056, 0.00583715))));
+  return vec3((a + b - 1.0) / 255.0);
+}
+vec4 encodeHdr(vec3 c) {
+  vec3 pos = max(c, vec3(0.0));
+  vec3 t = sqrt(clamp(pos / (1.0 + pos), 0.0, 1.0));
+  return vec4(clamp(t + ditherIgn8(gl_FragCoord.xy), 0.0, 1.0), 1.0);
+}
+vec3 decodeHdr(vec4 e) {
+  vec3 linE = e.rgb * e.rgb;
+  return linE / max(1.0 - linE, 1e-4);
+}
+#else
+vec4 encodeHdr(vec3 c) { return vec4(c / (1.0 + c), 1.0); }
+vec3 decodeHdr(vec4 e) { return e.rgb / max(1.0 - e.rgb, 1e-4); }
+#endif
+`,
+
   common: `
 #define PI  3.14159265359
 #define TAU 6.28318530718
@@ -9303,6 +9450,28 @@ vec3 lights(vec3 d, float rough) {
   }
   return sum;
 }
+#if MOBILE_QUALITY
+vec3 lightsKeyFast(vec3 d, float rough) {
+  vec3 sum = vec3(0.0);
+  for (int i = 0; i < 2; i++) {
+    int o = (i == 0 ? 0 : 2) * LS;
+    vec3 c = vec3(f_lights[o], f_lights[o + 1], f_lights[o + 2]);
+    float cs = dot(d, c);
+    if (cs <= 0.15) continue;
+    float hw = f_lights[o + 12], hh = f_lights[o + 13];
+    float s = max(u_lightSoftness * min(hw, hh) + rough * 0.6, 1e-3);
+    vec3 p = d / cs;
+    float au = abs(dot(p, vec3(f_lights[o + 3], f_lights[o + 4], f_lights[o + 5])));
+    if (au >= hw + s) continue;
+    float av = abs(dot(p, vec3(f_lights[o + 6], f_lights[o + 7], f_lights[o + 8])));
+    if (av >= hh + s) continue;
+    float m = (1.0 - smoothstep(hw - s, hw + s, au)) * (1.0 - smoothstep(hh - s, hh + s, av));
+    m *= hw * hh / ((hw + s) * (hh + s));
+    sum += m * vec3(f_lights[o + 9], f_lights[o + 10], f_lights[o + 11]);
+  }
+  return sum;
+}
+#endif
 vec3 env(vec3 dc, float rough) {
   vec3 d = f_toWorld * dc;
   return backdrop(d) + lights(d, rough);
@@ -9320,7 +9489,12 @@ vec3 glimmerStripLights(vec3 d, float rough) {
   float effG = glimmerCurve(g);
   vec3 lCol = vec3(f_lights[2 * LS + 9], f_lights[2 * LS + 10], f_lights[2 * LS + 11]);
   vec3 sum = vec3(0.0);
-  for (int i = 0; i < 4; i++) {
+#if MOBILE_QUALITY
+  const int nStrips = 2;
+#else
+  const int nStrips = 4;
+#endif
+  for (int i = 0; i < nStrips; i++) {
     vec3 c = (i == 0) ? vec3(-0.51449576,  0.19788302, -0.83424024)
            : (i == 1) ? vec3( 0.49811675, -0.17828389, -0.84857699)
            : (i == 2) ? vec3(-0.33864256, -0.41286135, -0.84549780)
@@ -9357,12 +9531,29 @@ vec3 spectralRainbow(float t) {
   vec3 wave = clamp(abs(x * 6.0 - 3.0) - 1.0, 0.0, 1.0);
   return wave * wave * (3.0 - 2.0 * wave);
 }
+#if MOBILE_QUALITY
+vec3 ditherIgn8(vec2 fc) {
+  float a = fract(52.9829189 * fract(dot(fc, vec2(0.06711056, 0.00583715))));
+  float b = fract(52.9829189 * fract(dot(fc + vec2(17.0, 31.0), vec2(0.06711056, 0.00583715))));
+  return vec3((a + b - 1.0) / 255.0);
+}
+vec4 encodeHdr(vec3 c) {
+  vec3 pos = max(c, vec3(0.0));
+  vec3 t = sqrt(clamp(pos / (1.0 + pos), 0.0, 1.0));
+  return vec4(clamp(t + ditherIgn8(gl_FragCoord.xy), 0.0, 1.0), 1.0);
+}
+vec3 decodeHdr(vec4 e) {
+  vec3 linE = e.rgb * e.rgb;
+  return linE / max(1.0 - linE, 1e-4);
+}
+#else
 vec4 encodeHdr(vec3 c) { return vec4(c / (1.0 + c), 1.0); }
 vec3 decodeHdr(vec4 e) { return e.rgb / max(1.0 - e.rgb, 1e-4); }
+#endif
 `,
 
-  fillNoiseVolume(vol, seed) {
-    const N = INCL;
+  fillNoiseVolume(vol, seed, edge = INCL) {
+    const N = edge || INCL;
     const invN = 1.0 / N;
     const s = (Math.floor((Number(seed) || 1) * 1000) ^ 0x9e3779b9) >>> 0;
     const gSize = 16;
@@ -9557,6 +9748,7 @@ bool evalOvoidVoidInterval(int row, int m, vec3 ro, vec3 rd, out float tc0, out 
   return true;
 }
 
+#if !MOBILE_QUALITY
 // 1b. 3D CSG Invisible Crystal Void Interval (u_occlusionType == 1):
 //     Carves a 3D faceted crystal cavity of the exact 18-plane crystallographic habit of partner tRow.
 bool evalCrystalVoidInterval(int row, int m, vec3 ro, vec3 rd, bool needSeam, out float tc0, out float tc1, out vec3 enterN, out vec3 exitN, out float exitSeam) {
@@ -9641,13 +9833,16 @@ bool evalCrystalVoidInterval(int row, int m, vec3 ro, vec3 rd, bool needSeam, ou
   }
   return true;
 }
+#endif
 
 bool evalSingleVoidInterval(int row, int m, vec3 ro, vec3 rd, bool needSeam, out float tc0, out float tc1, out vec3 enterN, out vec3 exitN, out float exitSeam) {
+#if !MOBILE_QUALITY
   float kType = clamp(u_occlusionType, 0.0, 1.0);
   bool useCrystal = (kType >= 0.85) || (kType > 0.15 && m == 0);
   if (useCrystal) {
     return evalCrystalVoidInterval(row, m, ro, rd, needSeam, tc0, tc1, enterN, exitN, exitSeam);
   }
+#endif
   return evalOvoidVoidInterval(row, m, ro, rd, tc0, tc1, enterN, exitN, exitSeam);
 }
 
@@ -9664,7 +9859,12 @@ bool applyOcclusionVoidCSG(int row, vec3 ro, vec3 rd, inout float tn, inout floa
   float tnOrig = max(tn, 0.0);
   float tfOrig = tf;
 
-  for (int m = 0; m < 2; m++) {
+#if MOBILE_QUALITY
+  const int maxVoids = 1;
+#else
+  const int maxVoids = 2;
+#endif
+  for (int m = 0; m < maxVoids; m++) {
     float tc0, tc1, exitSeam;
     vec3 enterN, exitN;
     if (!evalSingleVoidInterval(row, m, ro, rd, true, tc0, tc1, enterN, exitN, exitSeam)) continue;
@@ -9742,6 +9942,7 @@ float sn1(float x, float s) {
 // Stage 1 (crystalSDF_fast): coarse analytic 18-plane polyhedron SDF (zero 3D noise calls when far from surface, abs(d) >= 0.045).
 // Stage 2 (crystalSDF_full / crystalSDF): detailed 3D CSG edge-chip, irregularity, and basal-cavity evaluation
 // evaluated ONLY when near surface (abs(d) < 0.045) and inside calcNormal().
+#if !MOBILE_QUALITY
 float crystalSDF_fast(vec3 p, int row, out float secondD, out float thirdD, out float ridgeBevel) {
   float d = -1e9;
   secondD = -1e9;
@@ -9763,6 +9964,7 @@ float crystalSDF_fast(vec3 p, int row, out float secondD, out float thirdD, out 
   ridgeBevel = (d + secondD) * 0.70710678;
   return d;
 }
+#endif
 
 // 3D Architectural Bismuth Hopper & Ziggurat Morphological Carver (post-015895, post-015966):
 // Pure branchless register-only O(1) evaluation in crystal-local q in [-1, 1]^3 coordinates.
@@ -9950,15 +10152,25 @@ bool intersectBismuthHopper(int row, vec3 ro, vec3 rd, float hopperAmt, float tH
     return evalBismuthFast(pQ0, morphP, hopperAmt, s0, e0) >= -1e-4;
   }
 
-  // March along local ray pQ(dt) = pQ0 + dpQ * dt in 10 fast branchless register-only steps (7 on mobile)
+  // March along local ray pQ(dt) = pQ0 + dpQ * dt in compile-time bounded register-only steps (6 on mobile, 10 on desktop)
+#if MOBILE_QUALITY
+  const int nSteps = 6;
+  const int nBisect = 2;
+#else
   int nSteps = (u_isMobile > 0.5) ? 7 : 10;
+  const int nBisect = 3;
+#endif
   float dtStep = dtMax / float(nSteps);
   float dtPrev = 0.0;
   bool foundHit = false;
   float dtHit = 0.0;
 
+#if MOBILE_QUALITY
+  for (int ms = 0; ms <= 6; ms++) {
+#else
   for (int ms = 0; ms <= 10; ms++) {
     if (ms > nSteps) break;
+#endif
     float dt = float(ms) * dtStep;
     float sIdx, sEdge;
     if (evalBismuthFast(pQ0 + dpQ * dt, morphP, hopperAmt, sIdx, sEdge) >= -1e-4) {
@@ -9973,7 +10185,7 @@ bool intersectBismuthHopper(int row, vec3 ro, vec3 rd, float hopperAmt, float tH
 
   if (dtHit > 1e-4) {
     float tLo = dtPrev, tHi = dtHit;
-    for (int bs = 0; bs < 3; bs++) {
+    for (int bs = 0; bs < nBisect; bs++) {
       float tMid = 0.5 * (tLo + tHi);
       float sIdx, sEdge;
       if (evalBismuthFast(pQ0 + dpQ * tMid, morphP, hopperAmt, sIdx, sEdge) >= 0.0) tHi = tMid;
@@ -10204,12 +10416,33 @@ bool intersectCathedralSpire(
     return true;
   }
 
+#if MOBILE_QUALITY
+  const int nSteps = 5;
+  const int nBisect = 2;
+#else
   int nSteps = (u_isMobile > 0.5) ? 6 : 8;
+  const int nBisect = 3;
+#endif
   float dtStep = dtSpan / float(nSteps);
   float dtPrev = 0.0;
   float dtHit = 0.0;
   bool foundHit = false;
 
+#if MOBILE_QUALITY
+  for (int ms = 0; ms <= 5; ms++) {
+    float dt = float(ms) * dtStep;
+    float ly = ly0 + dly * dt;
+    float guA, gaxA, edA, gabA;
+    float cA = evalCathedralFace(uA0 + duA * dt, ly, seedA, cathAmt, guA, gaxA, edA, gabA);
+    float mMin = (dA0 + ddA * dt) - cA;
+    if (mMin >= -1e-4) {
+      dtHit = dt;
+      foundHit = true;
+      break;
+    }
+    dtPrev = dt;
+  }
+#else
   for (int ms = 0; ms <= 8; ms++) {
     if (ms > nSteps) break;
     float dt = float(ms) * dtStep;
@@ -10234,6 +10467,7 @@ bool intersectCathedralSpire(
     }
     dtPrev = dt;
   }
+#endif
 
   // If the ray never entered the carved cathedral spire along the entire chord [tStart, tEnd],
   // it passed completely through a 3D stepped sub-termination notch!
@@ -10241,12 +10475,13 @@ bool intersectCathedralSpire(
 
   if (dtHit > 1e-5) {
     float tLo = dtPrev, tHi = dtHit;
-    for (int bs = 0; bs < 3; bs++) {
+    for (int bs = 0; bs < nBisect; bs++) {
       float tMid = 0.5 * (tLo + tHi);
       float ly = ly0 + dly * tMid;
       float guA, gaxA, edA, gabA;
       float cA = evalCathedralFace(uA0 + duA * tMid, ly, seedA, cathAmt, guA, gaxA, edA, gabA);
       float mMin = (dA0 + ddA * tMid) - cA;
+#if !MOBILE_QUALITY
       if (kB != kA) {
         float guB, gaxB, edB, gabB;
         float cB = evalCathedralFace(uB0 + duB * tMid, ly, seedB, cathAmt, guB, gaxB, edB, gabB);
@@ -10257,6 +10492,7 @@ bool intersectCathedralSpire(
         float cC = evalCathedralFace(uC0 + duC * tMid, ly, seedC, cathAmt, guC, gaxC, edC, gabC);
         mMin = min(mMin, (dC0 + ddC * tMid) - cC);
       }
+#endif
       if (mMin >= 0.0) tHi = tMid;
       else tLo = tMid;
     }
@@ -10293,6 +10529,7 @@ bool intersectCathedralSpire(
   float edgeWin = edA;
   float mWin = mA;
 
+#if !MOBILE_QUALITY
   if (kB != kA) {
     float guB, gaxB, edB, gabB;
     float cB = evalCathedralFace(uB0 + duB * dtHit, lyH, seedB, cathAmt, guB, gaxB, edB, gabB);
@@ -10315,6 +10552,7 @@ bool intersectCathedralSpire(
     nWin = normalize(mix(nWin, nCandC, wC));
     if (mC < mWin) { kWin = kC; mWin = mC; }
   }
+#endif
 
   if (dot(nWin, rd) > -0.06) {
     nWin = normalize(nWin - rd * (dot(nWin, rd) + 0.06));
@@ -10326,6 +10564,7 @@ bool intersectCathedralSpire(
   return tf > tn + 1e-4;
 }
 
+#if !MOBILE_QUALITY
 float crystalSDF_full(vec3 p, int row) {
   float secondD, thirdD, ridgeBevel;
   float d = crystalSDF_fast(p, row, secondD, thirdD, ridgeBevel);
@@ -10659,6 +10898,7 @@ bool applyTinyEdgeChip(int row, int k0, vec3 ro, vec3 rd, inout float tn, inout 
   outChipN = bestChipN;
   return tf > max(tn, 0.0);
 }
+#endif
 
 bool convexHit(int row, vec3 ro, vec3 rd, out float tn, out float tf, out int kn, out int kf) {
   tn = -1e9; tf = 1e9; kn = 0; kf = 0;
@@ -10689,6 +10929,7 @@ float exitCrystal(int row, vec3 ro, vec3 rd, out int kf, out vec3 outExitN) {
       if (t < tf) { tf = t; kf = k; outExitN = pl.xyz; }
     }
   }
+#if !MOBILE_QUALITY
   if (u_occlusion > 0.002) {
     for (int m = 0; m < 2; m++) {
       float tc0, tc1, exitSeam;
@@ -10721,6 +10962,7 @@ float exitCrystal(int row, vec3 ro, vec3 rd, out int kf, out vec3 outExitN) {
     tf = max(0.0, tf - (cBack * r) / dnK);
     outExitN = normalize(nK + 0.16 * gu * tUK + 0.22 * gax * ax);
   }
+#endif
   return max(tf, 0.0);
 }
 
@@ -10794,7 +11036,11 @@ float evalGalliumPuddleSDF(vec3 qGa, float rScale, float tMorph, vec3 coreAnchor
   // Bulbous high-surface-tension capillary rim profile (thickness ~ 0.098 at rest) gathering slightly as it draws upward
   float vScale = mix(rScale, sqrt(rScale), 0.32 * smoothstep(0.05, 0.45, rScale));
   float T = (0.049 + 0.005 * smoothstep(-0.08 * max(rScale, 0.04), 0.0, d2D)) * vScale;
+#if MOBILE_QUALITY
+  float centerSeat = 0.026 * vScale * exp(-dot(uvNorm, uvNorm) * 11.0);
+#else
   float centerSeat = 0.026 * vScale * max(0.0, 1.0 - dot(uvNorm, uvNorm) * 14.0);
+#endif
   float hCamber = centerSeat - 0.004 * vScale * smoothstep(0.04, 0.18, uvNorm.y);
   float dCore2D = max(d2D + T, 0.0);
   float dh = h - hCamber;
@@ -10859,7 +11105,7 @@ bool intersectGalliumMelt(
   int polyId = 0, polyK = 0;
   float polyT = 1e9, polyTf = 1e9;
   for (int i = 0; i < nc; i++) {
-    if (!sphereHit(ro, rd, body(i, 0), polyT)) continue;
+    if (body(i, 2).x <= 0.01 || !sphereHit(ro, rd, body(i, 0), polyT)) continue;
     float tn, tf; int kn, kf;
     if (convexHit(i, ro, rd, tn, tf, kn, kf)) {
       float tCand = max(tn, 0.0);
@@ -10989,7 +11235,12 @@ bool intersectGalliumMelt(
   bool hitPuddle = false;
 
   if (t1 > t0) {
-    for (int st = 0; st < 32; st++) {
+#if MOBILE_QUALITY
+    const int gaMaxSteps = 24;
+#else
+    const int gaMaxSteps = 32;
+#endif
+    for (int st = 0; st < gaMaxSteps; st++) {
       if (t > t1) break;
       float mF = 0.0;
       float d = evalGalliumFastStep(qRo + qRd * t, meltAmt, rScale, tMorph, blobBell, coreAnchor, pA0, ba0, rCap0, pA1, ba1, rCap1, pA2, ba2, rCap2, mF);
@@ -11002,6 +11253,15 @@ bool intersectGalliumMelt(
     }
   }
 
+  if (!hitPuddle && hasPolyHit) {
+    float mFCheck = 0.0;
+    float dAtPoly = evalGalliumFastStep(qRo + qRd * polyT, meltAmt, rScale, tMorph, blobBell, coreAnchor, pA0, ba0, rCap0, pA1, ba1, rCap1, pA2, ba2, rCap2, mFCheck);
+    if (dAtPoly <= 0.0025) {
+      hitPuddle = true;
+      t = polyT;
+    }
+  }
+
   if (!hitPuddle) {
     if (!hasPolyHit) return false;
     // Smooth capillary wetting fillet on the solid crystal wall right where it meets the liquid pool
@@ -11010,6 +11270,15 @@ bool intersectGalliumMelt(
     float dLiqPoly = evalGalliumFastStep(qPoly, meltAmt, rScale, tMorph, blobBell, coreAnchor, pA0, ba0, rCap0, pA1, ba1, rCap1, pA2, ba2, rCap2, mFPoly);
     float wetW = (1.0 - smoothstep(0.005, 0.068, dLiqPoly)) * smoothstep(0.48, 0.90, rScale);
     if (wetW > 0.005) {
+#if MOBILE_QUALITY
+      vec3 nGaW = normalize(vec3(0.055, 0.825, 0.562));
+      vec3 nLiqW = normalize(vec3(
+        0.186646 * nGaW.x + 0.982427 * nGaW.z,
+        nGaW.y,
+        -0.982427 * nGaW.x + 0.186646 * nGaW.z
+      ));
+      polyN = normalize(mix(polyN, nLiqW, wetW * 0.72));
+#else
       float epsW = 0.0018;
       float dm1, dm2, dm3;
       float gxW = evalGalliumFastStep(qPoly + vec3(epsW, 0.0, 0.0), meltAmt, rScale, tMorph, blobBell, coreAnchor, pA0, ba0, rCap0, pA1, ba1, rCap1, pA2, ba2, rCap2, dm1) - dLiqPoly;
@@ -11022,6 +11291,7 @@ bool intersectGalliumMelt(
         -0.982427 * nGaW.x + 0.186646 * nGaW.z
       ));
       polyN = normalize(mix(polyN, nLiqW, wetW * 0.86));
+#endif
     }
     outId = polyId; outTHit = polyT; outTfHit = polyTf;
     outK = CP + 3000 + clamp(polyK, 0, 16);
@@ -11030,7 +11300,12 @@ bool intersectGalliumMelt(
   }
 
   float tLo = tPrev, tHi = t;
-  for (int bs = 0; bs < 3; bs++) {
+#if MOBILE_QUALITY
+  const int gaBisect = 2;
+#else
+  const int gaBisect = 3;
+#endif
+  for (int bs = 0; bs < gaBisect; bs++) {
     float tMid = 0.5 * (tLo + tHi);
     float mFMid = 0.0;
     if (evalGalliumFastStep(qRo + qRd * tMid, meltAmt, rScale, tMorph, blobBell, coreAnchor, pA0, ba0, rCap0, pA1, ba1, rCap1, pA2, ba2, rCap2, mFMid) <= 0.0002) {
@@ -11041,6 +11316,19 @@ bool intersectGalliumMelt(
   }
   float tFinal = 0.5 * (tLo + tHi);
   vec3 qHit = qRo + qRd * tFinal;
+#if MOBILE_QUALITY
+  // 4-tap tetrahedral SDF normal in qGa space (33% fewer SDF evaluations than 6-tap central differences!)
+  const float eps = 0.0020;
+  float dm;
+  vec2 te = vec2(1.0, -1.0);
+  vec3 nGaLocal = normalize(
+    te.xyy * evalGalliumFastStep(qHit + te.xyy * eps, meltAmt, rScale, tMorph, blobBell, coreAnchor, pA0, ba0, rCap0, pA1, ba1, rCap1, pA2, ba2, rCap2, dm) +
+    te.yyx * evalGalliumFastStep(qHit + te.yyx * eps, meltAmt, rScale, tMorph, blobBell, coreAnchor, pA0, ba0, rCap0, pA1, ba1, rCap1, pA2, ba2, rCap2, dm) +
+    te.yxy * evalGalliumFastStep(qHit + te.yxy * eps, meltAmt, rScale, tMorph, blobBell, coreAnchor, pA0, ba0, rCap0, pA1, ba1, rCap1, pA2, ba2, rCap2, dm) +
+    te.xxx * evalGalliumFastStep(qHit + te.xxx * eps, meltAmt, rScale, tMorph, blobBell, coreAnchor, pA0, ba0, rCap0, pA1, ba1, rCap1, pA2, ba2, rCap2, dm) +
+    vec3(0.0, 1e-6, 0.0)
+  );
+#else
   float mF0 = 1.0;
   float d0 = evalGalliumFastStep(qHit, meltAmt, rScale, tMorph, blobBell, coreAnchor, pA0, ba0, rCap0, pA1, ba1, rCap1, pA2, ba2, rCap2, mF0);
 
@@ -11051,6 +11339,7 @@ bool intersectGalliumMelt(
   float gy = evalGalliumFastStep(qHit + vec3(0.0, eps, 0.0), meltAmt, rScale, tMorph, blobBell, coreAnchor, pA0, ba0, rCap0, pA1, ba1, rCap1, pA2, ba2, rCap2, dm2) - d0;
   float gz = evalGalliumFastStep(qHit + vec3(0.0, 0.0, eps), meltAmt, rScale, tMorph, blobBell, coreAnchor, pA0, ba0, rCap0, pA1, ba1, rCap1, pA2, ba2, rCap2, dm3) - d0;
   vec3 nGaLocal = normalize(vec3(gx, gy, gz) + vec3(0.0, 1e-6, 0.0));
+#endif
   // Transform normal back from qGa to cluster space p
   vec3 nPuddleWorld = normalize(vec3(
     0.186646 * nGaLocal.x + 0.982427 * nGaLocal.z,
@@ -11070,7 +11359,7 @@ bool intersectGalliumMelt(
     nFinal = normalize(nFinal - rd * (dot(nFinal, rd) + 0.04));
   }
 
-  outId = hasPolyHit ? polyId : 0;
+  outId = 0;
   outTHit = tFinal;
   outTfHit = hasPolyHit ? max(tFinal + 0.12, polyTf) : (tFinal + 0.16);
   outK = CP + 3000 + 17;
@@ -11160,6 +11449,31 @@ vec3 zonedGemSigma(float hgt) {
   return mix(f_sigma, f_sigmaCore, cMix) * zAtten;
 }
 
+#if MOBILE_QUALITY
+// Lean loop-free single-midpoint Beer-Lambert + 3D hardware inclusion lookup for secondary bounces on mobile
+vec3 insideVolumeBounceMobile(int id, vec3 ro, vec3 rd, float len, out vec3 trans) {
+  vec4 ax = body(id, 1), side = body(id, 2), rt = body(id, 3);
+  float L = max(ax.w, 0.14), r = max(side.w, 0.035), rnd = rt.w;
+  vec3 midP = ro + rd * (0.5 * len);
+  float hgt = crystalHeight01(id, midP);
+  float opticalScale = mix(clamp(0.28 / r, 1.5, 5.8), 1.0, clamp(u_glimmer, 0.0, 1.0));
+  vec3 sigma = zonedGemSigma(hgt) * opticalScale;
+  float absorbLen = mix(max(len, r * 0.45), len, clamp(u_glimmer, 0.0, 1.0));
+  vec3 scat = vec3(0.0);
+  float a = 0.0;
+  float rawScale = mix(0.08, 1.0, clamp(u_rawAmount, 0.0, 1.0));
+  float effInc = (u_milk + u_veils) * rawScale;
+  if (effInc > 0.01) {
+    vec4 v = texture(u_incl, (midP - rt.xyz) / L * 1.4 + vec3(rnd * 17.3, rnd * 31.1, rnd * 7.7));
+    float dens = (u_milk * v.r + u_veils * v.g) * rawScale * 5.4;
+    a = 1.0 - exp(-dens * len);
+    scat = a * f_ambient * u_inclusionLight * 0.85;
+  }
+  trans = (1.0 - a) * exp(-sigma * absorbLen);
+  return scat;
+}
+#endif
+
 vec3 insideVolume(int id, vec3 ro, vec3 rd, float len, float jitter, int maxSteps, out vec3 trans) {
   vec4 ax = body(id, 1), side = body(id, 2), rt = body(id, 3);
   vec3 axis = ax.xyz, root = rt.xyz;
@@ -11210,7 +11524,12 @@ vec3 insideVolume(int id, vec3 ro, vec3 rd, float len, float jitter, int maxStep
   vec3 fGemBodyNorm = normalize(fGemBodyCol + vec3(0.04)) * 1.28;
   float fSigmaLen = length(f_sigma);
   bool hasBiCol = (u_biColour > 0.001);
+#if MOBILE_QUALITY
+  for (int s = 0; s < 3; s++) {
+    if (s >= n) break;
+#else
   for (int s = 0; s < n; s++) {
+#endif
     float stepF = float(s) + jitter;
     vec3 pp = ro + rd * (dt * stepF);
     vec3 rel = pp - root;
@@ -11288,6 +11607,55 @@ vec3 insideVolume(int id, vec3 ro, vec3 rd, float len, float jitter, int maxStep
   float effCrackDrive = clamp(u_fractures * 1.35 + effNeedles * 0.65 + effHairline * 0.55 + (u_iridescence * 0.16 + u_flash * 0.18) * max(u_rainbow, g1), 0.0, 2.2);
   if (effCrackDrive > 0.01 && len > 1e-4) {
     float uid = crystalUid(id);
+#if MOBILE_QUALITY
+    // Single analytical 3D cleavage sheet on mobile using hardware trilinear u_incl lookup (zero n3() hash loops)
+    vec3 hSeed = vec3(uid * 19.3, f_seed, 93.0);
+    float famRoll = hash(hSeed + 0.7);
+    float famWeight = smoothstep(famRoll * 0.42 - 0.06, famRoll * 0.42 + 0.24, effCrackDrive);
+    if (famWeight > 1e-4) {
+      float azK = hash(hSeed) * TAU;
+      float tiltK = mix(0.42, 1.15, hash(hSeed + 1.3));
+      vec3 nLocal0 = normalize(vec3(cos(azK) * sin(tiltK), cos(tiltK), sin(azK) * sin(tiltK)));
+      vec3 crackNormal_k = normalize(t1 * nLocal0.x + axis * nLocal0.y + t2 * nLocal0.z);
+      vec3 crackTan = normalize(cross(crackNormal_k, axis + t1 * 0.35));
+      vec3 crackBit = cross(crackNormal_k, crackTan);
+      vec3 fc_k = root + axis * (L * mix(0.26, 0.72, hash(hSeed + 3.1)));
+      float dn = dot(rd, crackNormal_k);
+      float signedDn = (dn >= 0.0 ? 1.0 : -1.0) * max(abs(dn), 0.08);
+      float t = dot(fc_k - ro, crackNormal_k) / signedDn;
+      if (t > 0.01 * len && t < 0.99 * len) {
+        vec3 hp = ro + rd * t;
+        float invPatchScale = 1.0 / max(r * 1.45, 0.045);
+        float u = dot(hp - fc_k, crackTan) * invPatchScale;
+        float v = dot(hp - fc_k, crackBit) * invPatchScale;
+        vec4 cTex = texture(u_incl, (hp - fc_k) / max(L, 0.15) * 1.6 + off);
+        float crackWarp = (cTex.b - 0.5) * 0.10 * r + r * 0.06 * (u * u - 0.28);
+        float crackPlane = abs(dot(hp - fc_k, crackNormal_k) - 0.04 * r + crackWarp);
+        float sheetHit = 1.0 - smoothstep(0.004 * r, 0.026 * r, crackPlane);
+        float patchEnv = smoothstep(0.08, 0.45, 0.25 + 0.22 * sin(v * 2.1) + 0.24 * (cTex.r - 0.5) - u);
+        float vSpan = 1.0 - smoothstep(0.52, 0.94, abs(v));
+        float mask = famWeight * sheetHit * patchEnv * vSpan;
+        if (mask > 1e-4) {
+          vec3 nCrack = normalize(crackNormal_k + crackTan * (0.12 * u + (cTex.g - 0.5) * 0.16));
+          if (dot(rd, nCrack) > 0.0) nCrack = -nCrack;
+          vec3 reflCrack = reflect(rd, nCrack);
+          vec3 lightDir1 = normalize(vec3(f_lights[0], f_lights[1], f_lights[2]) * f_toWorld);
+          vec3 lightDir2 = normalize(vec3(f_lights[2 * LS], f_lights[2 * LS + 1], f_lights[2 * LS + 2]) * f_toWorld);
+          float catchLight = pow(max(0.0, dot(reflCrack, lightDir1)), 30.0)
+                           + 0.75 * pow(max(0.0, dot(reflCrack, lightDir2)), 26.0)
+                           + 0.14 * pow(1.0 - abs(dot(rd, nCrack)), 8.0);
+          float needleTintAmt = clamp(u_needles * 0.15, 0.0, 0.88);
+          vec3 baseCrackTint = mix(vec3(0.95, 0.97, 1.0), normalize(lin(u_needleColour) + vec3(0.08)) * 1.38, needleTintAmt);
+          vec3 thinFilmCol = spectralRainbow(u * 0.7 + v * 0.35 + cTex.b * 0.5 + hueOff);
+          vec3 crackCol = mix(baseCrackTint, thinFilmCol * (baseCrackTint + vec3(0.18)), smoothstep(0.08, 0.52, catchLight) * 0.78);
+          float crackMod = 0.04 + 2.2 * catchLight;
+          float glowScale = max(u_fractureGlow, 1.15) * 0.58 * (1.0 + 0.20 * effNeedles);
+          scat += T * mask * crackMod * glowScale * crackCol * (f_ambient * 0.55 + vec3(0.22));
+          T *= 1.0 - clamp(mask * (0.02 + 0.22 * clamp(catchLight, 0.0, 1.5)), 0.0, 0.45);
+        }
+      }
+    }
+#else
     float bounceCleaveW = isPrimaryVol ? 1.0 : mix(0.42 * (1.0 - 0.65 * dither), 0.70, g1);
 
     // Studio key, rim, and fill light directions transformed into crystal space
@@ -11433,6 +11801,7 @@ vec3 insideVolume(int id, vec3 ro, vec3 rd, float len, float jitter, int maxStep
       scat += T * mask * crackMod * glowScale * crackCol * envIllum;
       T *= 1.0 - clamp(mask * (0.025 * featherSheet + 0.24 * clamp(catchLight, 0.0, 1.5)), 0.0, 0.48);
     }
+#endif
   }
   trans = T;
   return scat;
@@ -11462,8 +11831,14 @@ void insidePrimaryExtras(int id, vec3 ro, vec3 rd, float len, float travelled, i
     float invLPh = 1.0 / max(L, 0.14);
     vec3 phTint = exp(-mix(f_sigma, f_sigmaCore, 0.4) * 0.35);
     vec3 phLightIn = lightIn * mix(vec3(1.0), normalize(phTint + vec3(0.05)) * 1.25, clamp(length(f_sigma) * 0.22, 0.0, 0.85));
+#if MOBILE_QUALITY
+    int maxPhLayers = clamp(int(ceil(u_phantomLayers)), 0, 2);
+    for (int layer = 0; layer < 2; layer++) {
+      if (layer >= maxPhLayers) break;
+#else
     int maxPhLayers = clamp(int(ceil(u_phantomLayers)), 0, (u_isMobile > 0.5) ? 2 : 4);
     for (int layer = 0; layer < maxPhLayers; layer++) {
+#endif
       float layerWeight = clamp(u_phantomLayers - float(layer), 0.0, 1.0);
       if (layerWeight <= 1e-4) break;
       float pScale = u_phantomSize * (1.0 - 0.21 * float(layer));
@@ -11602,7 +11977,11 @@ vec3 faceNormal(int id, int k, vec3 n, vec3 p, float rough, float footprint, flo
 float evalLongHairlineScratch(vec2 uv, vec3 lp, float angle, float stripFreq, float alongFreq, float densityThresh, float seed, float fwStrip, float baseN, out vec2 outGradUV) {
   float ca = cos(angle), sa = sin(angle);
   vec2 uvRot = vec2(uv.x * ca + uv.y * sa, -uv.x * sa + uv.y * ca);
+#if MOBILE_QUALITY
+  float warp = (fract(baseN + seed * 0.13) - 0.5) * 0.055;
+#else
   float warp = ((u_isMobile > 0.5 ? fract(baseN + seed * 0.13) : n3(lp * 3.4 + seed)) - 0.5) * 0.055;
+#endif
   float uStrip = (uvRot.x + warp) * stripFreq;
   float vAlong = uvRot.y * alongFreq;
   float stripId = floor(uStrip);
@@ -11627,9 +12006,13 @@ float evalLongHairlineScratch(vec2 uv, vec3 lp, float angle, float stripFreq, fl
   if (abs(du) > effWidth * 3.2) return 0.0;
   float aaAtten = clamp(rawWidth / effWidth, 0.0, 1.0);
   float profile = exp(-(du * du) / (effWidth * effWidth)) * lenEnv * aaAtten;
+#if MOBILE_QUALITY
+  float pressure = smoothstep(0.32, 0.74, fract(baseN * 1.7 + h * 7.3));
+#else
   float pressure = (u_isMobile > 0.5)
     ? smoothstep(0.32, 0.74, fract(baseN * 1.7 + h * 7.3))
     : smoothstep(0.32, 0.74, n3(lp * 8.5 + seed + stripId * 1.3));
+#endif
   profile *= (0.35 + 0.65 * pressure) * mix(0.50, 1.0, fract(h * 53.3));
   float dProfDu = (-2.0 * du / effWidth) * profile * aaAtten;
   outGradUV = vec2(ca, sa) * dProfDu;
@@ -11680,8 +12063,12 @@ void evalSurfacePatina(int id, int k, vec3 p, vec3 nBase, float footprint, float
   float aa = 1.0 / (1.0 + 45.0 * uvFootprint);
   float fSeed = uid * 17.3 + f_seed * 0.37;
   float edgeProx = 1.0 - smoothstep(0.0, r * 0.28, dEdge);
-  // Single-octave 3D noise base sample on mobile; full multi-octave on desktop
+  // Hardware 3D texture sample on mobile (zero n3() hash calls); full multi-octave on desktop
+#if MOBILE_QUALITY
+  float baseN = texture(u_incl, lp * 0.65 + uid * 0.19).b;
+#else
   float baseN = n3(lp * 4.8 + fSeed);
+#endif
   float patchEnv = smoothstep(0.42, 0.80, baseN + 0.26 * edgeProx);
 
   float a1 = 0.38 + 0.55 * (hash(vec3(uid, 1.0, 13.0)) - 0.5);
@@ -11690,6 +12077,7 @@ void evalSurfacePatina(int id, int k, vec3 p, vec3 nBase, float footprint, float
   vec2 g1 = vec2(0.0), g2 = vec2(0.0), g3 = vec2(0.0), g4 = vec2(0.0);
   float scr1 = 0.0, scr2 = 0.0, scr4 = 0.0;
   float scr3 = evalLongHairlineScratch(uvFace + vec2(-0.19, 0.43), lp, a3, 7.5, 1.10, 0.86, fSeed + 23.9, uvFootprint * 7.5, baseN, g3);
+#if !MOBILE_QUALITY
   if (patchEnv > 0.001) {
     scr1 = evalLongHairlineScratch(uvFace, lp, a1, 9.5, 1.35, 0.82, fSeed + 3.1, uvFootprint * 9.5, baseN, g1) * patchEnv;
     g1 *= patchEnv;
@@ -11702,17 +12090,26 @@ void evalSurfacePatina(int id, int k, vec3 p, vec3 nBase, float footprint, float
       g4 *= patchEnv;
     }
   }
+#endif
 
   // Faint organic growth-hillock etch steps & horizontal striation surface ledges (anti-aliased by uvFootprint)
   float termFaceW = smoothstep(0.20, 0.65, abs(dot(nBase, ax)));
+#if MOBILE_QUALITY
+  float hillPatchN = baseN;
+#else
   float hillPatchN = (u_isMobile > 0.5) ? baseN : n3(lp * 3.8 + fSeed + 15.1);
+#endif
   float hillPatch = smoothstep(0.54, 0.84, hillPatchN) * mix(0.48, 0.85, termFaceW) * aa;
   float hillock = 0.0;
   float dHill = 0.0;
   if (hillPatch > 0.001) {
+#if MOBILE_QUALITY
+    float hillField = vFace * 11.0 + 4.8 * baseN;
+#else
     float hillField = (u_isMobile > 0.5)
       ? (vFace * 11.0 + 4.8 * baseN)
       : (vFace * 11.0 + 3.8 * n3(lp * 4.2 + fSeed) + 1.4 * n3(lp * 9.5 + fSeed * 1.7));
+#endif
     float hillWave = sin(hillField);
     if (hillWave > 0.55) {
       hillock = pow(hillWave, 14.0) * hillPatch;
@@ -11728,7 +12125,11 @@ void evalSurfacePatina(int id, int k, vec3 p, vec3 nBase, float footprint, float
     float sField = lp.y * 12.0 + 1.8 * sin(lp.y * 9.0 + uFace * 1.6 + fSeed);
     float sSin = sin(sField);
     if (sSin > 0.55) {
+#if MOBILE_QUALITY
+      float striaN = baseN;
+#else
       float striaN = (u_isMobile > 0.5) ? baseN : n3(lp * 4.5 + fSeed + 7.3);
+#endif
       float sWave = pow(sSin, 12.0) * smoothstep(0.38, 0.78, striaN) * aa;
       striaGlint = sWave * u_striations * 0.72 * striaGate;
       dStria = cos(sField) * striaGlint;
@@ -11924,9 +12325,14 @@ vec3 crystalBloomGlint(int id, int k, vec3 p, vec3 rd, vec3 nSmooth, float dEdge
     flashSum += lCol * gemTint * (fGlint * 0.28 * glare);
   }
 
-  // 6 pinpoint studio catch-lights around the orbit ring
+  // Pinpoint studio catch-lights around the orbit ring
   float fPhase = crystalFacetPhase(id, nSmooth);
-  for (int j = 0; j < 6; j++) {
+#if MOBILE_QUALITY
+  const int nCatch = 2;
+#else
+  const int nCatch = 6;
+#endif
+  for (int j = 0; j < nCatch; j++) {
     vec3 spotDir = (j == 0) ? vec3( 0.373644, 0.352274,  0.858281)
                  : (j == 1) ? vec3( 0.770520, 0.628793,  0.104525)
                  : (j == 2) ? vec3( 0.525634, 0.352274, -0.774518)
@@ -12041,6 +12447,7 @@ vec3 shadeMetallicCrystal(int id, int k, vec3 pEntry, vec3 rd, vec3 nRefl, float
     reflLight += bounceOxide * f_ambient * (0.26 * cornerBounceW);
   }
 
+#if !MOBILE_QUALITY
   // 1 secondary metallic reflection bounce max
   int nc = clamp(int(f_crystals + 0.5), 0, MAX_CRYSTALS);
   float bestBT = 1e9;
@@ -12068,6 +12475,7 @@ vec3 shadeMetallicCrystal(int id, int k, vec3 pEntry, vec3 rd, vec3 nRefl, float
     neighborCol = colB * (f_ambient * 0.22 + lights(wRefl2, 0.05) * 0.48 + env(reflDir2, 0.05) * 0.36);
     reflLight = mix(reflLight * seamAO, neighborCol * (0.35 + 0.85 * seamAO), 0.68);
   }
+#endif
 
   // 4. Broad & sharp GGX conductor specular lobes from the 4 studio area lights
   vec3 specBroad = vec3(0.0);
@@ -12118,9 +12526,16 @@ vec3 shadeMetallicCrystal(int id, int k, vec3 pEntry, vec3 rd, vec3 nRefl, float
     vec3 gTan2 = cross(nRefl, gTan1);
     float uCoord = dot(qGa, gTan1);
     float vCoord = dot(qGa, gTan2);
+#if MOBILE_QUALITY
+    vec3 gTex = texture(u_incl, qGa * 2.8 + float(kCrystal) * 0.17).rgb;
+    float brushFine = sin(uCoord * 240.0 + gTex.r * 3.2);
+    float brushCross = sin((uCoord * 0.30 + vCoord * 0.95) * 180.0 + gTex.g * 2.6);
+    float grainMicro = gTex.b - 0.5;
+#else
     float brushFine = sin(uCoord * 240.0 + n3(qGa * 72.0 + float(kCrystal) * 3.1) * 3.2);
     float brushCross = sin((uCoord * 0.30 + vCoord * 0.95) * 180.0 + n3(qGa * 105.0 + float(id) * 4.7) * 2.6);
     float grainMicro = n3(qGa * 195.0 + float(kCrystal) * 5.3) - 0.5;
+#endif
     float solidGrainMask = (1.0 - liqW) * (0.45 + 0.55 * clamp(u_frost * 4.5, 0.0, 1.2));
 
     vec3 nGa = normalize(
@@ -12226,6 +12641,48 @@ vec3 shadeMetallicCrystal(int id, int k, vec3 pEntry, vec3 rd, vec3 nRefl, float
 // Secondary continuation ray for GPU mirrored backgrounds (single-pass, zero nested hop loop)
 vec3 shadeBehindRay(vec3 roIn, vec3 rdIn, int skipIn, float travIn, float jitter, out float firstHitMask) {
   firstHitMask = 0.0;
+#if MOBILE_QUALITY
+  int nc = clamp(int(f_crystals + 0.5), 0, MAX_CRYSTALS);
+  float bT = 1e9;
+  int bId = -1, bK = 0;
+  for (int i = 0; i < nc; i++) {
+    if ((skipIn & (1 << i)) != 0 || !sphereHit(roIn, rdIn, body(i, 0), bT)) continue;
+    float tn, tf; int kn, kf;
+    if (convexHit(i, roIn, rdIn, tn, tf, kn, kf)) {
+      float tC = max(tn, 0.0);
+      if (tf > tC + 1e-4 && tC < bT) {
+        bT = tC; bId = i; bK = kn;
+      }
+    }
+  }
+  vec3 bEnvCol = refractedEnv(rdIn, 0.0, 0.0);
+  if (bId < 0) return bEnvCol;
+  float bRawA = clamp(body(bId, 2).x, 0.0, 1.0);
+  float bAlpha = bRawA * bRawA * (3.0 - 2.0 * bRawA);
+  firstHitMask = bAlpha;
+  if (bAlpha <= 1e-5) return bEnvCol;
+  vec3 bP = roIn + rdIn * bT;
+  vec3 bN = body(bId, PA + bK).xyz;
+  float bMetalW = clamp(max(u_metallic, smoothstep(0.05, 0.55, u_melt)), 0.0, 1.0);
+  vec3 reflEnv = env(reflect(rdIn, bN), 0.04);
+  if (bMetalW > 0.5) {
+    float iridW = clamp((u_iridescence - 0.08) / 0.78, 0.0, 1.0);
+    vec3 mTint = mix(vec3(0.92, 0.78, 0.42), evalBismuthOxidePalette(0.45 + float(bId) * 0.14), iridW);
+    mTint = mix(mTint, vec3(0.92, 0.95, 1.0), smoothstep(0.05, 0.45, u_melt));
+    return mix(bEnvCol, mTint * (reflEnv * 0.65 + f_ambient * 0.35), bAlpha);
+  }
+  float bF = fresnel(max(0.0, -dot(rdIn, bN)), 1.0 / u_ior);
+  vec3 rdB = refract(rdIn, bN, 1.0 / u_ior);
+  rdB = dot(rdB, rdB) > 1e-6 ? normalize(rdB) : rdIn;
+  int bKf; vec3 bExN;
+  float bLen = exitCrystal(bId, bP, rdB, bKf, bExN);
+  vec3 bTrans;
+  vec3 bScat = insideVolumeBounceMobile(bId, bP, rdB, bLen, bTrans);
+  vec3 bOut = refract(rdB, -bExN, u_ior);
+  rdB = dot(bOut, bOut) > 1e-6 ? normalize(bOut) : reflect(rdB, -bExN);
+  vec3 colB = bF * softFacetRefl(reflEnv) * 0.55 + (1.0 - bF * 0.55) * (bScat + bTrans * refractedEnv(rdB, 0.03, 1.0));
+  return mix(bEnvCol, colB, bAlpha);
+#else
   int bId, bK; float bT, bTf;
   vec3 bVoidN; float bVoidBorder, bVoidSeam;
   if (!traceScene(roIn, rdIn, skipIn, bId, bT, bTf, bK, bVoidN, bVoidBorder, bVoidSeam)) {
@@ -12299,6 +12756,7 @@ vec3 shadeBehindRay(vec3 roIn, vec3 rdIn, int skipIn, float travIn, float jitter
     colB = mix(colB, bMetalCol, bMetalW);
   }
   return mix(bEnvCol, colB, bAlpha);
+#endif
 }
 
 // Analytical GPU Mirrored Background:
@@ -12495,6 +12953,25 @@ vec3 evalMirrorBackground(vec2 q, vec3 rd, float rough, float refAlpha, float ji
   return mix(bgWithSurface, crystalReflCol, hitBlend * mirrorMask);
 }
 
+#if MOBILE_QUALITY
+// Lightweight convex-only secondary crystal lookup for behind-crystal cluster transmission on mobile
+bool traceSceneConvexMobile(vec3 ro, vec3 rd, int skipMask, out int id, out float tHit, out int kHit) {
+  bool hit = false; id = 0; kHit = 0; tHit = 1e9;
+  int nc = clamp(int(f_crystals + 0.5), 0, MAX_CRYSTALS);
+  for (int i = 0; i < nc; i++) {
+    if ((skipMask & (1 << i)) != 0 || !sphereHit(ro, rd, body(i, 0), tHit)) continue;
+    float tn, tf; int kn, kf;
+    if (convexHit(i, ro, rd, tn, tf, kn, kf)) {
+      float tCand = max(tn, 0.0);
+      if (tf > tCand + 1e-4 && tCand < tHit) {
+        tHit = tCand; id = i; kHit = kn; hit = true;
+      }
+    }
+  }
+  return hit;
+}
+#endif
+
 void main() {
   vec2 fc = gl_FragCoord.xy;
   vec2 q = (fc - 0.5 * u_res) / min(u_res.x, u_res.y);
@@ -12516,14 +12993,335 @@ void main() {
   float lastHgt = 0.75;
   float fDepth = max(1.0, u_depth);
   int depth = int(ceil(fDepth)), bounces = int(ceil(u_bounces));
-  if (u_isMobile > 0.5) {
-    bounces = min(bounces, 3);
-  }
   float hopCost = 0.0;
   float glimmer = clamp(u_glimmer, 0.0, 2.0);
   float g1 = clamp(glimmer, 0.0, 1.0);
   float effG1 = clamp(glimmerCurve(glimmer), 0.0, 1.0);
 
+#if MOBILE_QUALITY
+  // =========================================================================
+  // MOBILE_QUALITY == 1: Zero-inlining-explosion single-call-site pipeline
+  // (Every heavy function — traceScene, shadeMetallicCrystal, insideVolume,
+  // insidePrimaryExtras, evalSurfacePatina — has at most 1 call site in main()!)
+  // =========================================================================
+  bounces = min(bounces, 4);
+  int id, k; float t, tfHit;
+  vec3 voidWallN = vec3(0.0, 1.0, 0.0);
+  float voidBorder = 1e9, voidSeam = 1e9;
+  // Handle rare transparent/growing front crystals (alpha <= 2e-3) in at most 1 skip retry via convex fallback
+  bool hitPrimary = traceScene(ro, rd, skipMask, id, t, tfHit, k, voidWallN, voidBorder, voidSeam);
+  if (hitPrimary && body(id, 2).x <= 2e-3) {
+    skipMask |= (1 << id);
+    ro += rd * max(t, 0.0);
+    travelled += max(t, 0.0);
+    hitPrimary = traceSceneConvexMobile(ro, rd, skipMask, id, t, k);
+    voidBorder = 1e9; voidSeam = 1e9;
+    voidWallN = (k < CP) ? body(id, PA + k).xyz : vec3(0.0, 1.0, 0.0);
+  }
+  if (hitPrimary) {
+    vec3 pEntry = ro + rd * t;
+    vec3 p = pEntry;
+    travelled += t;
+    skipMask |= (1 << id);
+    float rawAlpha = clamp(body(id, 2).x, 0.0, 1.0);
+    float alpha = rawAlpha * rawAlpha * (3.0 - 2.0 * rawAlpha) * clamp(fDepth, 0.0, 1.0);
+    if (alpha > 2e-3) {
+      float effIor = ior;
+      float uid = crystalUid(id);
+      hopCost += alpha;
+      float footprint = travelled * f_pixAngle;
+      float dither = clamp(u_ditherBlend, 0.0, 1.0);
+      float ditherFrost = smoothstep(0.0, 0.85, dither);
+      float hgtEntry = crystalHeight01(id, pEntry);
+      lastHgt = hgtEntry;
+      float rawAmt = clamp(u_rawAmount, 0.0, 2.0);
+      float rawSurfScale = mix(0.15, 1.0, clamp(rawAmt / 0.4, 0.0, 1.0)) * mix(1.0, 1.65, max(0.0, (rawAmt - 0.4) / 1.6));
+      float baseFrost = u_colourZoning * clamp(rawSurfScale, 0.0, 1.5) * (1.0 - smoothstep(0.14, 0.48, hgtEntry));
+      float rawFrostScale = mix(0.22, 1.0, clamp(rawAmt / 0.4, 0.0, 1.0)) * mix(1.0, 1.35, max(0.0, (rawAmt - 0.4) / 1.6));
+      float effFrostShare = clamp((mix(u_frostShare, max(u_frostShare, 0.54), ditherFrost) + 0.14 * baseFrost) * rawFrostScale, 0.0, 0.88);
+      float effFrost = clamp((mix(u_frost, max(u_frost, 0.32), ditherFrost) + 0.08 * baseFrost) * rawFrostScale, 0.0, 0.46);
+
+      bool isGalliumMelt = (k >= CP + 3000 && k < CP + 4000);
+      bool isCathedralTerrace = (k >= CP + 4000 && k < CP + 4100);
+      int kBaseFace = isGalliumMelt ? (k - (CP + 3000)) : (isCathedralTerrace ? (k - (CP + 4000)) : k);
+      bool isHopperTerrace = (k == CP + 2000);
+      float meltFactor = isGalliumMelt ? clamp(voidBorder, 0.0, 1.0) : 0.0;
+      bool isOcclusionVoid = (k >= CP && k < CP + 5000 && !isHopperTerrace && !isGalliumMelt && !isCathedralTerrace);
+      vec3 rawFaceN = (isOcclusionVoid || isHopperTerrace || isGalliumMelt || isCathedralTerrace)
+        ? voidWallN
+        : body(id, PA + k).xyz;
+      float frostRoll = evalCrystalFrostRoll(id, rawFaceN, uid);
+      float frostW = smoothstep(frostRoll - 0.15, frostRoll + 0.15, effFrostShare);
+      float rough = effFrost * frostW * mix(1.0, 0.25, smoothstep(0.12, 0.58, u_hopper));
+      if (isOcclusionVoid) rough *= 0.20;
+      else if (isGalliumMelt) rough *= (1.0 - smoothstep(0.0, 0.35, meltFactor));
+      else if (isCathedralTerrace) rough *= mix(1.0, 0.55, smoothstep(0.0, 0.35, u_cathedral));
+
+      vec3 adjN = rawFaceN;
+      int ridgeKLo = -1, ridgeKHi = -1;
+      float tMorphM = clamp(u_melt / 0.72, 0.0, 1.0);
+      float gaHoldMetal = smoothstep(0.42, 0.92, tMorphM) * 0.96;
+      float rawMetalW = clamp(max(max(u_metallic, gaHoldMetal), smoothstep(0.02, 0.35, meltFactor)), 0.0, 1.0);
+      float metalW = smoothstep(0.0, 0.95, rawMetalW);
+      bool isOpaqueMetal = (metalW >= 0.995 || (isGalliumMelt && kBaseFace == 17));
+      bool needDEdge = !isGalliumMelt && !(isOpaqueMetal && u_hopper > 0.65) && (u_patina > 0.01 || u_hopper > 0.0 || u_cathedral > 0.0 || u_iridescence > 0.0 || u_bloom > 0.0);
+      float dEdge = isGalliumMelt ? voidSeam : (needDEdge ? edgeDist(id, kBaseFace, p, adjN, ridgeKLo, ridgeKHi) : 1.0);
+      if (isCathedralTerrace) dEdge = min(dEdge, voidBorder);
+
+      vec3 nBaseForRefr = (isCathedralTerrace && !isOpaqueMetal && kBaseFace < CP)
+        ? normalize(mix(body(id, PA + kBaseFace).xyz, rawFaceN, 0.45))
+        : rawFaceN;
+      vec3 n = faceNormal(id, isOcclusionVoid ? 18 : kBaseFace, nBaseForRefr, p, rough, footprint, dEdge);
+      if (isGalliumMelt) n = normalize(mix(n, rawFaceN, smoothstep(0.0, 0.40, meltFactor)));
+
+      vec3 nSurfFull = isCathedralTerrace ? normalize(rawFaceN + (n - nBaseForRefr)) : n;
+      vec3 nRefl = nSurfFull;
+      float patinaGlint = 0.0, patinaRough = 0.0;
+      float patinaFade = 1.0 - smoothstep(0.002, 0.03, tMorphM);
+      if (!isOpaqueMetal && !isOcclusionVoid && !isGalliumMelt && patinaFade > 0.001) {
+        evalSurfacePatina(id, kBaseFace, p, nSurfFull, footprint, dEdge, nRefl, patinaGlint, patinaRough);
+        nRefl = normalize(mix(nSurfFull, nRefl, patinaFade));
+        patinaGlint *= patinaFade;
+        patinaRough *= patinaFade;
+        n = normalize(mix(n, n + (nRefl - nSurfFull), 0.06 * (1.0 - 0.85 * dither)));
+      }
+      float reflRough = max(rough, patinaRough * (1.0 - 0.5 * dither));
+
+      vec3 hopCol = vec3(0.0);
+      vec3 hopThr = vec3(1.0);
+      vec3 metalSurfCol = (metalW > 0.005)
+        ? shadeMetallicCrystal(id, kBaseFace, pEntry, rd, nRefl, reflRough, dEdge, footprint, meltFactor)
+        : vec3(0.0);
+      if (isOpaqueMetal) {
+        col += thr * alpha * metalSurfCol;
+        thr *= (1.0 - alpha);
+      } else {
+        if (metalW > 0.005) {
+          col += thr * (alpha * metalW) * metalSurfCol;
+          thr *= (1.0 - alpha * metalW);
+        }
+        float effGlare = (isOcclusionVoid ? min(1.0, glare * 1.15 + 0.12) : glare) * (1.0 - 0.30 * dither);
+        float cosEntry = mix(max(0.32, -dot(rd, nRefl)), clamp(-dot(rd, nRefl), 0.0, 1.0), g1);
+        float F = fresnel(cosEntry, 1.0 / effIor);
+        vec3 rawEntryRefl = softFacetRefl(env(reflect(rd, nRefl), reflRough), hgtEntry);
+        vec3 entryRefl = facetIridescence(id, kBaseFace, p, rd, nRefl, dEdge, rawEntryRefl);
+        vec3 entryFlash = crystalBloomGlint(id, kBaseFace, p, rd, nRefl, dEdge, reflRough) * 0.55 * (1.0 - 0.25 * dither);
+        float iridReflBoost = clamp(F + (u_iridescence * u_rainbow) * 0.04 + patinaGlint * 0.08 * (1.0 - 0.6 * dither), 0.0, mix(0.46, 0.38, dither)) * (0.18 + 0.76 * effGlare);
+        float entryReflW = mix(iridReflBoost, F * 0.90, g1);
+        vec3 patinaLight = (0.42 * f_ambient + 0.48 * entryRefl + vec3(0.05)) * vec3(0.96, 0.98, 1.0);
+        hopCol += (entryReflW * entryRefl + patinaGlint * 0.12 * (1.0 - 0.55 * dither) * patinaLight + entryFlash);
+        hopCol += iridescentFilm(id, kBaseFace, p, rd, nRefl, dEdge);
+        hopThr *= mix(1.0 - F * (0.3 + 0.7 * effGlare), 1.0 - F, g1);
+
+        vec3 refrIn = refract(rd, n, 1.0 / effIor);
+        vec3 rdC = dot(refrIn, refrIn) > 1e-6 ? normalize(refrIn) : rd;
+        vec3 pathDisp = (rdC - rd) / max(effIor - 1.0, 0.2);
+        vec3 roC = p;
+        float travC = travelled;
+        int kf = 0;
+        vec3 rawExitN0;
+        float len0 = exitCrystal(id, roC, rdC, kf, rawExitN0);
+        vec3 trans0;
+        int steps0 = min(int(u_inclusionSteps + 0.5), 3);
+        vec3 inScat0 = insideVolume(id, roC, rdC, len0, jitter, steps0, trans0);
+        insidePrimaryExtras(id, roC, rdC, len0, travC, inScat0, trans0);
+        hopCol += hopThr * inScat0;
+        hopThr *= trans0;
+        travC += len0;
+        p = roC + rdC * len0;
+
+        float exitFrostRoll = evalCrystalFrostRoll(id, rawExitN0, uid);
+        float exitRoughBase = effFrost * smoothstep(exitFrostRoll - 0.15, exitFrostRoll + 0.15, effFrostShare);
+        float crispExitRough = smoothstep(exitFrostRoll - 0.12, exitFrostRoll + 0.12, max(u_frostShare * 0.68, effFrostShare * 0.52 * dither)) * (max(u_frost, effFrost * 0.65 * dither) * mix(0.24, 0.36, dither));
+        float fr = mix(exitRoughBase, crispExitRough, effG1 * (1.0 - 0.32 * dither));
+        vec3 nf = faceNormal(id, kf < CP ? kf : 18, rawExitN0, p, kf < CP ? fr : fr * 0.2, travC * f_pixAngle, 1.0);
+        pathDisp += (rdC - nf * dot(rdC, nf)) * 0.55;
+        if (g1 > 0.01 && kf == 16 && dot(body(id, PA + 16).xyz, body(id, 1).xyz) < -0.92) {
+          hopThr *= (1.0 - 0.88 * g1);
+        }
+        vec3 o = refract(rdC, -nf, effIor);
+
+        // Compile-time bounded internal TIR bounces (at most 4 bounces using loop-free insideVolumeBounceMobile!)
+        int maxB = clamp((g1 > 0.01) ? bounces : (bounces + 1), 1, 5);
+        for (int b = 1; b < 5; b++) {
+          if (b >= maxB || dot(o, o) >= 1e-6 || dot(hopThr, hopThr) < 1e-4) break;
+          float Fb = fresnel(dot(rdC, nf), effIor);
+          vec3 reflBDir = reflect(rdC, -nf);
+          vec3 bounceRefl = facetIridescence(id, kf, p, rdC, -nf, 1.0, softFacetRefl(env(reflBDir, fr), hgtEntry));
+          hopCol += hopThr * (Fb * bounceRefl * 0.26 * (1.0 - 0.65 * g1) * (0.20 + 0.80 * glare));
+          pathDisp = reflect(pathDisp, -nf) + (reflBDir - nf * dot(reflBDir, nf)) * 0.28;
+          rdC = reflBDir;
+          roC = p;
+          vec3 rawExitNB;
+          float lenB = exitCrystal(id, roC, rdC, kf, rawExitNB);
+          vec3 transB;
+          vec3 inScatB = insideVolumeBounceMobile(id, roC, rdC, lenB, transB);
+          hopCol += hopThr * inScatB;
+          hopThr *= transB;
+          travC += lenB;
+          p = roC + rdC * lenB;
+          exitFrostRoll = evalCrystalFrostRoll(id, rawExitNB, uid);
+          exitRoughBase = effFrost * smoothstep(exitFrostRoll - 0.15, exitFrostRoll + 0.15, effFrostShare);
+          crispExitRough = smoothstep(exitFrostRoll - 0.12, exitFrostRoll + 0.12, max(u_frostShare * 0.68, effFrostShare * 0.52 * dither)) * (max(u_frost, effFrost * 0.65 * dither) * mix(0.24, 0.36, dither));
+          fr = mix(exitRoughBase, crispExitRough, effG1 * (1.0 - 0.32 * dither));
+          nf = faceNormal(id, kf < CP ? kf : 18, rawExitNB, p, kf < CP ? fr : fr * 0.2, travC * f_pixAngle, 1.0);
+          if (g1 > 0.01 && kf == 16 && dot(body(id, PA + 16).xyz, body(id, 1).xyz) < -0.92) {
+            hopThr *= (1.0 - 0.88 * g1);
+          }
+          o = refract(rdC, -nf, effIor);
+        }
+
+        bool leftCrystal = (dot(o, o) >= 1e-6);
+        if (!leftCrystal) {
+          if (g1 >= 0.5) {
+            col += thr * hopCol;
+            lastRefracted = false;
+          } else {
+            o = rdC;
+            leftCrystal = true;
+          }
+        }
+        if (leftCrystal) {
+          float cosExitI = dot(rdC, nf);
+          float Fo = fresnel(cosExitI, effIor);
+          float exitHgt = clamp(dot(p - body(id, 3).xyz, body(id, 1).xyz) / max(body(id, 1).w, 0.1), 0.0, 1.0);
+          float isRootCut = ((kf == 16 && dot(body(id, PA + 16).xyz, body(id, 1).xyz) < -0.85) ? 1.0 : (1.0 - smoothstep(0.06, 0.20, exitHgt)));
+          vec3 reflExitDir = reflect(rdC, -nf);
+          vec3 baseExitEnv = softFacetRefl(env(reflExitDir, fr), hgtEntry);
+          vec3 stripExitEnv = glimmerStripLights(f_toWorld * reflExitDir, fr) * (1.0 - isRootCut);
+          if (u_fire > 0.0) {
+            float effGlim = glimmerCurve(glimmer);
+            vec3 exitTan = rdC - nf * cosExitI;
+            vec3 rSpread = (reflect(pathDisp, -nf) * 0.48 + exitTan * 0.28) * (u_fire * 0.82 * effGlim);
+            vec3 dR = normalize(reflExitDir - rSpread);
+            vec3 dB = normalize(reflExitDir + rSpread);
+            vec3 sR = glimmerStripLights(f_toWorld * dR, fr) * (1.0 - isRootCut);
+            vec3 sB = glimmerStripLights(f_toWorld * dB, fr) * (1.0 - isRootCut);
+            stripExitEnv = vec3(
+              mix(sR.r, stripExitEnv.r, 0.12),
+              mix(stripExitEnv.g, 0.5 * (sR.g + sB.g), 0.16),
+              mix(sB.b, stripExitEnv.b, 0.12)
+            );
+          }
+          vec3 rawExitEnv = baseExitEnv + stripExitEnv;
+          vec3 exitRefl = facetIridescence(id, kf, p, rdC, -nf, 1.0, rawExitEnv / (1.0 + 0.24 * max(rawExitEnv.r, max(rawExitEnv.g, rawExitEnv.b))));
+          float exitReflW = mix(0.36 * (1.0 - 0.28 * dither) * (0.15 + 0.85 * glare), 0.38 * (1.0 - 0.85 * isRootCut), effG1);
+          hopCol += hopThr * (Fo * exitRefl * exitReflW);
+          hopThr *= mix(1.0 - Fo * (0.3 + 0.7 * glare * (1.0 - 0.35 * dither)), 1.0 - Fo, g1);
+
+          if (alpha < 0.999) {
+            vec3 cExitDir = normalize(o);
+            col += thr * alpha * (hopCol + hopThr * refractedEnv(cExitDir, fr, 1.0, hgtEntry));
+            thr *= (1.0 - alpha);
+            ro = pEntry;
+          } else {
+            col += thr * hopCol;
+            thr *= hopThr * (1.0 - 0.65 * isRootCut * g1);
+            lastIn = rdC;
+            lastN = nf;
+            lastPathDisp = pathDisp;
+            lastRough = max(fr, rough * 0.45);
+            lastFireAlpha = 1.0 - 0.88 * isRootCut * g1;
+            lastRefracted = true;
+            rd = normalize(o);
+            ro = p;
+            travelled = travC;
+
+            // Lean secondary behind-crystal cluster transmission hop with 1 TIR bounce & strip-light fire (zero duplicate traceScene/insideVolume!)
+            int id2, k2; float t2;
+            if (hopCost < fDepth && dot(thr, thr) > 1e-4 && traceSceneConvexMobile(ro, rd, skipMask, id2, t2, k2)) {
+              float a2 = clamp(body(id2, 2).x, 0.0, 1.0) * clamp(fDepth - hopCost, 0.0, 1.0);
+              if (a2 > 0.01) {
+                vec3 p2 = ro + rd * t2;
+                vec3 n2 = body(id2, PA + k2).xyz;
+                float F2 = fresnel(max(0.0, -dot(rd, n2)), 1.0 / effIor);
+                vec3 refl2 = softFacetRefl(env(reflect(rd, n2), lastRough), lastHgt);
+                vec3 refr2 = refract(rd, n2, 1.0 / effIor);
+                vec3 rd2 = dot(refr2, refr2) > 1e-6 ? normalize(refr2) : rd;
+                vec3 pathDisp2 = lastPathDisp + (rd2 - rd) / max(effIor - 1.0, 0.2);
+                int kf2; vec3 nEx2;
+                float len2 = exitCrystal(id2, p2, rd2, kf2, nEx2);
+                vec3 tr2;
+                vec3 sc2 = insideVolumeBounceMobile(id2, p2, rd2, len2, tr2);
+                vec3 pEx2 = p2 + rd2 * len2;
+                vec3 o2 = refract(rd2, -nEx2, effIor);
+                if (dot(o2, o2) <= 1e-6) {
+                  float Fb2 = fresnel(dot(rd2, nEx2), effIor);
+                  vec3 rDir2 = reflect(rd2, -nEx2);
+                  sc2 += tr2 * (Fb2 * softFacetRefl(env(rDir2, lastRough), lastHgt) * 0.24 * (1.0 - 0.65 * g1));
+                  pathDisp2 = reflect(pathDisp2, -nEx2) + (rDir2 - nEx2 * dot(rDir2, nEx2)) * 0.28;
+                  rd2 = rDir2;
+                  float len2b = exitCrystal(id2, pEx2, rd2, kf2, nEx2);
+                  vec3 tr2b;
+                  vec3 sc2b = insideVolumeBounceMobile(id2, pEx2, rd2, len2b, tr2b);
+                  sc2 += tr2 * sc2b;
+                  tr2 *= tr2b;
+                  pEx2 += rd2 * len2b;
+                  o2 = refract(rd2, -nEx2, effIor);
+                }
+                float Fo2 = fresnel(dot(rd2, nEx2), effIor);
+                vec3 rEx2 = reflect(rd2, -nEx2);
+                vec3 strip2 = glimmerStripLights(f_toWorld * rEx2, lastRough);
+                vec3 exEnv2 = softFacetRefl(env(rEx2, lastRough), lastHgt) + strip2;
+                sc2 += tr2 * (Fo2 * (exEnv2 / (1.0 + 0.24 * max(exEnv2.r, max(exEnv2.g, exEnv2.b)))) * 0.36);
+                if (dot(o2, o2) > 1e-6) {
+                  col += thr * a2 * (F2 * refl2 * mix(0.35, 0.85, g1) + (1.0 - F2) * sc2);
+                  thr = mix(thr, thr * (1.0 - F2) * (1.0 - Fo2 * 0.65) * tr2, a2);
+                  lastIn = rd2;
+                  lastN = nEx2;
+                  lastPathDisp = pathDisp2 + (rd2 - nEx2 * dot(rd2, nEx2)) * 0.55;
+                  rd = normalize(o2);
+                } else {
+                  col += thr * a2 * (F2 * refl2 * mix(0.35, 0.85, g1) + (1.0 - F2) * sc2);
+                  if (g1 >= 0.5) lastRefracted = false;
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  if (dot(thr, thr) > 0.0) {
+    float dither = clamp(u_ditherBlend, 0.0, 1.0);
+    float effGlimmer = glimmerCurve(glimmer);
+    float effIrid = u_iridescence * u_rainbow;
+    float effFire = mix(u_fire, u_fire * 0.75, dither) * (1.0 + 0.15 * effGlimmer) + effIrid * 0.035;
+    if (lastRefracted && effFire > 0.005 && lastFireAlpha > 1e-4) {
+      // Smooth 5-tap continuous spectral Cauchy dispersion (zero discrete RGB banding, zero geometry/texture calls!)
+      float dispIor = mix(1.0, ior, lastFireAlpha);
+      float dispFire = effFire * lastFireAlpha;
+      vec3 acc = vec3(0.0), wsum = vec3(0.0);
+      for (int i = 0; i < 5; i++) {
+        float x = (float(i) + 0.5) * 0.2;
+        vec3 dw = (x - vec3(0.14, 0.5, 0.86)) / 0.40;
+        vec3 w = max(1.0 - dw * dw, 0.0);
+        vec3 inWave = normalize(lastIn + lastPathDisp * (dispFire * (x - 0.5) * 0.36 * effG1));
+        vec3 o = refract(inWave, -lastN, dispIor + dispFire * (x - 0.5) * 2.0);
+        wsum += w;
+        if (dot(o, o) > 1e-6) {
+          float tirFeather = smoothstep(0.0, 0.18, abs(dot(o, lastN)));
+          vec3 sampleDir = normalize(mix(rd, o, lastFireAlpha));
+          vec3 eCol = refractedEnv(sampleDir, lastRough, lastFireAlpha, lastHgt) * mix(0.28, 1.0, tirFeather);
+          if (effIrid > 0.0) {
+            float defl = length(sampleDir - initialRd);
+            vec3 prism = spectralRainbow(defl * 2.4 + x * 0.85);
+            eCol += prism * f_ambient * effIrid * mix(0.32, 0.18, dither) * lastFireAlpha * smoothstep(0.04, 0.45, defl);
+          }
+          acc += w * eCol;
+        }
+      }
+      col += thr * acc / max(wsum, vec3(1e-4));
+    } else {
+      col += thr * evalMirrorBackground(q, rd, lastRough, lastFireAlpha, jitter);
+    }
+  }
+  outColor = encodeHdr(col);
+#else
+  if (u_isMobile > 0.5) {
+    bounces = min(bounces, 3);
+  }
   int maxHops = clamp(depth + 1, 1, 5);
   bool primaryEvaluated = false;
 
@@ -12929,6 +13727,7 @@ void main() {
     }
   }
   outColor = encodeHdr(col);
+#endif
 }`,
 
   bright: `
@@ -13050,7 +13849,11 @@ void main() {
   c = mix(c, u_studioEdge, clamp(u_vignette * dot(q, q) * 2.6, 0.0, 1.0));
   c = filmDust(c, fc, f_px, f_frame, u_dust);
   c = filmGrain(c, fc, f_px, f_frame, u_grainAmount, u_grainSize, u_grainSharpness, u_grainClump);
+#if MOBILE_QUALITY
+  c += ditherIgn8(fc);
+#else
   c += (hash(vec3(fc, f_frame)) - 0.5) / 255.0;
+#endif
   outColor = vec4(c, 1.0);
 }`,
 };
@@ -13062,7 +13865,7 @@ void main() {
   const __mod_sketch = (() => {
   const SHADER = __mod_shader.default;
   const { buildCluster, cluster } = __mod_cluster;
-  const { FULLSCREEN_VERT, frameUniforms, probeFloatTargets, program, shaderHeader, shaderParams, uploadFrame, uploadParams } = __mod_gl;
+  const { FULLSCREEN_VERT, detectMobileDevice, frameUniforms, probeFloatTargets, program, shaderHeader, shaderParams, uploadFrame, uploadParams } = __mod_gl;
 // Crystals — WebGL2 renderer + instant (<30ms) 3D Quartz Crystal Wireframe first-paint
 // that smoothly fills in with full ray-traced detail once async shader compilation completes.
 // Built on Jack Bush's Geode renderer (jackbush/glimmers).
@@ -13077,6 +13880,7 @@ function __default_sketch({ canvas, P, model, degrade }) {
   const sketchStartPerf = performance.now();
   const sp = new URLSearchParams(typeof location !== 'undefined' ? location.search : '');
   const isCapture = sp.has('capture');
+  const isMobile = detectMobileDevice();
   let holdWireframe = sp.has('wireframe');
   const pinnedFillIn = sp.has('fillin') ? Math.max(0, Math.min(1, parseFloat(sp.get('fillin')))) : null;
 
@@ -13095,10 +13899,15 @@ function __default_sketch({ canvas, P, model, degrade }) {
   let gl = null;
   let extParallel = null;
   function ensureGl() {
-    if (gl) return gl;
+    if (gl && !gl.isContextLost()) return gl;
     gl = canvas.getContext('webgl2', {
-      alpha: false, antialias: false, depth: false, stencil: false,
-      premultipliedAlpha: false, preserveDrawingBuffer: true, powerPreference: 'high-performance',
+      alpha: false,
+      antialias: false,
+      depth: false,
+      stencil: false,
+      premultipliedAlpha: false,
+      preserveDrawingBuffer: isMobile ? Boolean(isCapture) : true,
+      powerPreference: isMobile ? 'default' : 'high-performance',
     });
     if (!gl) throw new Error('WebGL2 is not available in this browser.');
     extParallel = gl.getExtension('KHR_parallel_shader_compile');
@@ -13107,11 +13916,11 @@ function __default_sketch({ canvas, P, model, degrade }) {
 
   const uniformParams = shaderParams(model.params);
   const { vals: frameVals, list: frameList } = frameUniforms(SHADER.frameUniforms);
-  const INCL = SHADER.inclSize;
+  const INCL = isMobile ? 32 : SHADER.inclSize;
   const noiseVol = new Uint8Array(INCL * INCL * INCL * 4);
 
   let ready = false, shaderReady = false, buildStage = 0, vao = null, ubo = null;
-  let passBackdrop = null, passTrace = null, passBright = null, passBlurH = null, passBlurV = null, passComposite = null;
+  let passBackdrop = null, passTrace = null, passBright = null, passBlur = null, passComposite = null;
   let pendingPrograms = null;
   let inclTex = null, bakedSeed = NaN;
   let hdrTex = null, hdrFbo = null, bloomA = null, bloomAFbo = null, bloomB = null, bloomBFbo = null;
@@ -13127,8 +13936,9 @@ function __default_sketch({ canvas, P, model, degrade }) {
   const faceFront = new Uint8Array(24);
   const faceLight = new Float32Array(24);
 
-  function startCompileAsync(name, src, samplers) {
-    const fragSrc = shaderHeader(uniformParams, frameList) + SHADER.common + src;
+  function startCompileAsync(name, src, samplers, postOnly = false) {
+    const commonBlock = (postOnly && SHADER.commonPost) ? SHADER.commonPost : SHADER.common;
+    const fragSrc = shaderHeader(uniformParams, frameList, isMobile) + commonBlock + src;
     const vs = gl.createShader(gl.VERTEX_SHADER);
     gl.shaderSource(vs, FULLSCREEN_VERT);
     gl.compileShader(vs);
@@ -13144,12 +13954,17 @@ function __default_sketch({ canvas, P, model, degrade }) {
 
   function finishPass(spec) {
     const { name, prog, vs, fs, samplers } = spec;
-    const fsLog = !gl.getShaderParameter(fs, gl.COMPILE_STATUS) ? gl.getShaderInfoLog(fs) : '';
+    const linked = gl.getProgramParameter(prog, gl.LINK_STATUS);
+    if (!linked && !gl.isContextLost()) {
+      const vsLog = !gl.getShaderParameter(vs, gl.COMPILE_STATUS) ? gl.getShaderInfoLog(vs) : '';
+      const fsLog = !gl.getShaderParameter(fs, gl.COMPILE_STATUS) ? gl.getShaderInfoLog(fs) : '';
+      const progLog = gl.getProgramInfoLog(prog);
+      gl.deleteShader(vs);
+      gl.deleteShader(fs);
+      throw new Error('Program "' + name + '" failed to link:\n' + (vsLog ? vsLog + '\n' : '') + (fsLog ? fsLog + '\n' : '') + progLog);
+    }
     gl.deleteShader(vs);
     gl.deleteShader(fs);
-    if (!gl.getProgramParameter(prog, gl.LINK_STATUS) && !gl.isContextLost()) {
-      throw new Error('Program "' + name + '" failed to link:\n' + (fsLog ? fsLog + '\n' : '') + gl.getProgramInfoLog(prog));
-    }
     const loc = (n) => gl.getUniformLocation(prog, n);
     gl.useProgram(prog);
     for (const s in samplers) gl.uniform1i(loc(s), samplers[s]);
@@ -13157,7 +13972,7 @@ function __default_sketch({ canvas, P, model, degrade }) {
       prog,
       version: -1,
       uRes: loc('u_res'), uScreen: loc('u_screen'), uTime: loc('u_time'), uRealTime: loc('u_realTime'),
-      uSlice: loc('u_slice'), uDir: loc('u_dir'),
+      uSlice: loc('u_slice'), uDir: loc('u_dir'), uSrc: loc('u_src'),
       paramLocs: uniformParams.map((p) => loc('u_' + p.key)),
       frameLocs: frameList.map((f) => loc(f.name)),
     };
@@ -13212,28 +14027,34 @@ function __default_sketch({ canvas, P, model, degrade }) {
     bakedSeed = NaN;
     bake();
 
-    floatTargets = probeFloatTargets(gl);
+    // On mobile, use compact RGBA8 FBOs directly (encodeHdr stores [0,1) Reinhard-compressed HDR, saving 50% VRAM & skipping probeFloatTargets's synchronous gl.getError() IPC stall!)
+    floatTargets = isMobile ? false : probeFloatTargets(gl);
     hdrTex = texture2D(UNIT_HDR);
     bloomA = texture2D(UNIT_BLOOM_A);
     bloomB = texture2D(UNIT_BLOOM_B);
     hdrW = hdrH = bloomW = bloomH = 0;
     sizeTargets();
     hdrFbo = framebuffer(hdrTex);
-    const hdrOk = gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
     bloomAFbo = framebuffer(bloomA);
-    const bloomAOk = gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
     bloomBFbo = framebuffer(bloomB);
-    const bloomBOk = gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
-    if (floatTargets && (!hdrOk || !bloomAOk || !bloomBOk)) {
-      floatTargets = false;
-      hdrW = hdrH = bloomW = bloomH = 0;
-      sizeTargets();
+    if (floatTargets) {
       gl.bindFramebuffer(gl.FRAMEBUFFER, hdrFbo);
-      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, hdrTex, 0);
+      const hdrOk = gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
       gl.bindFramebuffer(gl.FRAMEBUFFER, bloomAFbo);
-      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, bloomA, 0);
+      const bloomAOk = gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
       gl.bindFramebuffer(gl.FRAMEBUFFER, bloomBFbo);
-      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, bloomB, 0);
+      const bloomBOk = gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
+      if (!hdrOk || !bloomAOk || !bloomBOk) {
+        floatTargets = false;
+        hdrW = hdrH = bloomW = bloomH = 0;
+        sizeTargets();
+        gl.bindFramebuffer(gl.FRAMEBUFFER, hdrFbo);
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, hdrTex, 0);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, bloomAFbo);
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, bloomA, 0);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, bloomBFbo);
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, bloomB, 0);
+      }
     }
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 
@@ -13246,12 +14067,11 @@ function __default_sketch({ canvas, P, model, degrade }) {
     if (buildStage < 1) initGlResourcesAndBake();
     if (buildStage >= 2) return;
     pendingPrograms = {
-      backdrop: startCompileAsync('backdrop', SHADER.backdrop, {}),
-      trace: startCompileAsync('trace', SHADER.trace, { u_incl: UNIT_INCL }),
-      bright: startCompileAsync('bright', SHADER.bright, { u_hdr: UNIT_HDR }),
-      blurH: startCompileAsync('blurH', SHADER.blur, { u_src: UNIT_BLOOM_A }),
-      blurV: startCompileAsync('blurV', SHADER.blur, { u_src: UNIT_BLOOM_B }),
-      composite: startCompileAsync('composite', SHADER.composite, { u_hdr: UNIT_HDR, u_bloomTex: UNIT_BLOOM_A }),
+      backdrop: startCompileAsync('backdrop', SHADER.backdrop, {}, false),
+      trace: startCompileAsync('trace', SHADER.trace, { u_incl: UNIT_INCL }, false),
+      bright: startCompileAsync('bright', SHADER.bright, { u_hdr: UNIT_HDR }, true),
+      blur: startCompileAsync('blur', SHADER.blur, { u_src: UNIT_BLOOM_A }, true),
+      composite: startCompileAsync('composite', SHADER.composite, { u_hdr: UNIT_HDR, u_bloomTex: UNIT_BLOOM_A }, true),
     };
     buildStage = 2;
   }
@@ -13272,15 +14092,9 @@ function __default_sketch({ canvas, P, model, degrade }) {
     passBackdrop = finishPass(pendingPrograms.backdrop);
     passTrace = finishPass(pendingPrograms.trace);
     passBright = finishPass(pendingPrograms.bright);
-    passBlurH = finishPass(pendingPrograms.blurH);
-    passBlurV = finishPass(pendingPrograms.blurV);
+    passBlur = finishPass(pendingPrograms.blur);
     passComposite = finishPass(pendingPrograms.composite);
     pendingPrograms = null;
-
-    gl.useProgram(passBlurH.prog);
-    gl.uniform2f(passBlurH.uDir, 1, 0);
-    gl.useProgram(passBlurV.prog);
-    gl.uniform2f(passBlurV.uDir, 0, 1);
 
     gl.uniformBlockBinding(passTrace.prog, gl.getUniformBlockIndex(passTrace.prog, 'Bodies'), 0);
     buildStage = 3;
@@ -13299,7 +14113,13 @@ function __default_sketch({ canvas, P, model, degrade }) {
     fillInProgress = 1.0;
     wireframeAlpha = 0.0;
     fillClockStarted = true;
-    if (wfCanvas) wfCanvas.style.display = 'none';
+    if (wfCanvas) {
+      wfCanvas.style.display = 'none';
+      if (isMobile) {
+        wfCanvas.width = 1;
+        wfCanvas.height = 1;
+      }
+    }
   }
 
   function buildAllSync() {
@@ -13332,7 +14152,7 @@ function __default_sketch({ canvas, P, model, degrade }) {
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   }
   function bake() {
-    SHADER.fillNoiseVolume(noiseVol, P.seed.value);
+    SHADER.fillNoiseVolume(noiseVol, P.seed.value, INCL);
     gl.activeTexture(gl.TEXTURE0 + UNIT_INCL);
     gl.bindTexture(gl.TEXTURE_3D, inclTex);
     gl.texSubImage3D(gl.TEXTURE_3D, 0, 0, 0, 0, INCL, INCL, INCL, gl.RGBA, gl.UNSIGNED_BYTE, noiseVol);
@@ -13347,9 +14167,13 @@ function __default_sketch({ canvas, P, model, degrade }) {
       return;
     }
     if (wfCanvas.style.display === 'none') wfCanvas.style.display = 'block';
-    const dpr = Math.max(1, pxRatio || window.devicePixelRatio || 1);
-    const w = (canvas.width > 300 ? canvas.width : Math.round((window.innerWidth || 1280) * dpr));
-    const h = (canvas.height > 150 ? canvas.height : Math.round((window.innerHeight || 800) * dpr));
+    const dpr = isMobile
+      ? Math.min(1.25, Math.max(1, window.devicePixelRatio || 1))
+      : Math.max(1, pxRatio || window.devicePixelRatio || 1);
+    const cw = canvas.clientWidth || window.innerWidth || (isMobile ? 390 : 1280);
+    const ch = canvas.clientHeight || window.innerHeight || (isMobile ? 844 : 800);
+    const w = isMobile ? Math.max(1, Math.round(cw * dpr)) : (canvas.width > 300 ? canvas.width : Math.round(cw * dpr));
+    const h = isMobile ? Math.max(1, Math.round(ch * dpr)) : (canvas.height > 150 ? canvas.height : Math.round(ch * dpr));
     if (wfCanvas.width !== w || wfCanvas.height !== h) {
       wfCanvas.width = w;
       wfCanvas.height = h;
@@ -13527,12 +14351,31 @@ function __default_sketch({ canvas, P, model, degrade }) {
     ready = false;
     shaderReady = false;
     buildStage = 0;
+    gl = null;
+    extParallel = null;
     vao = ubo = inclTex = hdrTex = hdrFbo = bloomA = bloomAFbo = bloomB = bloomBFbo = null;
-    passBackdrop = passTrace = passBright = passBlurH = passBlurV = passComposite = null;
+    passBackdrop = passTrace = passBright = passBlur = passComposite = null;
     pendingPrograms = null;
+    fillInProgress = 0.0;
+    wireframeAlpha = 1.0;
+    fillClockStarted = false;
+    drawWireframeOverlay(1.0, 1.0);
     degrade(0.6);
   });
-  canvas.addEventListener('webglcontextrestored', buildAllSync);
+  canvas.addEventListener('webglcontextrestored', () => {
+    if (isCapture && !holdWireframe) {
+      buildAllSync();
+    } else {
+      buildStage = 0;
+      shaderReady = false;
+      wireframeFrames = 0;
+      fillInProgress = 0.0;
+      wireframeAlpha = 1.0;
+      fillClockStarted = false;
+      ready = true;
+      drawWireframeOverlay(1.0, 1.0);
+    }
+  });
 
   // In capture mode (?capture=1), build synchronously so frame 1 is immediately ray-traced;
   // in interactive mode, render the 3D Quartz Wireframe immediately (<5ms) and compile shaders asynchronously!
@@ -13540,9 +14383,9 @@ function __default_sketch({ canvas, P, model, degrade }) {
   if (isCapture && !holdWireframe) {
     buildAllSync();
   } else {
-    const initW = window.innerWidth || 1280;
-    const initH = window.innerHeight || 800;
-    const initDpr = Math.min(2, window.devicePixelRatio || 1);
+    const initW = window.innerWidth || (isMobile ? 390 : 1280);
+    const initH = window.innerHeight || (isMobile ? 844 : 800);
+    const initDpr = Math.min(isMobile ? 1.25 : 2, window.devicePixelRatio || 1);
     pxRatio = initDpr;
     buildCluster(P, initW, initH);
     clusterVersion = model.version;
@@ -13560,6 +14403,8 @@ function __default_sketch({ canvas, P, model, degrade }) {
     get firstWireframeNavMs() { return firstWireframeNavMs; },
     get shaderReadyMs() { return shaderReadyMs; },
     get wireframeCanvas() { return wfCanvas; },
+    get floatTargets() { return floatTargets; },
+    get inclEdge() { return INCL; },
     drawWireframe: (bgAlpha = 1.0, wfAlpha = 1.0) => drawWireframeOverlay(bgAlpha, wfAlpha),
     ensureReadySync,
     resize(_w, _h, px) {
@@ -13580,15 +14425,20 @@ function __default_sketch({ canvas, P, model, degrade }) {
       }
       SHADER.perFrame(P, t, rt, canvas.width, canvas.height, pxRatio, frameVals);
 
-      // Compile, link, and warm up a 4x4 GPU PSO pass immediately on frame 1 so the entire
-      // subsequent wireframe rotation + 1.0s cross-fade runs at 60 FPS with ZERO mid-transition freeze!
+      // Non-blocking staggered async shader compilation:
+      // Frame 0 paints the UI shell + 3D Quartz wireframe immediately (<25ms) before touching WebGL2;
+      // subsequent RAF ticks initialize FBOs, kick off parallel shader compilation, and poll COMPLETION_STATUS_KHR!
       if (!shaderReady) {
         drawWireframeOverlay(1.0, 1.0);
         wireframeFrames++;
         if (holdWireframe) return;
+        if (wireframeFrames <= 1) {
+          // Always yield Frame 0 (synchronous script boot) so the browser paints the UI shell + wireframe immediately!
+          return;
+        }
         if (buildStage === 0) {
           initGlResourcesAndBake();
-          kickCompileAsync();
+          if (!isMobile) kickCompileAsync();
           return;
         }
         if (buildStage === 1) {
@@ -13597,18 +14447,20 @@ function __default_sketch({ canvas, P, model, degrade }) {
         }
         if (buildStage === 2 && isParallelCompileComplete()) {
           finalizeCompiledPrograms();
-          // Warm up the Apple Metal / WebGL2 PSO at 4x4 pixels right now before the visible rotation hold & fade!
-          gl.bindBuffer(gl.UNIFORM_BUFFER, ubo);
-          gl.bufferSubData(gl.UNIFORM_BUFFER, 0, cluster.data);
-          uploadedClusterVer = cluster.version;
-          if (bakedSeed !== P.seed.value) bake();
-          drawPass(passBackdrop, hdrFbo, 4, 4);
-          gl.enable(gl.SCISSOR_TEST);
-          gl.scissor(0, 0, 4, 4);
-          drawPass(passTrace, hdrFbo, 4, 4);
-          gl.disable(gl.SCISSOR_TEST);
-          drawPass(passComposite, null, 4, 4);
-          gl.flush();
+          if (!isMobile) {
+            // Desktop: warm up the PSO at 4x4 pixels before the smooth wireframe hold & fade
+            gl.bindBuffer(gl.UNIFORM_BUFFER, ubo);
+            gl.bufferSubData(gl.UNIFORM_BUFFER, 0, cluster.data);
+            uploadedClusterVer = cluster.version;
+            if (bakedSeed !== P.seed.value) bake();
+            drawPass(passBackdrop, hdrFbo, 4, 4);
+            gl.enable(gl.SCISSOR_TEST);
+            gl.scissor(0, 0, 4, 4);
+            drawPass(passTrace, hdrFbo, 4, 4);
+            gl.disable(gl.SCISSOR_TEST);
+            drawPass(passComposite, null, 4, 4);
+            gl.flush();
+          }
           drawWireframeOverlay(1.0, 1.0);
           shaderWarmupFrames = 0;
           fillStartPerfMs = performance.now();
@@ -13616,9 +14468,9 @@ function __default_sketch({ canvas, P, model, degrade }) {
         return;
       }
 
-      // After the 4x4 PSO warm-up, rotate the 100% opaque wireframe smoothly at 60 FPS for 480ms
-      // before starting the full-res WebGL2 cross-fade so the wireframe turns with zero stutter!
-      const wfHoldMs = (isCapture || pinnedFillIn !== null || sp.has('fast')) ? 0 : 480;
+      // On desktop, rotate the 100% opaque wireframe smoothly at 60 FPS for 480ms;
+      // on mobile, skip any artificial hold delay and start rendering at 0.40x scale immediately!
+      const wfHoldMs = (isCapture || isMobile || pinnedFillIn !== null || sp.has('fast')) ? 0 : 480;
       if (!holdWireframe && pinnedFillIn === null && fillInProgress === 0.0 && (performance.now() - fillStartPerfMs) < wfHoldMs) {
         drawWireframeOverlay(1.0, 1.0);
         return;
@@ -13638,8 +14490,14 @@ function __default_sketch({ canvas, P, model, degrade }) {
       gl.disable(gl.SCISSOR_TEST);
       if ((P.bloom?.value ?? 0.2) > 0.005) {
         drawPass(passBright, bloomAFbo, bloomW, bloomH);
-        drawPass(passBlurH, bloomBFbo, bloomW, bloomH);
-        drawPass(passBlurV, bloomAFbo, bloomW, bloomH);
+        bind(passBlur, bloomBFbo, bloomW, bloomH);
+        gl.uniform1i(passBlur.uSrc, UNIT_BLOOM_A);
+        gl.uniform2f(passBlur.uDir, 1, 0);
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+        bind(passBlur, bloomAFbo, bloomW, bloomH);
+        gl.uniform1i(passBlur.uSrc, UNIT_BLOOM_B);
+        gl.uniform2f(passBlur.uDir, 0, 1);
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
       }
       drawPass(passComposite, null, canvas.width, canvas.height);
 
@@ -13660,10 +14518,11 @@ function __default_sketch({ canvas, P, model, degrade }) {
           drawWireframeOverlay(1.0, 1.0);
           return;
         }
+        const fadeDur = isMobile ? 0.65 : FILL_IN_DURATION;
         const elapsedFade = isCapture
-          ? (fillInProgress * FILL_IN_DURATION + Math.min(Math.max(rawDt || 0.016, 0.004), 0.10))
+          ? (fillInProgress * fadeDur + Math.min(Math.max(rawDt || 0.016, 0.004), 0.10))
           : Math.max(0.0, (performance.now() - fillStartPerfMs) * 0.001);
-        fillInProgress = Math.min(1.0, elapsedFade / FILL_IN_DURATION);
+        fillInProgress = Math.min(1.0, elapsedFade / fadeDur);
         const fillAlpha = 0.5 - 0.5 * Math.cos(Math.PI * fillInProgress);
         const backdropAlpha = 1.0 - fillAlpha;
         wireframeAlpha = 1.0 - fillAlpha;
@@ -13671,6 +14530,10 @@ function __default_sketch({ canvas, P, model, degrade }) {
       } else if (wfCanvas && wfCanvas.style.display !== 'none') {
         wireframeAlpha = 0.0;
         wfCanvas.style.display = 'none';
+        if (isMobile) {
+          wfCanvas.width = 1;
+          wfCanvas.height = 1;
+        }
       }
     },
   };

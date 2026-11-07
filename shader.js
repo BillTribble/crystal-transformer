@@ -83,10 +83,22 @@ export default {
     f.f_crystals[0] = cluster.crystals;
     const mIdx = MIRROR_MODES.indexOf(String(P.mirrorMode?.value || 'Plain (None)'));
     f.f_mirrorMode[0] = mIdx > 0 ? mIdx : 0;
-    const isMob = typeof window !== 'undefined' && (
-      (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) ||
-      /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent || '')
-    );
+    let isMob = false;
+    if (typeof window !== 'undefined') {
+      const sp = new URLSearchParams(window.location ? window.location.search : '');
+      const mq = sp.get('mobile');
+      if (mq === '1' || mq === 'true') isMob = true;
+      else if (mq === '0' || mq === 'false' || sp.get('desktop') === '1' || sp.get('desktop') === 'true') isMob = false;
+      else {
+        const ua = (typeof navigator !== 'undefined' && navigator.userAgent) || '';
+        isMob = Boolean(
+          /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini|Mobile/i.test(ua) ||
+          (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) ||
+          (Math.max((window.screen && window.screen.width) || window.innerWidth || 1280, (window.screen && window.screen.height) || window.innerHeight || 800) <= 960 &&
+            Math.min(window.innerWidth || 1280, window.innerHeight || 800) < 768)
+        );
+      }
+    }
     f.u_isMobile[0] = isMob ? 1.0 : 0.0;
 
     // Orbit turn: spinStart is updated both by interactive mouse/touch drag and by autoRotate in run.js
@@ -182,6 +194,41 @@ export default {
     }
   },
 
+  commonPost: `
+#define PI  3.14159265359
+#define TAU 6.28318530718
+${FILM_GLSL}
+vec3 lin(vec3 c) { return pow(max(c, vec3(0.0)), vec3(2.2)); }
+float glimmerCurve(float g) {
+  float g01 = clamp(g, 0.0, 1.0);
+  return smoothstep(0.0, 0.45, g01) * mix(0.85, 1.0, smoothstep(0.45, 1.0, g01)) + max(0.0, g - 1.0);
+}
+vec3 spectralRainbow(float t) {
+  vec3 x = fract(t + vec3(0.0, 0.66667, 0.33333));
+  vec3 wave = clamp(abs(x * 6.0 - 3.0) - 1.0, 0.0, 1.0);
+  return wave * wave * (3.0 - 2.0 * wave);
+}
+#if MOBILE_QUALITY
+vec3 ditherIgn8(vec2 fc) {
+  float a = fract(52.9829189 * fract(dot(fc, vec2(0.06711056, 0.00583715))));
+  float b = fract(52.9829189 * fract(dot(fc + vec2(17.0, 31.0), vec2(0.06711056, 0.00583715))));
+  return vec3((a + b - 1.0) / 255.0);
+}
+vec4 encodeHdr(vec3 c) {
+  vec3 pos = max(c, vec3(0.0));
+  vec3 t = sqrt(clamp(pos / (1.0 + pos), 0.0, 1.0));
+  return vec4(clamp(t + ditherIgn8(gl_FragCoord.xy), 0.0, 1.0), 1.0);
+}
+vec3 decodeHdr(vec4 e) {
+  vec3 linE = e.rgb * e.rgb;
+  return linE / max(1.0 - linE, 1e-4);
+}
+#else
+vec4 encodeHdr(vec3 c) { return vec4(c / (1.0 + c), 1.0); }
+vec3 decodeHdr(vec4 e) { return e.rgb / max(1.0 - e.rgb, 1e-4); }
+#endif
+`,
+
   common: `
 #define PI  3.14159265359
 #define TAU 6.28318530718
@@ -217,6 +264,28 @@ vec3 lights(vec3 d, float rough) {
   }
   return sum;
 }
+#if MOBILE_QUALITY
+vec3 lightsKeyFast(vec3 d, float rough) {
+  vec3 sum = vec3(0.0);
+  for (int i = 0; i < 2; i++) {
+    int o = (i == 0 ? 0 : 2) * LS;
+    vec3 c = vec3(f_lights[o], f_lights[o + 1], f_lights[o + 2]);
+    float cs = dot(d, c);
+    if (cs <= 0.15) continue;
+    float hw = f_lights[o + 12], hh = f_lights[o + 13];
+    float s = max(u_lightSoftness * min(hw, hh) + rough * 0.6, 1e-3);
+    vec3 p = d / cs;
+    float au = abs(dot(p, vec3(f_lights[o + 3], f_lights[o + 4], f_lights[o + 5])));
+    if (au >= hw + s) continue;
+    float av = abs(dot(p, vec3(f_lights[o + 6], f_lights[o + 7], f_lights[o + 8])));
+    if (av >= hh + s) continue;
+    float m = (1.0 - smoothstep(hw - s, hw + s, au)) * (1.0 - smoothstep(hh - s, hh + s, av));
+    m *= hw * hh / ((hw + s) * (hh + s));
+    sum += m * vec3(f_lights[o + 9], f_lights[o + 10], f_lights[o + 11]);
+  }
+  return sum;
+}
+#endif
 vec3 env(vec3 dc, float rough) {
   vec3 d = f_toWorld * dc;
   return backdrop(d) + lights(d, rough);
@@ -234,7 +303,12 @@ vec3 glimmerStripLights(vec3 d, float rough) {
   float effG = glimmerCurve(g);
   vec3 lCol = vec3(f_lights[2 * LS + 9], f_lights[2 * LS + 10], f_lights[2 * LS + 11]);
   vec3 sum = vec3(0.0);
-  for (int i = 0; i < 4; i++) {
+#if MOBILE_QUALITY
+  const int nStrips = 2;
+#else
+  const int nStrips = 4;
+#endif
+  for (int i = 0; i < nStrips; i++) {
     vec3 c = (i == 0) ? vec3(-0.51449576,  0.19788302, -0.83424024)
            : (i == 1) ? vec3( 0.49811675, -0.17828389, -0.84857699)
            : (i == 2) ? vec3(-0.33864256, -0.41286135, -0.84549780)
@@ -271,12 +345,29 @@ vec3 spectralRainbow(float t) {
   vec3 wave = clamp(abs(x * 6.0 - 3.0) - 1.0, 0.0, 1.0);
   return wave * wave * (3.0 - 2.0 * wave);
 }
+#if MOBILE_QUALITY
+vec3 ditherIgn8(vec2 fc) {
+  float a = fract(52.9829189 * fract(dot(fc, vec2(0.06711056, 0.00583715))));
+  float b = fract(52.9829189 * fract(dot(fc + vec2(17.0, 31.0), vec2(0.06711056, 0.00583715))));
+  return vec3((a + b - 1.0) / 255.0);
+}
+vec4 encodeHdr(vec3 c) {
+  vec3 pos = max(c, vec3(0.0));
+  vec3 t = sqrt(clamp(pos / (1.0 + pos), 0.0, 1.0));
+  return vec4(clamp(t + ditherIgn8(gl_FragCoord.xy), 0.0, 1.0), 1.0);
+}
+vec3 decodeHdr(vec4 e) {
+  vec3 linE = e.rgb * e.rgb;
+  return linE / max(1.0 - linE, 1e-4);
+}
+#else
 vec4 encodeHdr(vec3 c) { return vec4(c / (1.0 + c), 1.0); }
 vec3 decodeHdr(vec4 e) { return e.rgb / max(1.0 - e.rgb, 1e-4); }
+#endif
 `,
 
-  fillNoiseVolume(vol, seed) {
-    const N = INCL;
+  fillNoiseVolume(vol, seed, edge = INCL) {
+    const N = edge || INCL;
     const invN = 1.0 / N;
     const s = (Math.floor((Number(seed) || 1) * 1000) ^ 0x9e3779b9) >>> 0;
     const gSize = 16;
@@ -471,6 +562,7 @@ bool evalOvoidVoidInterval(int row, int m, vec3 ro, vec3 rd, out float tc0, out 
   return true;
 }
 
+#if !MOBILE_QUALITY
 // 1b. 3D CSG Invisible Crystal Void Interval (u_occlusionType == 1):
 //     Carves a 3D faceted crystal cavity of the exact 18-plane crystallographic habit of partner tRow.
 bool evalCrystalVoidInterval(int row, int m, vec3 ro, vec3 rd, bool needSeam, out float tc0, out float tc1, out vec3 enterN, out vec3 exitN, out float exitSeam) {
@@ -555,13 +647,16 @@ bool evalCrystalVoidInterval(int row, int m, vec3 ro, vec3 rd, bool needSeam, ou
   }
   return true;
 }
+#endif
 
 bool evalSingleVoidInterval(int row, int m, vec3 ro, vec3 rd, bool needSeam, out float tc0, out float tc1, out vec3 enterN, out vec3 exitN, out float exitSeam) {
+#if !MOBILE_QUALITY
   float kType = clamp(u_occlusionType, 0.0, 1.0);
   bool useCrystal = (kType >= 0.85) || (kType > 0.15 && m == 0);
   if (useCrystal) {
     return evalCrystalVoidInterval(row, m, ro, rd, needSeam, tc0, tc1, enterN, exitN, exitSeam);
   }
+#endif
   return evalOvoidVoidInterval(row, m, ro, rd, tc0, tc1, enterN, exitN, exitSeam);
 }
 
@@ -578,7 +673,12 @@ bool applyOcclusionVoidCSG(int row, vec3 ro, vec3 rd, inout float tn, inout floa
   float tnOrig = max(tn, 0.0);
   float tfOrig = tf;
 
-  for (int m = 0; m < 2; m++) {
+#if MOBILE_QUALITY
+  const int maxVoids = 1;
+#else
+  const int maxVoids = 2;
+#endif
+  for (int m = 0; m < maxVoids; m++) {
     float tc0, tc1, exitSeam;
     vec3 enterN, exitN;
     if (!evalSingleVoidInterval(row, m, ro, rd, true, tc0, tc1, enterN, exitN, exitSeam)) continue;
@@ -656,6 +756,7 @@ float sn1(float x, float s) {
 // Stage 1 (crystalSDF_fast): coarse analytic 18-plane polyhedron SDF (zero 3D noise calls when far from surface, abs(d) >= 0.045).
 // Stage 2 (crystalSDF_full / crystalSDF): detailed 3D CSG edge-chip, irregularity, and basal-cavity evaluation
 // evaluated ONLY when near surface (abs(d) < 0.045) and inside calcNormal().
+#if !MOBILE_QUALITY
 float crystalSDF_fast(vec3 p, int row, out float secondD, out float thirdD, out float ridgeBevel) {
   float d = -1e9;
   secondD = -1e9;
@@ -677,6 +778,7 @@ float crystalSDF_fast(vec3 p, int row, out float secondD, out float thirdD, out 
   ridgeBevel = (d + secondD) * 0.70710678;
   return d;
 }
+#endif
 
 // 3D Architectural Bismuth Hopper & Ziggurat Morphological Carver (post-015895, post-015966):
 // Pure branchless register-only O(1) evaluation in crystal-local q in [-1, 1]^3 coordinates.
@@ -864,15 +966,25 @@ bool intersectBismuthHopper(int row, vec3 ro, vec3 rd, float hopperAmt, float tH
     return evalBismuthFast(pQ0, morphP, hopperAmt, s0, e0) >= -1e-4;
   }
 
-  // March along local ray pQ(dt) = pQ0 + dpQ * dt in 10 fast branchless register-only steps (7 on mobile)
+  // March along local ray pQ(dt) = pQ0 + dpQ * dt in compile-time bounded register-only steps (6 on mobile, 10 on desktop)
+#if MOBILE_QUALITY
+  const int nSteps = 6;
+  const int nBisect = 2;
+#else
   int nSteps = (u_isMobile > 0.5) ? 7 : 10;
+  const int nBisect = 3;
+#endif
   float dtStep = dtMax / float(nSteps);
   float dtPrev = 0.0;
   bool foundHit = false;
   float dtHit = 0.0;
 
+#if MOBILE_QUALITY
+  for (int ms = 0; ms <= 6; ms++) {
+#else
   for (int ms = 0; ms <= 10; ms++) {
     if (ms > nSteps) break;
+#endif
     float dt = float(ms) * dtStep;
     float sIdx, sEdge;
     if (evalBismuthFast(pQ0 + dpQ * dt, morphP, hopperAmt, sIdx, sEdge) >= -1e-4) {
@@ -887,7 +999,7 @@ bool intersectBismuthHopper(int row, vec3 ro, vec3 rd, float hopperAmt, float tH
 
   if (dtHit > 1e-4) {
     float tLo = dtPrev, tHi = dtHit;
-    for (int bs = 0; bs < 3; bs++) {
+    for (int bs = 0; bs < nBisect; bs++) {
       float tMid = 0.5 * (tLo + tHi);
       float sIdx, sEdge;
       if (evalBismuthFast(pQ0 + dpQ * tMid, morphP, hopperAmt, sIdx, sEdge) >= 0.0) tHi = tMid;
@@ -1118,12 +1230,33 @@ bool intersectCathedralSpire(
     return true;
   }
 
+#if MOBILE_QUALITY
+  const int nSteps = 5;
+  const int nBisect = 2;
+#else
   int nSteps = (u_isMobile > 0.5) ? 6 : 8;
+  const int nBisect = 3;
+#endif
   float dtStep = dtSpan / float(nSteps);
   float dtPrev = 0.0;
   float dtHit = 0.0;
   bool foundHit = false;
 
+#if MOBILE_QUALITY
+  for (int ms = 0; ms <= 5; ms++) {
+    float dt = float(ms) * dtStep;
+    float ly = ly0 + dly * dt;
+    float guA, gaxA, edA, gabA;
+    float cA = evalCathedralFace(uA0 + duA * dt, ly, seedA, cathAmt, guA, gaxA, edA, gabA);
+    float mMin = (dA0 + ddA * dt) - cA;
+    if (mMin >= -1e-4) {
+      dtHit = dt;
+      foundHit = true;
+      break;
+    }
+    dtPrev = dt;
+  }
+#else
   for (int ms = 0; ms <= 8; ms++) {
     if (ms > nSteps) break;
     float dt = float(ms) * dtStep;
@@ -1148,6 +1281,7 @@ bool intersectCathedralSpire(
     }
     dtPrev = dt;
   }
+#endif
 
   // If the ray never entered the carved cathedral spire along the entire chord [tStart, tEnd],
   // it passed completely through a 3D stepped sub-termination notch!
@@ -1155,12 +1289,13 @@ bool intersectCathedralSpire(
 
   if (dtHit > 1e-5) {
     float tLo = dtPrev, tHi = dtHit;
-    for (int bs = 0; bs < 3; bs++) {
+    for (int bs = 0; bs < nBisect; bs++) {
       float tMid = 0.5 * (tLo + tHi);
       float ly = ly0 + dly * tMid;
       float guA, gaxA, edA, gabA;
       float cA = evalCathedralFace(uA0 + duA * tMid, ly, seedA, cathAmt, guA, gaxA, edA, gabA);
       float mMin = (dA0 + ddA * tMid) - cA;
+#if !MOBILE_QUALITY
       if (kB != kA) {
         float guB, gaxB, edB, gabB;
         float cB = evalCathedralFace(uB0 + duB * tMid, ly, seedB, cathAmt, guB, gaxB, edB, gabB);
@@ -1171,6 +1306,7 @@ bool intersectCathedralSpire(
         float cC = evalCathedralFace(uC0 + duC * tMid, ly, seedC, cathAmt, guC, gaxC, edC, gabC);
         mMin = min(mMin, (dC0 + ddC * tMid) - cC);
       }
+#endif
       if (mMin >= 0.0) tHi = tMid;
       else tLo = tMid;
     }
@@ -1207,6 +1343,7 @@ bool intersectCathedralSpire(
   float edgeWin = edA;
   float mWin = mA;
 
+#if !MOBILE_QUALITY
   if (kB != kA) {
     float guB, gaxB, edB, gabB;
     float cB = evalCathedralFace(uB0 + duB * dtHit, lyH, seedB, cathAmt, guB, gaxB, edB, gabB);
@@ -1229,6 +1366,7 @@ bool intersectCathedralSpire(
     nWin = normalize(mix(nWin, nCandC, wC));
     if (mC < mWin) { kWin = kC; mWin = mC; }
   }
+#endif
 
   if (dot(nWin, rd) > -0.06) {
     nWin = normalize(nWin - rd * (dot(nWin, rd) + 0.06));
@@ -1240,6 +1378,7 @@ bool intersectCathedralSpire(
   return tf > tn + 1e-4;
 }
 
+#if !MOBILE_QUALITY
 float crystalSDF_full(vec3 p, int row) {
   float secondD, thirdD, ridgeBevel;
   float d = crystalSDF_fast(p, row, secondD, thirdD, ridgeBevel);
@@ -1573,6 +1712,7 @@ bool applyTinyEdgeChip(int row, int k0, vec3 ro, vec3 rd, inout float tn, inout 
   outChipN = bestChipN;
   return tf > max(tn, 0.0);
 }
+#endif
 
 bool convexHit(int row, vec3 ro, vec3 rd, out float tn, out float tf, out int kn, out int kf) {
   tn = -1e9; tf = 1e9; kn = 0; kf = 0;
@@ -1603,6 +1743,7 @@ float exitCrystal(int row, vec3 ro, vec3 rd, out int kf, out vec3 outExitN) {
       if (t < tf) { tf = t; kf = k; outExitN = pl.xyz; }
     }
   }
+#if !MOBILE_QUALITY
   if (u_occlusion > 0.002) {
     for (int m = 0; m < 2; m++) {
       float tc0, tc1, exitSeam;
@@ -1635,6 +1776,7 @@ float exitCrystal(int row, vec3 ro, vec3 rd, out int kf, out vec3 outExitN) {
     tf = max(0.0, tf - (cBack * r) / dnK);
     outExitN = normalize(nK + 0.16 * gu * tUK + 0.22 * gax * ax);
   }
+#endif
   return max(tf, 0.0);
 }
 
@@ -1708,7 +1850,11 @@ float evalGalliumPuddleSDF(vec3 qGa, float rScale, float tMorph, vec3 coreAnchor
   // Bulbous high-surface-tension capillary rim profile (thickness ~ 0.098 at rest) gathering slightly as it draws upward
   float vScale = mix(rScale, sqrt(rScale), 0.32 * smoothstep(0.05, 0.45, rScale));
   float T = (0.049 + 0.005 * smoothstep(-0.08 * max(rScale, 0.04), 0.0, d2D)) * vScale;
+#if MOBILE_QUALITY
+  float centerSeat = 0.026 * vScale * exp(-dot(uvNorm, uvNorm) * 11.0);
+#else
   float centerSeat = 0.026 * vScale * max(0.0, 1.0 - dot(uvNorm, uvNorm) * 14.0);
+#endif
   float hCamber = centerSeat - 0.004 * vScale * smoothstep(0.04, 0.18, uvNorm.y);
   float dCore2D = max(d2D + T, 0.0);
   float dh = h - hCamber;
@@ -1773,7 +1919,7 @@ bool intersectGalliumMelt(
   int polyId = 0, polyK = 0;
   float polyT = 1e9, polyTf = 1e9;
   for (int i = 0; i < nc; i++) {
-    if (!sphereHit(ro, rd, body(i, 0), polyT)) continue;
+    if (body(i, 2).x <= 0.01 || !sphereHit(ro, rd, body(i, 0), polyT)) continue;
     float tn, tf; int kn, kf;
     if (convexHit(i, ro, rd, tn, tf, kn, kf)) {
       float tCand = max(tn, 0.0);
@@ -1903,7 +2049,12 @@ bool intersectGalliumMelt(
   bool hitPuddle = false;
 
   if (t1 > t0) {
-    for (int st = 0; st < 32; st++) {
+#if MOBILE_QUALITY
+    const int gaMaxSteps = 24;
+#else
+    const int gaMaxSteps = 32;
+#endif
+    for (int st = 0; st < gaMaxSteps; st++) {
       if (t > t1) break;
       float mF = 0.0;
       float d = evalGalliumFastStep(qRo + qRd * t, meltAmt, rScale, tMorph, blobBell, coreAnchor, pA0, ba0, rCap0, pA1, ba1, rCap1, pA2, ba2, rCap2, mF);
@@ -1916,6 +2067,15 @@ bool intersectGalliumMelt(
     }
   }
 
+  if (!hitPuddle && hasPolyHit) {
+    float mFCheck = 0.0;
+    float dAtPoly = evalGalliumFastStep(qRo + qRd * polyT, meltAmt, rScale, tMorph, blobBell, coreAnchor, pA0, ba0, rCap0, pA1, ba1, rCap1, pA2, ba2, rCap2, mFCheck);
+    if (dAtPoly <= 0.0025) {
+      hitPuddle = true;
+      t = polyT;
+    }
+  }
+
   if (!hitPuddle) {
     if (!hasPolyHit) return false;
     // Smooth capillary wetting fillet on the solid crystal wall right where it meets the liquid pool
@@ -1924,6 +2084,15 @@ bool intersectGalliumMelt(
     float dLiqPoly = evalGalliumFastStep(qPoly, meltAmt, rScale, tMorph, blobBell, coreAnchor, pA0, ba0, rCap0, pA1, ba1, rCap1, pA2, ba2, rCap2, mFPoly);
     float wetW = (1.0 - smoothstep(0.005, 0.068, dLiqPoly)) * smoothstep(0.48, 0.90, rScale);
     if (wetW > 0.005) {
+#if MOBILE_QUALITY
+      vec3 nGaW = normalize(vec3(0.055, 0.825, 0.562));
+      vec3 nLiqW = normalize(vec3(
+        0.186646 * nGaW.x + 0.982427 * nGaW.z,
+        nGaW.y,
+        -0.982427 * nGaW.x + 0.186646 * nGaW.z
+      ));
+      polyN = normalize(mix(polyN, nLiqW, wetW * 0.72));
+#else
       float epsW = 0.0018;
       float dm1, dm2, dm3;
       float gxW = evalGalliumFastStep(qPoly + vec3(epsW, 0.0, 0.0), meltAmt, rScale, tMorph, blobBell, coreAnchor, pA0, ba0, rCap0, pA1, ba1, rCap1, pA2, ba2, rCap2, dm1) - dLiqPoly;
@@ -1936,6 +2105,7 @@ bool intersectGalliumMelt(
         -0.982427 * nGaW.x + 0.186646 * nGaW.z
       ));
       polyN = normalize(mix(polyN, nLiqW, wetW * 0.86));
+#endif
     }
     outId = polyId; outTHit = polyT; outTfHit = polyTf;
     outK = CP + 3000 + clamp(polyK, 0, 16);
@@ -1944,7 +2114,12 @@ bool intersectGalliumMelt(
   }
 
   float tLo = tPrev, tHi = t;
-  for (int bs = 0; bs < 3; bs++) {
+#if MOBILE_QUALITY
+  const int gaBisect = 2;
+#else
+  const int gaBisect = 3;
+#endif
+  for (int bs = 0; bs < gaBisect; bs++) {
     float tMid = 0.5 * (tLo + tHi);
     float mFMid = 0.0;
     if (evalGalliumFastStep(qRo + qRd * tMid, meltAmt, rScale, tMorph, blobBell, coreAnchor, pA0, ba0, rCap0, pA1, ba1, rCap1, pA2, ba2, rCap2, mFMid) <= 0.0002) {
@@ -1955,6 +2130,19 @@ bool intersectGalliumMelt(
   }
   float tFinal = 0.5 * (tLo + tHi);
   vec3 qHit = qRo + qRd * tFinal;
+#if MOBILE_QUALITY
+  // 4-tap tetrahedral SDF normal in qGa space (33% fewer SDF evaluations than 6-tap central differences!)
+  const float eps = 0.0020;
+  float dm;
+  vec2 te = vec2(1.0, -1.0);
+  vec3 nGaLocal = normalize(
+    te.xyy * evalGalliumFastStep(qHit + te.xyy * eps, meltAmt, rScale, tMorph, blobBell, coreAnchor, pA0, ba0, rCap0, pA1, ba1, rCap1, pA2, ba2, rCap2, dm) +
+    te.yyx * evalGalliumFastStep(qHit + te.yyx * eps, meltAmt, rScale, tMorph, blobBell, coreAnchor, pA0, ba0, rCap0, pA1, ba1, rCap1, pA2, ba2, rCap2, dm) +
+    te.yxy * evalGalliumFastStep(qHit + te.yxy * eps, meltAmt, rScale, tMorph, blobBell, coreAnchor, pA0, ba0, rCap0, pA1, ba1, rCap1, pA2, ba2, rCap2, dm) +
+    te.xxx * evalGalliumFastStep(qHit + te.xxx * eps, meltAmt, rScale, tMorph, blobBell, coreAnchor, pA0, ba0, rCap0, pA1, ba1, rCap1, pA2, ba2, rCap2, dm) +
+    vec3(0.0, 1e-6, 0.0)
+  );
+#else
   float mF0 = 1.0;
   float d0 = evalGalliumFastStep(qHit, meltAmt, rScale, tMorph, blobBell, coreAnchor, pA0, ba0, rCap0, pA1, ba1, rCap1, pA2, ba2, rCap2, mF0);
 
@@ -1965,6 +2153,7 @@ bool intersectGalliumMelt(
   float gy = evalGalliumFastStep(qHit + vec3(0.0, eps, 0.0), meltAmt, rScale, tMorph, blobBell, coreAnchor, pA0, ba0, rCap0, pA1, ba1, rCap1, pA2, ba2, rCap2, dm2) - d0;
   float gz = evalGalliumFastStep(qHit + vec3(0.0, 0.0, eps), meltAmt, rScale, tMorph, blobBell, coreAnchor, pA0, ba0, rCap0, pA1, ba1, rCap1, pA2, ba2, rCap2, dm3) - d0;
   vec3 nGaLocal = normalize(vec3(gx, gy, gz) + vec3(0.0, 1e-6, 0.0));
+#endif
   // Transform normal back from qGa to cluster space p
   vec3 nPuddleWorld = normalize(vec3(
     0.186646 * nGaLocal.x + 0.982427 * nGaLocal.z,
@@ -1984,7 +2173,7 @@ bool intersectGalliumMelt(
     nFinal = normalize(nFinal - rd * (dot(nFinal, rd) + 0.04));
   }
 
-  outId = hasPolyHit ? polyId : 0;
+  outId = 0;
   outTHit = tFinal;
   outTfHit = hasPolyHit ? max(tFinal + 0.12, polyTf) : (tFinal + 0.16);
   outK = CP + 3000 + 17;
@@ -2074,6 +2263,31 @@ vec3 zonedGemSigma(float hgt) {
   return mix(f_sigma, f_sigmaCore, cMix) * zAtten;
 }
 
+#if MOBILE_QUALITY
+// Lean loop-free single-midpoint Beer-Lambert + 3D hardware inclusion lookup for secondary bounces on mobile
+vec3 insideVolumeBounceMobile(int id, vec3 ro, vec3 rd, float len, out vec3 trans) {
+  vec4 ax = body(id, 1), side = body(id, 2), rt = body(id, 3);
+  float L = max(ax.w, 0.14), r = max(side.w, 0.035), rnd = rt.w;
+  vec3 midP = ro + rd * (0.5 * len);
+  float hgt = crystalHeight01(id, midP);
+  float opticalScale = mix(clamp(0.28 / r, 1.5, 5.8), 1.0, clamp(u_glimmer, 0.0, 1.0));
+  vec3 sigma = zonedGemSigma(hgt) * opticalScale;
+  float absorbLen = mix(max(len, r * 0.45), len, clamp(u_glimmer, 0.0, 1.0));
+  vec3 scat = vec3(0.0);
+  float a = 0.0;
+  float rawScale = mix(0.08, 1.0, clamp(u_rawAmount, 0.0, 1.0));
+  float effInc = (u_milk + u_veils) * rawScale;
+  if (effInc > 0.01) {
+    vec4 v = texture(u_incl, (midP - rt.xyz) / L * 1.4 + vec3(rnd * 17.3, rnd * 31.1, rnd * 7.7));
+    float dens = (u_milk * v.r + u_veils * v.g) * rawScale * 5.4;
+    a = 1.0 - exp(-dens * len);
+    scat = a * f_ambient * u_inclusionLight * 0.85;
+  }
+  trans = (1.0 - a) * exp(-sigma * absorbLen);
+  return scat;
+}
+#endif
+
 vec3 insideVolume(int id, vec3 ro, vec3 rd, float len, float jitter, int maxSteps, out vec3 trans) {
   vec4 ax = body(id, 1), side = body(id, 2), rt = body(id, 3);
   vec3 axis = ax.xyz, root = rt.xyz;
@@ -2124,7 +2338,12 @@ vec3 insideVolume(int id, vec3 ro, vec3 rd, float len, float jitter, int maxStep
   vec3 fGemBodyNorm = normalize(fGemBodyCol + vec3(0.04)) * 1.28;
   float fSigmaLen = length(f_sigma);
   bool hasBiCol = (u_biColour > 0.001);
+#if MOBILE_QUALITY
+  for (int s = 0; s < 3; s++) {
+    if (s >= n) break;
+#else
   for (int s = 0; s < n; s++) {
+#endif
     float stepF = float(s) + jitter;
     vec3 pp = ro + rd * (dt * stepF);
     vec3 rel = pp - root;
@@ -2202,6 +2421,55 @@ vec3 insideVolume(int id, vec3 ro, vec3 rd, float len, float jitter, int maxStep
   float effCrackDrive = clamp(u_fractures * 1.35 + effNeedles * 0.65 + effHairline * 0.55 + (u_iridescence * 0.16 + u_flash * 0.18) * max(u_rainbow, g1), 0.0, 2.2);
   if (effCrackDrive > 0.01 && len > 1e-4) {
     float uid = crystalUid(id);
+#if MOBILE_QUALITY
+    // Single analytical 3D cleavage sheet on mobile using hardware trilinear u_incl lookup (zero n3() hash loops)
+    vec3 hSeed = vec3(uid * 19.3, f_seed, 93.0);
+    float famRoll = hash(hSeed + 0.7);
+    float famWeight = smoothstep(famRoll * 0.42 - 0.06, famRoll * 0.42 + 0.24, effCrackDrive);
+    if (famWeight > 1e-4) {
+      float azK = hash(hSeed) * TAU;
+      float tiltK = mix(0.42, 1.15, hash(hSeed + 1.3));
+      vec3 nLocal0 = normalize(vec3(cos(azK) * sin(tiltK), cos(tiltK), sin(azK) * sin(tiltK)));
+      vec3 crackNormal_k = normalize(t1 * nLocal0.x + axis * nLocal0.y + t2 * nLocal0.z);
+      vec3 crackTan = normalize(cross(crackNormal_k, axis + t1 * 0.35));
+      vec3 crackBit = cross(crackNormal_k, crackTan);
+      vec3 fc_k = root + axis * (L * mix(0.26, 0.72, hash(hSeed + 3.1)));
+      float dn = dot(rd, crackNormal_k);
+      float signedDn = (dn >= 0.0 ? 1.0 : -1.0) * max(abs(dn), 0.08);
+      float t = dot(fc_k - ro, crackNormal_k) / signedDn;
+      if (t > 0.01 * len && t < 0.99 * len) {
+        vec3 hp = ro + rd * t;
+        float invPatchScale = 1.0 / max(r * 1.45, 0.045);
+        float u = dot(hp - fc_k, crackTan) * invPatchScale;
+        float v = dot(hp - fc_k, crackBit) * invPatchScale;
+        vec4 cTex = texture(u_incl, (hp - fc_k) / max(L, 0.15) * 1.6 + off);
+        float crackWarp = (cTex.b - 0.5) * 0.10 * r + r * 0.06 * (u * u - 0.28);
+        float crackPlane = abs(dot(hp - fc_k, crackNormal_k) - 0.04 * r + crackWarp);
+        float sheetHit = 1.0 - smoothstep(0.004 * r, 0.026 * r, crackPlane);
+        float patchEnv = smoothstep(0.08, 0.45, 0.25 + 0.22 * sin(v * 2.1) + 0.24 * (cTex.r - 0.5) - u);
+        float vSpan = 1.0 - smoothstep(0.52, 0.94, abs(v));
+        float mask = famWeight * sheetHit * patchEnv * vSpan;
+        if (mask > 1e-4) {
+          vec3 nCrack = normalize(crackNormal_k + crackTan * (0.12 * u + (cTex.g - 0.5) * 0.16));
+          if (dot(rd, nCrack) > 0.0) nCrack = -nCrack;
+          vec3 reflCrack = reflect(rd, nCrack);
+          vec3 lightDir1 = normalize(vec3(f_lights[0], f_lights[1], f_lights[2]) * f_toWorld);
+          vec3 lightDir2 = normalize(vec3(f_lights[2 * LS], f_lights[2 * LS + 1], f_lights[2 * LS + 2]) * f_toWorld);
+          float catchLight = pow(max(0.0, dot(reflCrack, lightDir1)), 30.0)
+                           + 0.75 * pow(max(0.0, dot(reflCrack, lightDir2)), 26.0)
+                           + 0.14 * pow(1.0 - abs(dot(rd, nCrack)), 8.0);
+          float needleTintAmt = clamp(u_needles * 0.15, 0.0, 0.88);
+          vec3 baseCrackTint = mix(vec3(0.95, 0.97, 1.0), normalize(lin(u_needleColour) + vec3(0.08)) * 1.38, needleTintAmt);
+          vec3 thinFilmCol = spectralRainbow(u * 0.7 + v * 0.35 + cTex.b * 0.5 + hueOff);
+          vec3 crackCol = mix(baseCrackTint, thinFilmCol * (baseCrackTint + vec3(0.18)), smoothstep(0.08, 0.52, catchLight) * 0.78);
+          float crackMod = 0.04 + 2.2 * catchLight;
+          float glowScale = max(u_fractureGlow, 1.15) * 0.58 * (1.0 + 0.20 * effNeedles);
+          scat += T * mask * crackMod * glowScale * crackCol * (f_ambient * 0.55 + vec3(0.22));
+          T *= 1.0 - clamp(mask * (0.02 + 0.22 * clamp(catchLight, 0.0, 1.5)), 0.0, 0.45);
+        }
+      }
+    }
+#else
     float bounceCleaveW = isPrimaryVol ? 1.0 : mix(0.42 * (1.0 - 0.65 * dither), 0.70, g1);
 
     // Studio key, rim, and fill light directions transformed into crystal space
@@ -2347,6 +2615,7 @@ vec3 insideVolume(int id, vec3 ro, vec3 rd, float len, float jitter, int maxStep
       scat += T * mask * crackMod * glowScale * crackCol * envIllum;
       T *= 1.0 - clamp(mask * (0.025 * featherSheet + 0.24 * clamp(catchLight, 0.0, 1.5)), 0.0, 0.48);
     }
+#endif
   }
   trans = T;
   return scat;
@@ -2376,8 +2645,14 @@ void insidePrimaryExtras(int id, vec3 ro, vec3 rd, float len, float travelled, i
     float invLPh = 1.0 / max(L, 0.14);
     vec3 phTint = exp(-mix(f_sigma, f_sigmaCore, 0.4) * 0.35);
     vec3 phLightIn = lightIn * mix(vec3(1.0), normalize(phTint + vec3(0.05)) * 1.25, clamp(length(f_sigma) * 0.22, 0.0, 0.85));
+#if MOBILE_QUALITY
+    int maxPhLayers = clamp(int(ceil(u_phantomLayers)), 0, 2);
+    for (int layer = 0; layer < 2; layer++) {
+      if (layer >= maxPhLayers) break;
+#else
     int maxPhLayers = clamp(int(ceil(u_phantomLayers)), 0, (u_isMobile > 0.5) ? 2 : 4);
     for (int layer = 0; layer < maxPhLayers; layer++) {
+#endif
       float layerWeight = clamp(u_phantomLayers - float(layer), 0.0, 1.0);
       if (layerWeight <= 1e-4) break;
       float pScale = u_phantomSize * (1.0 - 0.21 * float(layer));
@@ -2516,7 +2791,11 @@ vec3 faceNormal(int id, int k, vec3 n, vec3 p, float rough, float footprint, flo
 float evalLongHairlineScratch(vec2 uv, vec3 lp, float angle, float stripFreq, float alongFreq, float densityThresh, float seed, float fwStrip, float baseN, out vec2 outGradUV) {
   float ca = cos(angle), sa = sin(angle);
   vec2 uvRot = vec2(uv.x * ca + uv.y * sa, -uv.x * sa + uv.y * ca);
+#if MOBILE_QUALITY
+  float warp = (fract(baseN + seed * 0.13) - 0.5) * 0.055;
+#else
   float warp = ((u_isMobile > 0.5 ? fract(baseN + seed * 0.13) : n3(lp * 3.4 + seed)) - 0.5) * 0.055;
+#endif
   float uStrip = (uvRot.x + warp) * stripFreq;
   float vAlong = uvRot.y * alongFreq;
   float stripId = floor(uStrip);
@@ -2541,9 +2820,13 @@ float evalLongHairlineScratch(vec2 uv, vec3 lp, float angle, float stripFreq, fl
   if (abs(du) > effWidth * 3.2) return 0.0;
   float aaAtten = clamp(rawWidth / effWidth, 0.0, 1.0);
   float profile = exp(-(du * du) / (effWidth * effWidth)) * lenEnv * aaAtten;
+#if MOBILE_QUALITY
+  float pressure = smoothstep(0.32, 0.74, fract(baseN * 1.7 + h * 7.3));
+#else
   float pressure = (u_isMobile > 0.5)
     ? smoothstep(0.32, 0.74, fract(baseN * 1.7 + h * 7.3))
     : smoothstep(0.32, 0.74, n3(lp * 8.5 + seed + stripId * 1.3));
+#endif
   profile *= (0.35 + 0.65 * pressure) * mix(0.50, 1.0, fract(h * 53.3));
   float dProfDu = (-2.0 * du / effWidth) * profile * aaAtten;
   outGradUV = vec2(ca, sa) * dProfDu;
@@ -2594,8 +2877,12 @@ void evalSurfacePatina(int id, int k, vec3 p, vec3 nBase, float footprint, float
   float aa = 1.0 / (1.0 + 45.0 * uvFootprint);
   float fSeed = uid * 17.3 + f_seed * 0.37;
   float edgeProx = 1.0 - smoothstep(0.0, r * 0.28, dEdge);
-  // Single-octave 3D noise base sample on mobile; full multi-octave on desktop
+  // Hardware 3D texture sample on mobile (zero n3() hash calls); full multi-octave on desktop
+#if MOBILE_QUALITY
+  float baseN = texture(u_incl, lp * 0.65 + uid * 0.19).b;
+#else
   float baseN = n3(lp * 4.8 + fSeed);
+#endif
   float patchEnv = smoothstep(0.42, 0.80, baseN + 0.26 * edgeProx);
 
   float a1 = 0.38 + 0.55 * (hash(vec3(uid, 1.0, 13.0)) - 0.5);
@@ -2604,6 +2891,7 @@ void evalSurfacePatina(int id, int k, vec3 p, vec3 nBase, float footprint, float
   vec2 g1 = vec2(0.0), g2 = vec2(0.0), g3 = vec2(0.0), g4 = vec2(0.0);
   float scr1 = 0.0, scr2 = 0.0, scr4 = 0.0;
   float scr3 = evalLongHairlineScratch(uvFace + vec2(-0.19, 0.43), lp, a3, 7.5, 1.10, 0.86, fSeed + 23.9, uvFootprint * 7.5, baseN, g3);
+#if !MOBILE_QUALITY
   if (patchEnv > 0.001) {
     scr1 = evalLongHairlineScratch(uvFace, lp, a1, 9.5, 1.35, 0.82, fSeed + 3.1, uvFootprint * 9.5, baseN, g1) * patchEnv;
     g1 *= patchEnv;
@@ -2616,17 +2904,26 @@ void evalSurfacePatina(int id, int k, vec3 p, vec3 nBase, float footprint, float
       g4 *= patchEnv;
     }
   }
+#endif
 
   // Faint organic growth-hillock etch steps & horizontal striation surface ledges (anti-aliased by uvFootprint)
   float termFaceW = smoothstep(0.20, 0.65, abs(dot(nBase, ax)));
+#if MOBILE_QUALITY
+  float hillPatchN = baseN;
+#else
   float hillPatchN = (u_isMobile > 0.5) ? baseN : n3(lp * 3.8 + fSeed + 15.1);
+#endif
   float hillPatch = smoothstep(0.54, 0.84, hillPatchN) * mix(0.48, 0.85, termFaceW) * aa;
   float hillock = 0.0;
   float dHill = 0.0;
   if (hillPatch > 0.001) {
+#if MOBILE_QUALITY
+    float hillField = vFace * 11.0 + 4.8 * baseN;
+#else
     float hillField = (u_isMobile > 0.5)
       ? (vFace * 11.0 + 4.8 * baseN)
       : (vFace * 11.0 + 3.8 * n3(lp * 4.2 + fSeed) + 1.4 * n3(lp * 9.5 + fSeed * 1.7));
+#endif
     float hillWave = sin(hillField);
     if (hillWave > 0.55) {
       hillock = pow(hillWave, 14.0) * hillPatch;
@@ -2642,7 +2939,11 @@ void evalSurfacePatina(int id, int k, vec3 p, vec3 nBase, float footprint, float
     float sField = lp.y * 12.0 + 1.8 * sin(lp.y * 9.0 + uFace * 1.6 + fSeed);
     float sSin = sin(sField);
     if (sSin > 0.55) {
+#if MOBILE_QUALITY
+      float striaN = baseN;
+#else
       float striaN = (u_isMobile > 0.5) ? baseN : n3(lp * 4.5 + fSeed + 7.3);
+#endif
       float sWave = pow(sSin, 12.0) * smoothstep(0.38, 0.78, striaN) * aa;
       striaGlint = sWave * u_striations * 0.72 * striaGate;
       dStria = cos(sField) * striaGlint;
@@ -2838,9 +3139,14 @@ vec3 crystalBloomGlint(int id, int k, vec3 p, vec3 rd, vec3 nSmooth, float dEdge
     flashSum += lCol * gemTint * (fGlint * 0.28 * glare);
   }
 
-  // 6 pinpoint studio catch-lights around the orbit ring
+  // Pinpoint studio catch-lights around the orbit ring
   float fPhase = crystalFacetPhase(id, nSmooth);
-  for (int j = 0; j < 6; j++) {
+#if MOBILE_QUALITY
+  const int nCatch = 2;
+#else
+  const int nCatch = 6;
+#endif
+  for (int j = 0; j < nCatch; j++) {
     vec3 spotDir = (j == 0) ? vec3( 0.373644, 0.352274,  0.858281)
                  : (j == 1) ? vec3( 0.770520, 0.628793,  0.104525)
                  : (j == 2) ? vec3( 0.525634, 0.352274, -0.774518)
@@ -2955,6 +3261,7 @@ vec3 shadeMetallicCrystal(int id, int k, vec3 pEntry, vec3 rd, vec3 nRefl, float
     reflLight += bounceOxide * f_ambient * (0.26 * cornerBounceW);
   }
 
+#if !MOBILE_QUALITY
   // 1 secondary metallic reflection bounce max
   int nc = clamp(int(f_crystals + 0.5), 0, MAX_CRYSTALS);
   float bestBT = 1e9;
@@ -2982,6 +3289,7 @@ vec3 shadeMetallicCrystal(int id, int k, vec3 pEntry, vec3 rd, vec3 nRefl, float
     neighborCol = colB * (f_ambient * 0.22 + lights(wRefl2, 0.05) * 0.48 + env(reflDir2, 0.05) * 0.36);
     reflLight = mix(reflLight * seamAO, neighborCol * (0.35 + 0.85 * seamAO), 0.68);
   }
+#endif
 
   // 4. Broad & sharp GGX conductor specular lobes from the 4 studio area lights
   vec3 specBroad = vec3(0.0);
@@ -3032,9 +3340,16 @@ vec3 shadeMetallicCrystal(int id, int k, vec3 pEntry, vec3 rd, vec3 nRefl, float
     vec3 gTan2 = cross(nRefl, gTan1);
     float uCoord = dot(qGa, gTan1);
     float vCoord = dot(qGa, gTan2);
+#if MOBILE_QUALITY
+    vec3 gTex = texture(u_incl, qGa * 2.8 + float(kCrystal) * 0.17).rgb;
+    float brushFine = sin(uCoord * 240.0 + gTex.r * 3.2);
+    float brushCross = sin((uCoord * 0.30 + vCoord * 0.95) * 180.0 + gTex.g * 2.6);
+    float grainMicro = gTex.b - 0.5;
+#else
     float brushFine = sin(uCoord * 240.0 + n3(qGa * 72.0 + float(kCrystal) * 3.1) * 3.2);
     float brushCross = sin((uCoord * 0.30 + vCoord * 0.95) * 180.0 + n3(qGa * 105.0 + float(id) * 4.7) * 2.6);
     float grainMicro = n3(qGa * 195.0 + float(kCrystal) * 5.3) - 0.5;
+#endif
     float solidGrainMask = (1.0 - liqW) * (0.45 + 0.55 * clamp(u_frost * 4.5, 0.0, 1.2));
 
     vec3 nGa = normalize(
@@ -3140,6 +3455,48 @@ vec3 shadeMetallicCrystal(int id, int k, vec3 pEntry, vec3 rd, vec3 nRefl, float
 // Secondary continuation ray for GPU mirrored backgrounds (single-pass, zero nested hop loop)
 vec3 shadeBehindRay(vec3 roIn, vec3 rdIn, int skipIn, float travIn, float jitter, out float firstHitMask) {
   firstHitMask = 0.0;
+#if MOBILE_QUALITY
+  int nc = clamp(int(f_crystals + 0.5), 0, MAX_CRYSTALS);
+  float bT = 1e9;
+  int bId = -1, bK = 0;
+  for (int i = 0; i < nc; i++) {
+    if ((skipIn & (1 << i)) != 0 || !sphereHit(roIn, rdIn, body(i, 0), bT)) continue;
+    float tn, tf; int kn, kf;
+    if (convexHit(i, roIn, rdIn, tn, tf, kn, kf)) {
+      float tC = max(tn, 0.0);
+      if (tf > tC + 1e-4 && tC < bT) {
+        bT = tC; bId = i; bK = kn;
+      }
+    }
+  }
+  vec3 bEnvCol = refractedEnv(rdIn, 0.0, 0.0);
+  if (bId < 0) return bEnvCol;
+  float bRawA = clamp(body(bId, 2).x, 0.0, 1.0);
+  float bAlpha = bRawA * bRawA * (3.0 - 2.0 * bRawA);
+  firstHitMask = bAlpha;
+  if (bAlpha <= 1e-5) return bEnvCol;
+  vec3 bP = roIn + rdIn * bT;
+  vec3 bN = body(bId, PA + bK).xyz;
+  float bMetalW = clamp(max(u_metallic, smoothstep(0.05, 0.55, u_melt)), 0.0, 1.0);
+  vec3 reflEnv = env(reflect(rdIn, bN), 0.04);
+  if (bMetalW > 0.5) {
+    float iridW = clamp((u_iridescence - 0.08) / 0.78, 0.0, 1.0);
+    vec3 mTint = mix(vec3(0.92, 0.78, 0.42), evalBismuthOxidePalette(0.45 + float(bId) * 0.14), iridW);
+    mTint = mix(mTint, vec3(0.92, 0.95, 1.0), smoothstep(0.05, 0.45, u_melt));
+    return mix(bEnvCol, mTint * (reflEnv * 0.65 + f_ambient * 0.35), bAlpha);
+  }
+  float bF = fresnel(max(0.0, -dot(rdIn, bN)), 1.0 / u_ior);
+  vec3 rdB = refract(rdIn, bN, 1.0 / u_ior);
+  rdB = dot(rdB, rdB) > 1e-6 ? normalize(rdB) : rdIn;
+  int bKf; vec3 bExN;
+  float bLen = exitCrystal(bId, bP, rdB, bKf, bExN);
+  vec3 bTrans;
+  vec3 bScat = insideVolumeBounceMobile(bId, bP, rdB, bLen, bTrans);
+  vec3 bOut = refract(rdB, -bExN, u_ior);
+  rdB = dot(bOut, bOut) > 1e-6 ? normalize(bOut) : reflect(rdB, -bExN);
+  vec3 colB = bF * softFacetRefl(reflEnv) * 0.55 + (1.0 - bF * 0.55) * (bScat + bTrans * refractedEnv(rdB, 0.03, 1.0));
+  return mix(bEnvCol, colB, bAlpha);
+#else
   int bId, bK; float bT, bTf;
   vec3 bVoidN; float bVoidBorder, bVoidSeam;
   if (!traceScene(roIn, rdIn, skipIn, bId, bT, bTf, bK, bVoidN, bVoidBorder, bVoidSeam)) {
@@ -3213,6 +3570,7 @@ vec3 shadeBehindRay(vec3 roIn, vec3 rdIn, int skipIn, float travIn, float jitter
     colB = mix(colB, bMetalCol, bMetalW);
   }
   return mix(bEnvCol, colB, bAlpha);
+#endif
 }
 
 // Analytical GPU Mirrored Background:
@@ -3409,6 +3767,25 @@ vec3 evalMirrorBackground(vec2 q, vec3 rd, float rough, float refAlpha, float ji
   return mix(bgWithSurface, crystalReflCol, hitBlend * mirrorMask);
 }
 
+#if MOBILE_QUALITY
+// Lightweight convex-only secondary crystal lookup for behind-crystal cluster transmission on mobile
+bool traceSceneConvexMobile(vec3 ro, vec3 rd, int skipMask, out int id, out float tHit, out int kHit) {
+  bool hit = false; id = 0; kHit = 0; tHit = 1e9;
+  int nc = clamp(int(f_crystals + 0.5), 0, MAX_CRYSTALS);
+  for (int i = 0; i < nc; i++) {
+    if ((skipMask & (1 << i)) != 0 || !sphereHit(ro, rd, body(i, 0), tHit)) continue;
+    float tn, tf; int kn, kf;
+    if (convexHit(i, ro, rd, tn, tf, kn, kf)) {
+      float tCand = max(tn, 0.0);
+      if (tf > tCand + 1e-4 && tCand < tHit) {
+        tHit = tCand; id = i; kHit = kn; hit = true;
+      }
+    }
+  }
+  return hit;
+}
+#endif
+
 void main() {
   vec2 fc = gl_FragCoord.xy;
   vec2 q = (fc - 0.5 * u_res) / min(u_res.x, u_res.y);
@@ -3430,14 +3807,335 @@ void main() {
   float lastHgt = 0.75;
   float fDepth = max(1.0, u_depth);
   int depth = int(ceil(fDepth)), bounces = int(ceil(u_bounces));
-  if (u_isMobile > 0.5) {
-    bounces = min(bounces, 3);
-  }
   float hopCost = 0.0;
   float glimmer = clamp(u_glimmer, 0.0, 2.0);
   float g1 = clamp(glimmer, 0.0, 1.0);
   float effG1 = clamp(glimmerCurve(glimmer), 0.0, 1.0);
 
+#if MOBILE_QUALITY
+  // =========================================================================
+  // MOBILE_QUALITY == 1: Zero-inlining-explosion single-call-site pipeline
+  // (Every heavy function — traceScene, shadeMetallicCrystal, insideVolume,
+  // insidePrimaryExtras, evalSurfacePatina — has at most 1 call site in main()!)
+  // =========================================================================
+  bounces = min(bounces, 4);
+  int id, k; float t, tfHit;
+  vec3 voidWallN = vec3(0.0, 1.0, 0.0);
+  float voidBorder = 1e9, voidSeam = 1e9;
+  // Handle rare transparent/growing front crystals (alpha <= 2e-3) in at most 1 skip retry via convex fallback
+  bool hitPrimary = traceScene(ro, rd, skipMask, id, t, tfHit, k, voidWallN, voidBorder, voidSeam);
+  if (hitPrimary && body(id, 2).x <= 2e-3) {
+    skipMask |= (1 << id);
+    ro += rd * max(t, 0.0);
+    travelled += max(t, 0.0);
+    hitPrimary = traceSceneConvexMobile(ro, rd, skipMask, id, t, k);
+    voidBorder = 1e9; voidSeam = 1e9;
+    voidWallN = (k < CP) ? body(id, PA + k).xyz : vec3(0.0, 1.0, 0.0);
+  }
+  if (hitPrimary) {
+    vec3 pEntry = ro + rd * t;
+    vec3 p = pEntry;
+    travelled += t;
+    skipMask |= (1 << id);
+    float rawAlpha = clamp(body(id, 2).x, 0.0, 1.0);
+    float alpha = rawAlpha * rawAlpha * (3.0 - 2.0 * rawAlpha) * clamp(fDepth, 0.0, 1.0);
+    if (alpha > 2e-3) {
+      float effIor = ior;
+      float uid = crystalUid(id);
+      hopCost += alpha;
+      float footprint = travelled * f_pixAngle;
+      float dither = clamp(u_ditherBlend, 0.0, 1.0);
+      float ditherFrost = smoothstep(0.0, 0.85, dither);
+      float hgtEntry = crystalHeight01(id, pEntry);
+      lastHgt = hgtEntry;
+      float rawAmt = clamp(u_rawAmount, 0.0, 2.0);
+      float rawSurfScale = mix(0.15, 1.0, clamp(rawAmt / 0.4, 0.0, 1.0)) * mix(1.0, 1.65, max(0.0, (rawAmt - 0.4) / 1.6));
+      float baseFrost = u_colourZoning * clamp(rawSurfScale, 0.0, 1.5) * (1.0 - smoothstep(0.14, 0.48, hgtEntry));
+      float rawFrostScale = mix(0.22, 1.0, clamp(rawAmt / 0.4, 0.0, 1.0)) * mix(1.0, 1.35, max(0.0, (rawAmt - 0.4) / 1.6));
+      float effFrostShare = clamp((mix(u_frostShare, max(u_frostShare, 0.54), ditherFrost) + 0.14 * baseFrost) * rawFrostScale, 0.0, 0.88);
+      float effFrost = clamp((mix(u_frost, max(u_frost, 0.32), ditherFrost) + 0.08 * baseFrost) * rawFrostScale, 0.0, 0.46);
+
+      bool isGalliumMelt = (k >= CP + 3000 && k < CP + 4000);
+      bool isCathedralTerrace = (k >= CP + 4000 && k < CP + 4100);
+      int kBaseFace = isGalliumMelt ? (k - (CP + 3000)) : (isCathedralTerrace ? (k - (CP + 4000)) : k);
+      bool isHopperTerrace = (k == CP + 2000);
+      float meltFactor = isGalliumMelt ? clamp(voidBorder, 0.0, 1.0) : 0.0;
+      bool isOcclusionVoid = (k >= CP && k < CP + 5000 && !isHopperTerrace && !isGalliumMelt && !isCathedralTerrace);
+      vec3 rawFaceN = (isOcclusionVoid || isHopperTerrace || isGalliumMelt || isCathedralTerrace)
+        ? voidWallN
+        : body(id, PA + k).xyz;
+      float frostRoll = evalCrystalFrostRoll(id, rawFaceN, uid);
+      float frostW = smoothstep(frostRoll - 0.15, frostRoll + 0.15, effFrostShare);
+      float rough = effFrost * frostW * mix(1.0, 0.25, smoothstep(0.12, 0.58, u_hopper));
+      if (isOcclusionVoid) rough *= 0.20;
+      else if (isGalliumMelt) rough *= (1.0 - smoothstep(0.0, 0.35, meltFactor));
+      else if (isCathedralTerrace) rough *= mix(1.0, 0.55, smoothstep(0.0, 0.35, u_cathedral));
+
+      vec3 adjN = rawFaceN;
+      int ridgeKLo = -1, ridgeKHi = -1;
+      float tMorphM = clamp(u_melt / 0.72, 0.0, 1.0);
+      float gaHoldMetal = smoothstep(0.42, 0.92, tMorphM) * 0.96;
+      float rawMetalW = clamp(max(max(u_metallic, gaHoldMetal), smoothstep(0.02, 0.35, meltFactor)), 0.0, 1.0);
+      float metalW = smoothstep(0.0, 0.95, rawMetalW);
+      bool isOpaqueMetal = (metalW >= 0.995 || (isGalliumMelt && kBaseFace == 17));
+      bool needDEdge = !isGalliumMelt && !(isOpaqueMetal && u_hopper > 0.65) && (u_patina > 0.01 || u_hopper > 0.0 || u_cathedral > 0.0 || u_iridescence > 0.0 || u_bloom > 0.0);
+      float dEdge = isGalliumMelt ? voidSeam : (needDEdge ? edgeDist(id, kBaseFace, p, adjN, ridgeKLo, ridgeKHi) : 1.0);
+      if (isCathedralTerrace) dEdge = min(dEdge, voidBorder);
+
+      vec3 nBaseForRefr = (isCathedralTerrace && !isOpaqueMetal && kBaseFace < CP)
+        ? normalize(mix(body(id, PA + kBaseFace).xyz, rawFaceN, 0.45))
+        : rawFaceN;
+      vec3 n = faceNormal(id, isOcclusionVoid ? 18 : kBaseFace, nBaseForRefr, p, rough, footprint, dEdge);
+      if (isGalliumMelt) n = normalize(mix(n, rawFaceN, smoothstep(0.0, 0.40, meltFactor)));
+
+      vec3 nSurfFull = isCathedralTerrace ? normalize(rawFaceN + (n - nBaseForRefr)) : n;
+      vec3 nRefl = nSurfFull;
+      float patinaGlint = 0.0, patinaRough = 0.0;
+      float patinaFade = 1.0 - smoothstep(0.002, 0.03, tMorphM);
+      if (!isOpaqueMetal && !isOcclusionVoid && !isGalliumMelt && patinaFade > 0.001) {
+        evalSurfacePatina(id, kBaseFace, p, nSurfFull, footprint, dEdge, nRefl, patinaGlint, patinaRough);
+        nRefl = normalize(mix(nSurfFull, nRefl, patinaFade));
+        patinaGlint *= patinaFade;
+        patinaRough *= patinaFade;
+        n = normalize(mix(n, n + (nRefl - nSurfFull), 0.06 * (1.0 - 0.85 * dither)));
+      }
+      float reflRough = max(rough, patinaRough * (1.0 - 0.5 * dither));
+
+      vec3 hopCol = vec3(0.0);
+      vec3 hopThr = vec3(1.0);
+      vec3 metalSurfCol = (metalW > 0.005)
+        ? shadeMetallicCrystal(id, kBaseFace, pEntry, rd, nRefl, reflRough, dEdge, footprint, meltFactor)
+        : vec3(0.0);
+      if (isOpaqueMetal) {
+        col += thr * alpha * metalSurfCol;
+        thr *= (1.0 - alpha);
+      } else {
+        if (metalW > 0.005) {
+          col += thr * (alpha * metalW) * metalSurfCol;
+          thr *= (1.0 - alpha * metalW);
+        }
+        float effGlare = (isOcclusionVoid ? min(1.0, glare * 1.15 + 0.12) : glare) * (1.0 - 0.30 * dither);
+        float cosEntry = mix(max(0.32, -dot(rd, nRefl)), clamp(-dot(rd, nRefl), 0.0, 1.0), g1);
+        float F = fresnel(cosEntry, 1.0 / effIor);
+        vec3 rawEntryRefl = softFacetRefl(env(reflect(rd, nRefl), reflRough), hgtEntry);
+        vec3 entryRefl = facetIridescence(id, kBaseFace, p, rd, nRefl, dEdge, rawEntryRefl);
+        vec3 entryFlash = crystalBloomGlint(id, kBaseFace, p, rd, nRefl, dEdge, reflRough) * 0.55 * (1.0 - 0.25 * dither);
+        float iridReflBoost = clamp(F + (u_iridescence * u_rainbow) * 0.04 + patinaGlint * 0.08 * (1.0 - 0.6 * dither), 0.0, mix(0.46, 0.38, dither)) * (0.18 + 0.76 * effGlare);
+        float entryReflW = mix(iridReflBoost, F * 0.90, g1);
+        vec3 patinaLight = (0.42 * f_ambient + 0.48 * entryRefl + vec3(0.05)) * vec3(0.96, 0.98, 1.0);
+        hopCol += (entryReflW * entryRefl + patinaGlint * 0.12 * (1.0 - 0.55 * dither) * patinaLight + entryFlash);
+        hopCol += iridescentFilm(id, kBaseFace, p, rd, nRefl, dEdge);
+        hopThr *= mix(1.0 - F * (0.3 + 0.7 * effGlare), 1.0 - F, g1);
+
+        vec3 refrIn = refract(rd, n, 1.0 / effIor);
+        vec3 rdC = dot(refrIn, refrIn) > 1e-6 ? normalize(refrIn) : rd;
+        vec3 pathDisp = (rdC - rd) / max(effIor - 1.0, 0.2);
+        vec3 roC = p;
+        float travC = travelled;
+        int kf = 0;
+        vec3 rawExitN0;
+        float len0 = exitCrystal(id, roC, rdC, kf, rawExitN0);
+        vec3 trans0;
+        int steps0 = min(int(u_inclusionSteps + 0.5), 3);
+        vec3 inScat0 = insideVolume(id, roC, rdC, len0, jitter, steps0, trans0);
+        insidePrimaryExtras(id, roC, rdC, len0, travC, inScat0, trans0);
+        hopCol += hopThr * inScat0;
+        hopThr *= trans0;
+        travC += len0;
+        p = roC + rdC * len0;
+
+        float exitFrostRoll = evalCrystalFrostRoll(id, rawExitN0, uid);
+        float exitRoughBase = effFrost * smoothstep(exitFrostRoll - 0.15, exitFrostRoll + 0.15, effFrostShare);
+        float crispExitRough = smoothstep(exitFrostRoll - 0.12, exitFrostRoll + 0.12, max(u_frostShare * 0.68, effFrostShare * 0.52 * dither)) * (max(u_frost, effFrost * 0.65 * dither) * mix(0.24, 0.36, dither));
+        float fr = mix(exitRoughBase, crispExitRough, effG1 * (1.0 - 0.32 * dither));
+        vec3 nf = faceNormal(id, kf < CP ? kf : 18, rawExitN0, p, kf < CP ? fr : fr * 0.2, travC * f_pixAngle, 1.0);
+        pathDisp += (rdC - nf * dot(rdC, nf)) * 0.55;
+        if (g1 > 0.01 && kf == 16 && dot(body(id, PA + 16).xyz, body(id, 1).xyz) < -0.92) {
+          hopThr *= (1.0 - 0.88 * g1);
+        }
+        vec3 o = refract(rdC, -nf, effIor);
+
+        // Compile-time bounded internal TIR bounces (at most 4 bounces using loop-free insideVolumeBounceMobile!)
+        int maxB = clamp((g1 > 0.01) ? bounces : (bounces + 1), 1, 5);
+        for (int b = 1; b < 5; b++) {
+          if (b >= maxB || dot(o, o) >= 1e-6 || dot(hopThr, hopThr) < 1e-4) break;
+          float Fb = fresnel(dot(rdC, nf), effIor);
+          vec3 reflBDir = reflect(rdC, -nf);
+          vec3 bounceRefl = facetIridescence(id, kf, p, rdC, -nf, 1.0, softFacetRefl(env(reflBDir, fr), hgtEntry));
+          hopCol += hopThr * (Fb * bounceRefl * 0.26 * (1.0 - 0.65 * g1) * (0.20 + 0.80 * glare));
+          pathDisp = reflect(pathDisp, -nf) + (reflBDir - nf * dot(reflBDir, nf)) * 0.28;
+          rdC = reflBDir;
+          roC = p;
+          vec3 rawExitNB;
+          float lenB = exitCrystal(id, roC, rdC, kf, rawExitNB);
+          vec3 transB;
+          vec3 inScatB = insideVolumeBounceMobile(id, roC, rdC, lenB, transB);
+          hopCol += hopThr * inScatB;
+          hopThr *= transB;
+          travC += lenB;
+          p = roC + rdC * lenB;
+          exitFrostRoll = evalCrystalFrostRoll(id, rawExitNB, uid);
+          exitRoughBase = effFrost * smoothstep(exitFrostRoll - 0.15, exitFrostRoll + 0.15, effFrostShare);
+          crispExitRough = smoothstep(exitFrostRoll - 0.12, exitFrostRoll + 0.12, max(u_frostShare * 0.68, effFrostShare * 0.52 * dither)) * (max(u_frost, effFrost * 0.65 * dither) * mix(0.24, 0.36, dither));
+          fr = mix(exitRoughBase, crispExitRough, effG1 * (1.0 - 0.32 * dither));
+          nf = faceNormal(id, kf < CP ? kf : 18, rawExitNB, p, kf < CP ? fr : fr * 0.2, travC * f_pixAngle, 1.0);
+          if (g1 > 0.01 && kf == 16 && dot(body(id, PA + 16).xyz, body(id, 1).xyz) < -0.92) {
+            hopThr *= (1.0 - 0.88 * g1);
+          }
+          o = refract(rdC, -nf, effIor);
+        }
+
+        bool leftCrystal = (dot(o, o) >= 1e-6);
+        if (!leftCrystal) {
+          if (g1 >= 0.5) {
+            col += thr * hopCol;
+            lastRefracted = false;
+          } else {
+            o = rdC;
+            leftCrystal = true;
+          }
+        }
+        if (leftCrystal) {
+          float cosExitI = dot(rdC, nf);
+          float Fo = fresnel(cosExitI, effIor);
+          float exitHgt = clamp(dot(p - body(id, 3).xyz, body(id, 1).xyz) / max(body(id, 1).w, 0.1), 0.0, 1.0);
+          float isRootCut = ((kf == 16 && dot(body(id, PA + 16).xyz, body(id, 1).xyz) < -0.85) ? 1.0 : (1.0 - smoothstep(0.06, 0.20, exitHgt)));
+          vec3 reflExitDir = reflect(rdC, -nf);
+          vec3 baseExitEnv = softFacetRefl(env(reflExitDir, fr), hgtEntry);
+          vec3 stripExitEnv = glimmerStripLights(f_toWorld * reflExitDir, fr) * (1.0 - isRootCut);
+          if (u_fire > 0.0) {
+            float effGlim = glimmerCurve(glimmer);
+            vec3 exitTan = rdC - nf * cosExitI;
+            vec3 rSpread = (reflect(pathDisp, -nf) * 0.48 + exitTan * 0.28) * (u_fire * 0.82 * effGlim);
+            vec3 dR = normalize(reflExitDir - rSpread);
+            vec3 dB = normalize(reflExitDir + rSpread);
+            vec3 sR = glimmerStripLights(f_toWorld * dR, fr) * (1.0 - isRootCut);
+            vec3 sB = glimmerStripLights(f_toWorld * dB, fr) * (1.0 - isRootCut);
+            stripExitEnv = vec3(
+              mix(sR.r, stripExitEnv.r, 0.12),
+              mix(stripExitEnv.g, 0.5 * (sR.g + sB.g), 0.16),
+              mix(sB.b, stripExitEnv.b, 0.12)
+            );
+          }
+          vec3 rawExitEnv = baseExitEnv + stripExitEnv;
+          vec3 exitRefl = facetIridescence(id, kf, p, rdC, -nf, 1.0, rawExitEnv / (1.0 + 0.24 * max(rawExitEnv.r, max(rawExitEnv.g, rawExitEnv.b))));
+          float exitReflW = mix(0.36 * (1.0 - 0.28 * dither) * (0.15 + 0.85 * glare), 0.38 * (1.0 - 0.85 * isRootCut), effG1);
+          hopCol += hopThr * (Fo * exitRefl * exitReflW);
+          hopThr *= mix(1.0 - Fo * (0.3 + 0.7 * glare * (1.0 - 0.35 * dither)), 1.0 - Fo, g1);
+
+          if (alpha < 0.999) {
+            vec3 cExitDir = normalize(o);
+            col += thr * alpha * (hopCol + hopThr * refractedEnv(cExitDir, fr, 1.0, hgtEntry));
+            thr *= (1.0 - alpha);
+            ro = pEntry;
+          } else {
+            col += thr * hopCol;
+            thr *= hopThr * (1.0 - 0.65 * isRootCut * g1);
+            lastIn = rdC;
+            lastN = nf;
+            lastPathDisp = pathDisp;
+            lastRough = max(fr, rough * 0.45);
+            lastFireAlpha = 1.0 - 0.88 * isRootCut * g1;
+            lastRefracted = true;
+            rd = normalize(o);
+            ro = p;
+            travelled = travC;
+
+            // Lean secondary behind-crystal cluster transmission hop with 1 TIR bounce & strip-light fire (zero duplicate traceScene/insideVolume!)
+            int id2, k2; float t2;
+            if (hopCost < fDepth && dot(thr, thr) > 1e-4 && traceSceneConvexMobile(ro, rd, skipMask, id2, t2, k2)) {
+              float a2 = clamp(body(id2, 2).x, 0.0, 1.0) * clamp(fDepth - hopCost, 0.0, 1.0);
+              if (a2 > 0.01) {
+                vec3 p2 = ro + rd * t2;
+                vec3 n2 = body(id2, PA + k2).xyz;
+                float F2 = fresnel(max(0.0, -dot(rd, n2)), 1.0 / effIor);
+                vec3 refl2 = softFacetRefl(env(reflect(rd, n2), lastRough), lastHgt);
+                vec3 refr2 = refract(rd, n2, 1.0 / effIor);
+                vec3 rd2 = dot(refr2, refr2) > 1e-6 ? normalize(refr2) : rd;
+                vec3 pathDisp2 = lastPathDisp + (rd2 - rd) / max(effIor - 1.0, 0.2);
+                int kf2; vec3 nEx2;
+                float len2 = exitCrystal(id2, p2, rd2, kf2, nEx2);
+                vec3 tr2;
+                vec3 sc2 = insideVolumeBounceMobile(id2, p2, rd2, len2, tr2);
+                vec3 pEx2 = p2 + rd2 * len2;
+                vec3 o2 = refract(rd2, -nEx2, effIor);
+                if (dot(o2, o2) <= 1e-6) {
+                  float Fb2 = fresnel(dot(rd2, nEx2), effIor);
+                  vec3 rDir2 = reflect(rd2, -nEx2);
+                  sc2 += tr2 * (Fb2 * softFacetRefl(env(rDir2, lastRough), lastHgt) * 0.24 * (1.0 - 0.65 * g1));
+                  pathDisp2 = reflect(pathDisp2, -nEx2) + (rDir2 - nEx2 * dot(rDir2, nEx2)) * 0.28;
+                  rd2 = rDir2;
+                  float len2b = exitCrystal(id2, pEx2, rd2, kf2, nEx2);
+                  vec3 tr2b;
+                  vec3 sc2b = insideVolumeBounceMobile(id2, pEx2, rd2, len2b, tr2b);
+                  sc2 += tr2 * sc2b;
+                  tr2 *= tr2b;
+                  pEx2 += rd2 * len2b;
+                  o2 = refract(rd2, -nEx2, effIor);
+                }
+                float Fo2 = fresnel(dot(rd2, nEx2), effIor);
+                vec3 rEx2 = reflect(rd2, -nEx2);
+                vec3 strip2 = glimmerStripLights(f_toWorld * rEx2, lastRough);
+                vec3 exEnv2 = softFacetRefl(env(rEx2, lastRough), lastHgt) + strip2;
+                sc2 += tr2 * (Fo2 * (exEnv2 / (1.0 + 0.24 * max(exEnv2.r, max(exEnv2.g, exEnv2.b)))) * 0.36);
+                if (dot(o2, o2) > 1e-6) {
+                  col += thr * a2 * (F2 * refl2 * mix(0.35, 0.85, g1) + (1.0 - F2) * sc2);
+                  thr = mix(thr, thr * (1.0 - F2) * (1.0 - Fo2 * 0.65) * tr2, a2);
+                  lastIn = rd2;
+                  lastN = nEx2;
+                  lastPathDisp = pathDisp2 + (rd2 - nEx2 * dot(rd2, nEx2)) * 0.55;
+                  rd = normalize(o2);
+                } else {
+                  col += thr * a2 * (F2 * refl2 * mix(0.35, 0.85, g1) + (1.0 - F2) * sc2);
+                  if (g1 >= 0.5) lastRefracted = false;
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  if (dot(thr, thr) > 0.0) {
+    float dither = clamp(u_ditherBlend, 0.0, 1.0);
+    float effGlimmer = glimmerCurve(glimmer);
+    float effIrid = u_iridescence * u_rainbow;
+    float effFire = mix(u_fire, u_fire * 0.75, dither) * (1.0 + 0.15 * effGlimmer) + effIrid * 0.035;
+    if (lastRefracted && effFire > 0.005 && lastFireAlpha > 1e-4) {
+      // Smooth 5-tap continuous spectral Cauchy dispersion (zero discrete RGB banding, zero geometry/texture calls!)
+      float dispIor = mix(1.0, ior, lastFireAlpha);
+      float dispFire = effFire * lastFireAlpha;
+      vec3 acc = vec3(0.0), wsum = vec3(0.0);
+      for (int i = 0; i < 5; i++) {
+        float x = (float(i) + 0.5) * 0.2;
+        vec3 dw = (x - vec3(0.14, 0.5, 0.86)) / 0.40;
+        vec3 w = max(1.0 - dw * dw, 0.0);
+        vec3 inWave = normalize(lastIn + lastPathDisp * (dispFire * (x - 0.5) * 0.36 * effG1));
+        vec3 o = refract(inWave, -lastN, dispIor + dispFire * (x - 0.5) * 2.0);
+        wsum += w;
+        if (dot(o, o) > 1e-6) {
+          float tirFeather = smoothstep(0.0, 0.18, abs(dot(o, lastN)));
+          vec3 sampleDir = normalize(mix(rd, o, lastFireAlpha));
+          vec3 eCol = refractedEnv(sampleDir, lastRough, lastFireAlpha, lastHgt) * mix(0.28, 1.0, tirFeather);
+          if (effIrid > 0.0) {
+            float defl = length(sampleDir - initialRd);
+            vec3 prism = spectralRainbow(defl * 2.4 + x * 0.85);
+            eCol += prism * f_ambient * effIrid * mix(0.32, 0.18, dither) * lastFireAlpha * smoothstep(0.04, 0.45, defl);
+          }
+          acc += w * eCol;
+        }
+      }
+      col += thr * acc / max(wsum, vec3(1e-4));
+    } else {
+      col += thr * evalMirrorBackground(q, rd, lastRough, lastFireAlpha, jitter);
+    }
+  }
+  outColor = encodeHdr(col);
+#else
+  if (u_isMobile > 0.5) {
+    bounces = min(bounces, 3);
+  }
   int maxHops = clamp(depth + 1, 1, 5);
   bool primaryEvaluated = false;
 
@@ -3843,6 +4541,7 @@ void main() {
     }
   }
   outColor = encodeHdr(col);
+#endif
 }`,
 
   bright: `
@@ -3964,7 +4663,11 @@ void main() {
   c = mix(c, u_studioEdge, clamp(u_vignette * dot(q, q) * 2.6, 0.0, 1.0));
   c = filmDust(c, fc, f_px, f_frame, u_dust);
   c = filmGrain(c, fc, f_px, f_frame, u_grainAmount, u_grainSize, u_grainSharpness, u_grainClump);
+#if MOBILE_QUALITY
+  c += ditherIgn8(fc);
+#else
   c += (hash(vec3(fc, f_frame)) - 0.5) / 255.0;
+#endif
   outColor = vec4(c, 1.0);
 }`,
 };

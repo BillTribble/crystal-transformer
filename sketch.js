@@ -4,7 +4,7 @@
 
 import SHADER from './shader.js';
 import { buildCluster, cluster } from './cluster.js';
-import { FULLSCREEN_VERT, frameUniforms, probeFloatTargets, program, shaderHeader, shaderParams, uploadFrame, uploadParams } from './kit/gl.js';
+import { FULLSCREEN_VERT, detectMobileDevice, frameUniforms, probeFloatTargets, program, shaderHeader, shaderParams, uploadFrame, uploadParams } from './kit/gl.js';
 
 const UNIT_INCL = 0, UNIT_HDR = 1, UNIT_BLOOM_A = 2, UNIT_BLOOM_B = 3;
 const BLOOM_DIVISOR = 4;
@@ -15,6 +15,7 @@ export default function create({ canvas, P, model, degrade }) {
   const sketchStartPerf = performance.now();
   const sp = new URLSearchParams(typeof location !== 'undefined' ? location.search : '');
   const isCapture = sp.has('capture');
+  const isMobile = detectMobileDevice();
   let holdWireframe = sp.has('wireframe');
   const pinnedFillIn = sp.has('fillin') ? Math.max(0, Math.min(1, parseFloat(sp.get('fillin')))) : null;
 
@@ -33,10 +34,15 @@ export default function create({ canvas, P, model, degrade }) {
   let gl = null;
   let extParallel = null;
   function ensureGl() {
-    if (gl) return gl;
+    if (gl && !gl.isContextLost()) return gl;
     gl = canvas.getContext('webgl2', {
-      alpha: false, antialias: false, depth: false, stencil: false,
-      premultipliedAlpha: false, preserveDrawingBuffer: true, powerPreference: 'high-performance',
+      alpha: false,
+      antialias: false,
+      depth: false,
+      stencil: false,
+      premultipliedAlpha: false,
+      preserveDrawingBuffer: isMobile ? Boolean(isCapture) : true,
+      powerPreference: isMobile ? 'default' : 'high-performance',
     });
     if (!gl) throw new Error('WebGL2 is not available in this browser.');
     extParallel = gl.getExtension('KHR_parallel_shader_compile');
@@ -45,11 +51,11 @@ export default function create({ canvas, P, model, degrade }) {
 
   const uniformParams = shaderParams(model.params);
   const { vals: frameVals, list: frameList } = frameUniforms(SHADER.frameUniforms);
-  const INCL = SHADER.inclSize;
+  const INCL = isMobile ? 32 : SHADER.inclSize;
   const noiseVol = new Uint8Array(INCL * INCL * INCL * 4);
 
   let ready = false, shaderReady = false, buildStage = 0, vao = null, ubo = null;
-  let passBackdrop = null, passTrace = null, passBright = null, passBlurH = null, passBlurV = null, passComposite = null;
+  let passBackdrop = null, passTrace = null, passBright = null, passBlur = null, passComposite = null;
   let pendingPrograms = null;
   let inclTex = null, bakedSeed = NaN;
   let hdrTex = null, hdrFbo = null, bloomA = null, bloomAFbo = null, bloomB = null, bloomBFbo = null;
@@ -65,8 +71,9 @@ export default function create({ canvas, P, model, degrade }) {
   const faceFront = new Uint8Array(24);
   const faceLight = new Float32Array(24);
 
-  function startCompileAsync(name, src, samplers) {
-    const fragSrc = shaderHeader(uniformParams, frameList) + SHADER.common + src;
+  function startCompileAsync(name, src, samplers, postOnly = false) {
+    const commonBlock = (postOnly && SHADER.commonPost) ? SHADER.commonPost : SHADER.common;
+    const fragSrc = shaderHeader(uniformParams, frameList, isMobile) + commonBlock + src;
     const vs = gl.createShader(gl.VERTEX_SHADER);
     gl.shaderSource(vs, FULLSCREEN_VERT);
     gl.compileShader(vs);
@@ -82,12 +89,17 @@ export default function create({ canvas, P, model, degrade }) {
 
   function finishPass(spec) {
     const { name, prog, vs, fs, samplers } = spec;
-    const fsLog = !gl.getShaderParameter(fs, gl.COMPILE_STATUS) ? gl.getShaderInfoLog(fs) : '';
+    const linked = gl.getProgramParameter(prog, gl.LINK_STATUS);
+    if (!linked && !gl.isContextLost()) {
+      const vsLog = !gl.getShaderParameter(vs, gl.COMPILE_STATUS) ? gl.getShaderInfoLog(vs) : '';
+      const fsLog = !gl.getShaderParameter(fs, gl.COMPILE_STATUS) ? gl.getShaderInfoLog(fs) : '';
+      const progLog = gl.getProgramInfoLog(prog);
+      gl.deleteShader(vs);
+      gl.deleteShader(fs);
+      throw new Error('Program "' + name + '" failed to link:\n' + (vsLog ? vsLog + '\n' : '') + (fsLog ? fsLog + '\n' : '') + progLog);
+    }
     gl.deleteShader(vs);
     gl.deleteShader(fs);
-    if (!gl.getProgramParameter(prog, gl.LINK_STATUS) && !gl.isContextLost()) {
-      throw new Error('Program "' + name + '" failed to link:\n' + (fsLog ? fsLog + '\n' : '') + gl.getProgramInfoLog(prog));
-    }
     const loc = (n) => gl.getUniformLocation(prog, n);
     gl.useProgram(prog);
     for (const s in samplers) gl.uniform1i(loc(s), samplers[s]);
@@ -95,7 +107,7 @@ export default function create({ canvas, P, model, degrade }) {
       prog,
       version: -1,
       uRes: loc('u_res'), uScreen: loc('u_screen'), uTime: loc('u_time'), uRealTime: loc('u_realTime'),
-      uSlice: loc('u_slice'), uDir: loc('u_dir'),
+      uSlice: loc('u_slice'), uDir: loc('u_dir'), uSrc: loc('u_src'),
       paramLocs: uniformParams.map((p) => loc('u_' + p.key)),
       frameLocs: frameList.map((f) => loc(f.name)),
     };
@@ -150,28 +162,34 @@ export default function create({ canvas, P, model, degrade }) {
     bakedSeed = NaN;
     bake();
 
-    floatTargets = probeFloatTargets(gl);
+    // On mobile, use compact RGBA8 FBOs directly (encodeHdr stores [0,1) Reinhard-compressed HDR, saving 50% VRAM & skipping probeFloatTargets's synchronous gl.getError() IPC stall!)
+    floatTargets = isMobile ? false : probeFloatTargets(gl);
     hdrTex = texture2D(UNIT_HDR);
     bloomA = texture2D(UNIT_BLOOM_A);
     bloomB = texture2D(UNIT_BLOOM_B);
     hdrW = hdrH = bloomW = bloomH = 0;
     sizeTargets();
     hdrFbo = framebuffer(hdrTex);
-    const hdrOk = gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
     bloomAFbo = framebuffer(bloomA);
-    const bloomAOk = gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
     bloomBFbo = framebuffer(bloomB);
-    const bloomBOk = gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
-    if (floatTargets && (!hdrOk || !bloomAOk || !bloomBOk)) {
-      floatTargets = false;
-      hdrW = hdrH = bloomW = bloomH = 0;
-      sizeTargets();
+    if (floatTargets) {
       gl.bindFramebuffer(gl.FRAMEBUFFER, hdrFbo);
-      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, hdrTex, 0);
+      const hdrOk = gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
       gl.bindFramebuffer(gl.FRAMEBUFFER, bloomAFbo);
-      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, bloomA, 0);
+      const bloomAOk = gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
       gl.bindFramebuffer(gl.FRAMEBUFFER, bloomBFbo);
-      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, bloomB, 0);
+      const bloomBOk = gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
+      if (!hdrOk || !bloomAOk || !bloomBOk) {
+        floatTargets = false;
+        hdrW = hdrH = bloomW = bloomH = 0;
+        sizeTargets();
+        gl.bindFramebuffer(gl.FRAMEBUFFER, hdrFbo);
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, hdrTex, 0);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, bloomAFbo);
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, bloomA, 0);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, bloomBFbo);
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, bloomB, 0);
+      }
     }
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 
@@ -184,12 +202,11 @@ export default function create({ canvas, P, model, degrade }) {
     if (buildStage < 1) initGlResourcesAndBake();
     if (buildStage >= 2) return;
     pendingPrograms = {
-      backdrop: startCompileAsync('backdrop', SHADER.backdrop, {}),
-      trace: startCompileAsync('trace', SHADER.trace, { u_incl: UNIT_INCL }),
-      bright: startCompileAsync('bright', SHADER.bright, { u_hdr: UNIT_HDR }),
-      blurH: startCompileAsync('blurH', SHADER.blur, { u_src: UNIT_BLOOM_A }),
-      blurV: startCompileAsync('blurV', SHADER.blur, { u_src: UNIT_BLOOM_B }),
-      composite: startCompileAsync('composite', SHADER.composite, { u_hdr: UNIT_HDR, u_bloomTex: UNIT_BLOOM_A }),
+      backdrop: startCompileAsync('backdrop', SHADER.backdrop, {}, false),
+      trace: startCompileAsync('trace', SHADER.trace, { u_incl: UNIT_INCL }, false),
+      bright: startCompileAsync('bright', SHADER.bright, { u_hdr: UNIT_HDR }, true),
+      blur: startCompileAsync('blur', SHADER.blur, { u_src: UNIT_BLOOM_A }, true),
+      composite: startCompileAsync('composite', SHADER.composite, { u_hdr: UNIT_HDR, u_bloomTex: UNIT_BLOOM_A }, true),
     };
     buildStage = 2;
   }
@@ -210,15 +227,9 @@ export default function create({ canvas, P, model, degrade }) {
     passBackdrop = finishPass(pendingPrograms.backdrop);
     passTrace = finishPass(pendingPrograms.trace);
     passBright = finishPass(pendingPrograms.bright);
-    passBlurH = finishPass(pendingPrograms.blurH);
-    passBlurV = finishPass(pendingPrograms.blurV);
+    passBlur = finishPass(pendingPrograms.blur);
     passComposite = finishPass(pendingPrograms.composite);
     pendingPrograms = null;
-
-    gl.useProgram(passBlurH.prog);
-    gl.uniform2f(passBlurH.uDir, 1, 0);
-    gl.useProgram(passBlurV.prog);
-    gl.uniform2f(passBlurV.uDir, 0, 1);
 
     gl.uniformBlockBinding(passTrace.prog, gl.getUniformBlockIndex(passTrace.prog, 'Bodies'), 0);
     buildStage = 3;
@@ -237,7 +248,13 @@ export default function create({ canvas, P, model, degrade }) {
     fillInProgress = 1.0;
     wireframeAlpha = 0.0;
     fillClockStarted = true;
-    if (wfCanvas) wfCanvas.style.display = 'none';
+    if (wfCanvas) {
+      wfCanvas.style.display = 'none';
+      if (isMobile) {
+        wfCanvas.width = 1;
+        wfCanvas.height = 1;
+      }
+    }
   }
 
   function buildAllSync() {
@@ -270,7 +287,7 @@ export default function create({ canvas, P, model, degrade }) {
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   }
   function bake() {
-    SHADER.fillNoiseVolume(noiseVol, P.seed.value);
+    SHADER.fillNoiseVolume(noiseVol, P.seed.value, INCL);
     gl.activeTexture(gl.TEXTURE0 + UNIT_INCL);
     gl.bindTexture(gl.TEXTURE_3D, inclTex);
     gl.texSubImage3D(gl.TEXTURE_3D, 0, 0, 0, 0, INCL, INCL, INCL, gl.RGBA, gl.UNSIGNED_BYTE, noiseVol);
@@ -285,9 +302,13 @@ export default function create({ canvas, P, model, degrade }) {
       return;
     }
     if (wfCanvas.style.display === 'none') wfCanvas.style.display = 'block';
-    const dpr = Math.max(1, pxRatio || window.devicePixelRatio || 1);
-    const w = (canvas.width > 300 ? canvas.width : Math.round((window.innerWidth || 1280) * dpr));
-    const h = (canvas.height > 150 ? canvas.height : Math.round((window.innerHeight || 800) * dpr));
+    const dpr = isMobile
+      ? Math.min(1.25, Math.max(1, window.devicePixelRatio || 1))
+      : Math.max(1, pxRatio || window.devicePixelRatio || 1);
+    const cw = canvas.clientWidth || window.innerWidth || (isMobile ? 390 : 1280);
+    const ch = canvas.clientHeight || window.innerHeight || (isMobile ? 844 : 800);
+    const w = isMobile ? Math.max(1, Math.round(cw * dpr)) : (canvas.width > 300 ? canvas.width : Math.round(cw * dpr));
+    const h = isMobile ? Math.max(1, Math.round(ch * dpr)) : (canvas.height > 150 ? canvas.height : Math.round(ch * dpr));
     if (wfCanvas.width !== w || wfCanvas.height !== h) {
       wfCanvas.width = w;
       wfCanvas.height = h;
@@ -465,12 +486,31 @@ export default function create({ canvas, P, model, degrade }) {
     ready = false;
     shaderReady = false;
     buildStage = 0;
+    gl = null;
+    extParallel = null;
     vao = ubo = inclTex = hdrTex = hdrFbo = bloomA = bloomAFbo = bloomB = bloomBFbo = null;
-    passBackdrop = passTrace = passBright = passBlurH = passBlurV = passComposite = null;
+    passBackdrop = passTrace = passBright = passBlur = passComposite = null;
     pendingPrograms = null;
+    fillInProgress = 0.0;
+    wireframeAlpha = 1.0;
+    fillClockStarted = false;
+    drawWireframeOverlay(1.0, 1.0);
     degrade(0.6);
   });
-  canvas.addEventListener('webglcontextrestored', buildAllSync);
+  canvas.addEventListener('webglcontextrestored', () => {
+    if (isCapture && !holdWireframe) {
+      buildAllSync();
+    } else {
+      buildStage = 0;
+      shaderReady = false;
+      wireframeFrames = 0;
+      fillInProgress = 0.0;
+      wireframeAlpha = 1.0;
+      fillClockStarted = false;
+      ready = true;
+      drawWireframeOverlay(1.0, 1.0);
+    }
+  });
 
   // In capture mode (?capture=1), build synchronously so frame 1 is immediately ray-traced;
   // in interactive mode, render the 3D Quartz Wireframe immediately (<5ms) and compile shaders asynchronously!
@@ -478,9 +518,9 @@ export default function create({ canvas, P, model, degrade }) {
   if (isCapture && !holdWireframe) {
     buildAllSync();
   } else {
-    const initW = window.innerWidth || 1280;
-    const initH = window.innerHeight || 800;
-    const initDpr = Math.min(2, window.devicePixelRatio || 1);
+    const initW = window.innerWidth || (isMobile ? 390 : 1280);
+    const initH = window.innerHeight || (isMobile ? 844 : 800);
+    const initDpr = Math.min(isMobile ? 1.25 : 2, window.devicePixelRatio || 1);
     pxRatio = initDpr;
     buildCluster(P, initW, initH);
     clusterVersion = model.version;
@@ -498,6 +538,8 @@ export default function create({ canvas, P, model, degrade }) {
     get firstWireframeNavMs() { return firstWireframeNavMs; },
     get shaderReadyMs() { return shaderReadyMs; },
     get wireframeCanvas() { return wfCanvas; },
+    get floatTargets() { return floatTargets; },
+    get inclEdge() { return INCL; },
     drawWireframe: (bgAlpha = 1.0, wfAlpha = 1.0) => drawWireframeOverlay(bgAlpha, wfAlpha),
     ensureReadySync,
     resize(_w, _h, px) {
@@ -518,15 +560,20 @@ export default function create({ canvas, P, model, degrade }) {
       }
       SHADER.perFrame(P, t, rt, canvas.width, canvas.height, pxRatio, frameVals);
 
-      // Compile, link, and warm up a 4x4 GPU PSO pass immediately on frame 1 so the entire
-      // subsequent wireframe rotation + 1.0s cross-fade runs at 60 FPS with ZERO mid-transition freeze!
+      // Non-blocking staggered async shader compilation:
+      // Frame 0 paints the UI shell + 3D Quartz wireframe immediately (<25ms) before touching WebGL2;
+      // subsequent RAF ticks initialize FBOs, kick off parallel shader compilation, and poll COMPLETION_STATUS_KHR!
       if (!shaderReady) {
         drawWireframeOverlay(1.0, 1.0);
         wireframeFrames++;
         if (holdWireframe) return;
+        if (wireframeFrames <= 1) {
+          // Always yield Frame 0 (synchronous script boot) so the browser paints the UI shell + wireframe immediately!
+          return;
+        }
         if (buildStage === 0) {
           initGlResourcesAndBake();
-          kickCompileAsync();
+          if (!isMobile) kickCompileAsync();
           return;
         }
         if (buildStage === 1) {
@@ -535,18 +582,20 @@ export default function create({ canvas, P, model, degrade }) {
         }
         if (buildStage === 2 && isParallelCompileComplete()) {
           finalizeCompiledPrograms();
-          // Warm up the Apple Metal / WebGL2 PSO at 4x4 pixels right now before the visible rotation hold & fade!
-          gl.bindBuffer(gl.UNIFORM_BUFFER, ubo);
-          gl.bufferSubData(gl.UNIFORM_BUFFER, 0, cluster.data);
-          uploadedClusterVer = cluster.version;
-          if (bakedSeed !== P.seed.value) bake();
-          drawPass(passBackdrop, hdrFbo, 4, 4);
-          gl.enable(gl.SCISSOR_TEST);
-          gl.scissor(0, 0, 4, 4);
-          drawPass(passTrace, hdrFbo, 4, 4);
-          gl.disable(gl.SCISSOR_TEST);
-          drawPass(passComposite, null, 4, 4);
-          gl.flush();
+          if (!isMobile) {
+            // Desktop: warm up the PSO at 4x4 pixels before the smooth wireframe hold & fade
+            gl.bindBuffer(gl.UNIFORM_BUFFER, ubo);
+            gl.bufferSubData(gl.UNIFORM_BUFFER, 0, cluster.data);
+            uploadedClusterVer = cluster.version;
+            if (bakedSeed !== P.seed.value) bake();
+            drawPass(passBackdrop, hdrFbo, 4, 4);
+            gl.enable(gl.SCISSOR_TEST);
+            gl.scissor(0, 0, 4, 4);
+            drawPass(passTrace, hdrFbo, 4, 4);
+            gl.disable(gl.SCISSOR_TEST);
+            drawPass(passComposite, null, 4, 4);
+            gl.flush();
+          }
           drawWireframeOverlay(1.0, 1.0);
           shaderWarmupFrames = 0;
           fillStartPerfMs = performance.now();
@@ -554,9 +603,9 @@ export default function create({ canvas, P, model, degrade }) {
         return;
       }
 
-      // After the 4x4 PSO warm-up, rotate the 100% opaque wireframe smoothly at 60 FPS for 480ms
-      // before starting the full-res WebGL2 cross-fade so the wireframe turns with zero stutter!
-      const wfHoldMs = (isCapture || pinnedFillIn !== null || sp.has('fast')) ? 0 : 480;
+      // On desktop, rotate the 100% opaque wireframe smoothly at 60 FPS for 480ms;
+      // on mobile, skip any artificial hold delay and start rendering at 0.40x scale immediately!
+      const wfHoldMs = (isCapture || isMobile || pinnedFillIn !== null || sp.has('fast')) ? 0 : 480;
       if (!holdWireframe && pinnedFillIn === null && fillInProgress === 0.0 && (performance.now() - fillStartPerfMs) < wfHoldMs) {
         drawWireframeOverlay(1.0, 1.0);
         return;
@@ -576,8 +625,14 @@ export default function create({ canvas, P, model, degrade }) {
       gl.disable(gl.SCISSOR_TEST);
       if ((P.bloom?.value ?? 0.2) > 0.005) {
         drawPass(passBright, bloomAFbo, bloomW, bloomH);
-        drawPass(passBlurH, bloomBFbo, bloomW, bloomH);
-        drawPass(passBlurV, bloomAFbo, bloomW, bloomH);
+        bind(passBlur, bloomBFbo, bloomW, bloomH);
+        gl.uniform1i(passBlur.uSrc, UNIT_BLOOM_A);
+        gl.uniform2f(passBlur.uDir, 1, 0);
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+        bind(passBlur, bloomAFbo, bloomW, bloomH);
+        gl.uniform1i(passBlur.uSrc, UNIT_BLOOM_B);
+        gl.uniform2f(passBlur.uDir, 0, 1);
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
       }
       drawPass(passComposite, null, canvas.width, canvas.height);
 
@@ -598,10 +653,11 @@ export default function create({ canvas, P, model, degrade }) {
           drawWireframeOverlay(1.0, 1.0);
           return;
         }
+        const fadeDur = isMobile ? 0.65 : FILL_IN_DURATION;
         const elapsedFade = isCapture
-          ? (fillInProgress * FILL_IN_DURATION + Math.min(Math.max(rawDt || 0.016, 0.004), 0.10))
+          ? (fillInProgress * fadeDur + Math.min(Math.max(rawDt || 0.016, 0.004), 0.10))
           : Math.max(0.0, (performance.now() - fillStartPerfMs) * 0.001);
-        fillInProgress = Math.min(1.0, elapsedFade / FILL_IN_DURATION);
+        fillInProgress = Math.min(1.0, elapsedFade / fadeDur);
         const fillAlpha = 0.5 - 0.5 * Math.cos(Math.PI * fillInProgress);
         const backdropAlpha = 1.0 - fillAlpha;
         wireframeAlpha = 1.0 - fillAlpha;
@@ -609,6 +665,10 @@ export default function create({ canvas, P, model, degrade }) {
       } else if (wfCanvas && wfCanvas.style.display !== 'none') {
         wireframeAlpha = 0.0;
         wfCanvas.style.display = 'none';
+        if (isMobile) {
+          wfCanvas.width = 1;
+          wfCanvas.height = 1;
+        }
       }
     },
   };

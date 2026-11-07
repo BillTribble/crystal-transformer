@@ -20,7 +20,7 @@ function noSuggestions(input) {
   input.setAttribute('autocapitalize', 'off');
 }
 
-export function buildPanel({ slug, store, onEdited, presets, onPreset, onRandomize, onSkipTrack }) {
+export function buildPanel({ slug, store, onEdited, presets, onPreset, onRandomize, onSkipTrack, lazyRows = false }) {
   const controls = document.getElementById('controls');
   const copyBtn = document.getElementById('copy');
   const shareBtn = document.getElementById('share-url');
@@ -377,49 +377,58 @@ export function buildPanel({ slug, store, onEdited, presets, onPreset, onRandomi
   });
 
   const groupEntries = [];
-  for (const group of store.groups) {
-    const det = el('details', 'group');
-    det.open = true;
-    det.appendChild(el('summary', null, group.group));
-    const groupRows = [];
-    for (const p of group.params) {
-      const rowWrap = buildRow(p);
-      det.appendChild(rowWrap);
-      groupRows.push(rows[rows.length - 1]);
-      if (p.key === 'soundTrack') {
-        const nowRow = el('div', 'row row-track-now');
-        nowRow.id = 'current-track-row';
-        const nowLbl = el('span', 'lbl', 'Current track');
-        const nowName = el('span', 'current-track-name', String(p.value || ''));
-        nowName.id = 'current-track-name';
-        nowName.title = String(p.value || '');
-        const skipBtn = el('button', 'mini-btn skip-track-btn', 'Next track →');
-        skipBtn.type = 'button';
-        skipBtn.id = 'skip-track-btn';
-        skipBtn.title = 'Skip forward to the next Enso ambient track';
-        skipBtn.addEventListener('click', () => {
-          onSkipTrack?.();
-          nowName.textContent = String(p.value || '');
-          nowName.title = String(p.value || '');
-        });
-        nowRow.append(nowLbl, nowName, skipBtn);
-        det.appendChild(nowRow);
-        const origSync = rows[rows.length - 1].sync;
-        rows[rows.length - 1].sync = () => {
-          origSync();
-          nowName.textContent = String(p.value || '');
-          nowName.title = String(p.value || '');
-        };
-      }
-    }
-    controls.appendChild(det);
-    groupEntries.push({ group, det, rows: groupRows });
-  }
-
   const emptySearchEl = el('div', 'settings-search-empty', 'No matching settings');
   emptySearchEl.id = 'settings-search-empty';
   emptySearchEl.hidden = true;
-  controls.appendChild(emptySearchEl);
+  let rowsBuilt = false;
+
+  function ensureRowsBuilt() {
+    if (rowsBuilt) return;
+    rowsBuilt = true;
+    for (const group of store.groups) {
+      const det = el('details', 'group');
+      det.open = true;
+      det.appendChild(el('summary', null, group.group));
+      const groupRows = [];
+      for (const p of group.params) {
+        const rowWrap = buildRow(p);
+        det.appendChild(rowWrap);
+        groupRows.push(rows[rows.length - 1]);
+        if (p.key === 'soundTrack') {
+          const nowRow = el('div', 'row row-track-now');
+          nowRow.id = 'current-track-row';
+          const nowLbl = el('span', 'lbl', 'Current track');
+          const nowName = el('span', 'current-track-name', String(p.value || ''));
+          nowName.id = 'current-track-name';
+          nowName.title = String(p.value || '');
+          const skipBtn = el('button', 'mini-btn skip-track-btn', 'Next track →');
+          skipBtn.type = 'button';
+          skipBtn.id = 'skip-track-btn';
+          skipBtn.title = 'Skip forward to the next Enso ambient track';
+          skipBtn.addEventListener('click', () => {
+            onSkipTrack?.();
+            nowName.textContent = String(p.value || '');
+            nowName.title = String(p.value || '');
+          });
+          nowRow.append(nowLbl, nowName, skipBtn);
+          det.appendChild(nowRow);
+          const origSync = rows[rows.length - 1].sync;
+          rows[rows.length - 1].sync = () => {
+            origSync();
+            nowName.textContent = String(p.value || '');
+            nowName.title = String(p.value || '');
+          };
+        }
+      }
+      controls.appendChild(det);
+      groupEntries.push({ group, det, rows: groupRows });
+    }
+    controls.appendChild(emptySearchEl);
+  }
+
+  if (!lazyRows || document.body.dataset.pane === 'open') {
+    ensureRowsBuilt();
+  }
 
   function applySearchFilter() {
     const q = searchInput.value.trim().toLowerCase();
@@ -478,11 +487,24 @@ export function buildPanel({ slug, store, onEdited, presets, onPreset, onRandomi
 
   const panel = {
     syncPresetTicker,
-    syncAll() {
+    ensureRowsBuilt,
+    onPaneChange(open) {
+      if (open) {
+        ensureRowsBuilt();
+        panel.syncAll(true);
+        panel.refreshStatus(true);
+      }
+    },
+    syncAll(force = false) {
+      syncPresetTicker();
+      if (!force && document.body.dataset.pane !== 'open') return;
+      ensureRowsBuilt();
       for (const r of rows) r.sync();
       rebuildPresetMenu();
     },
-    refreshStatus() {
+    refreshStatus(force = false) {
+      if (!force && document.body.dataset.pane !== 'open') return;
+      ensureRowsBuilt();
       applySearchFilter();
       const n = store.changedCount();
       statusEl.textContent = n === 0 ? 'No changes' : n + (n === 1 ? ' change' : ' changes');

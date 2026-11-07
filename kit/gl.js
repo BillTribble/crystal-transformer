@@ -10,6 +10,26 @@ void main() {
 }`;
 
 /**
+ * Detect mobile / tablet browsers (Android Chrome, iOS Safari, coarse-pointer touch devices)
+ * with deterministic `?mobile=1` and `?desktop=1` URL query overrides for testing.
+ */
+export function detectMobileDevice() {
+  if (typeof window === 'undefined') return false;
+  try {
+    const sp = new URLSearchParams(window.location ? window.location.search : '');
+    const m = sp.get('mobile');
+    if (m === '1' || m === 'true') return true;
+    if (m === '0' || m === 'false' || sp.get('desktop') === '1' || sp.get('desktop') === 'true') return false;
+  } catch { /* ignore */ }
+  const ua = (typeof navigator !== 'undefined' && navigator.userAgent) || '';
+  if (/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini|Mobile/i.test(ua)) return true;
+  if (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) return true;
+  const sw = (window.screen && window.screen.width) || window.innerWidth || 1280;
+  const sh = (window.screen && window.screen.height) || window.innerHeight || 800;
+  return Math.max(sw, sh) <= 960 && Math.min(sw, sh) < 768;
+}
+
+/**
  * Compile both stages and link them. Throws with the info log on failure, unless the
  * context is lost (the sketch rebuilds when it's restored).
  * @param {WebGL2RenderingContext} gl
@@ -18,28 +38,26 @@ void main() {
  * @param {string} name used in error messages
  */
 export function program(gl, vert, frag, name) {
-  const compile = (/** @type {number} */ type, /** @type {string} */ src, /** @type {string} */ stage) => {
-    const sh = /** @type {WebGLShader} */ (gl.createShader(type));
-    gl.shaderSource(sh, src);
-    gl.compileShader(sh);
-    if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS) && !gl.isContextLost()) {
-      const log = gl.getShaderInfoLog(sh);
-      gl.deleteShader(sh);
-      throw new Error('Shader "' + name + '" (' + stage + ') failed to compile:\n' + log);
-    }
-    return sh;
-  };
-  const vs = compile(gl.VERTEX_SHADER, vert, 'vertex');
-  const fs = compile(gl.FRAGMENT_SHADER, frag, 'fragment');
+  const vs = /** @type {WebGLShader} */ (gl.createShader(gl.VERTEX_SHADER));
+  gl.shaderSource(vs, vert);
+  gl.compileShader(vs);
+  const fs = /** @type {WebGLShader} */ (gl.createShader(gl.FRAGMENT_SHADER));
+  gl.shaderSource(fs, frag);
+  gl.compileShader(fs);
   const prog = /** @type {WebGLProgram} */ (gl.createProgram());
   gl.attachShader(prog, vs);
   gl.attachShader(prog, fs);
   gl.linkProgram(prog);
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS) && !gl.isContextLost()) {
+    const vsLog = !gl.getShaderParameter(vs, gl.COMPILE_STATUS) ? gl.getShaderInfoLog(vs) : '';
+    const fsLog = !gl.getShaderParameter(fs, gl.COMPILE_STATUS) ? gl.getShaderInfoLog(fs) : '';
+    const progLog = gl.getProgramInfoLog(prog);
+    gl.deleteShader(vs);
+    gl.deleteShader(fs);
+    throw new Error('Program "' + name + '" failed to link:\n' + (vsLog ? vsLog + '\n' : '') + (fsLog ? fsLog + '\n' : '') + progLog);
+  }
   gl.deleteShader(vs);
   gl.deleteShader(fs);
-  if (!gl.getProgramParameter(prog, gl.LINK_STATUS) && !gl.isContextLost()) {
-    throw new Error('Program "' + name + '" failed to link:\n' + gl.getProgramInfoLog(prog));
-  }
   return prog;
 }
 
@@ -105,9 +123,10 @@ export function frameUniforms(spec) {
  * @param {import('./types').Param[]} params from shaderParams()
  * @param {FrameUniform[]} list from frameUniforms()
  */
-export function shaderHeader(params, list) {
+export function shaderHeader(params, list, mobileQuality = false) {
   const type = (/** @type {number} */ n) => (n === 9 ? 'mat3' : ['', 'float', 'vec2', 'vec3', 'vec4'][n]);
   return '#version 300 es\nprecision highp float;\nprecision highp int;\n' +
+    '#define MOBILE_QUALITY ' + (mobileQuality ? '1' : '0') + '\n' +
     'uniform vec2 u_res;\nuniform vec2 u_screen;\nuniform float u_time;\nuniform float u_realTime;\n' +
     paramDecls(params) +
     list.map((f) => f.array ? 'uniform float ' + f.name + '[' + f.n + '];' : 'uniform ' + type(f.n) + ' ' + f.name + ';').join('\n') + '\n';

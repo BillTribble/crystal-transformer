@@ -17,6 +17,7 @@ MODULES = [
         [],
         [
             "FULLSCREEN_VERT",
+            "detectMobileDevice",
             "program",
             "shaderParams",
             "paramDecls",
@@ -29,7 +30,7 @@ MODULES = [
         None,
     ),
     ("chrome", "kit/chrome.js", [], ["setupChrome"], None),
-    ("loop", "kit/loop.js", [], ["createLoop"], None),
+    ("loop", "kit/loop.js", ["const { detectMobileDevice } = __mod_gl;"], ["createLoop"], None),
     ("kit_params", "kit/params.js", ["const { hexToOkhsl, okhslToHex } = __mod_okhsl;"], ["createModel"], None),
     (
         "colour_picker",
@@ -80,6 +81,7 @@ MODULES = [
             "const { buildPanel } = __mod_panel;",
             "const { setupChrome } = __mod_chrome;",
             "const { createLoop } = __mod_loop;",
+            "const { detectMobileDevice } = __mod_gl;",
             "const { hexToOkhsl, okhslToHex } = __mod_okhsl;",
             "const { buildCluster, cluster, resetEvolution, resolveHabitSystem, stepEvolution } = __mod_cluster;",
             "const { createEnsoSound } = __mod_sound;",
@@ -104,7 +106,7 @@ MODULES = [
         [
             "const SHADER = __mod_shader.default;",
             "const { buildCluster, cluster } = __mod_cluster;",
-            "const { FULLSCREEN_VERT, frameUniforms, probeFloatTargets, program, shaderHeader, shaderParams, uploadFrame, uploadParams } = __mod_gl;",
+            "const { FULLSCREEN_VERT, detectMobileDevice, frameUniforms, probeFloatTargets, program, shaderHeader, shaderParams, uploadFrame, uploadParams } = __mod_gl;",
         ],
         [],
         "__default_sketch",

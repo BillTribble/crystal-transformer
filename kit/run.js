@@ -4,6 +4,7 @@ import { createModel } from './params.js';
 import { buildPanel } from './panel.js';
 import { setupChrome } from './chrome.js';
 import { createLoop } from './loop.js';
+import { detectMobileDevice } from './gl.js';
 import { hexToOkhsl, okhslToHex } from './okhsl.js';
 import { buildCluster, cluster, resetEvolution, resolveHabitSystem, stepEvolution } from '../cluster.js';
 import { createEnsoSound } from '../sound.js';
@@ -25,16 +26,12 @@ const NON_MORPH_KEYS = new Set([
 ]);
 
 export function isMobileDevice() {
-  return Boolean(
-    (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) ||
-    /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent || '') ||
-    Math.min(window.innerWidth, window.innerHeight) < 768
-  );
+  return detectMobileDevice();
 }
 
 export function computeDeviceDpr() {
   const isMobile = isMobileDevice();
-  const dpr = Math.min(window.devicePixelRatio || 1, isMobile ? 1.0 : 1.5);
+  const dpr = Math.min(window.devicePixelRatio || 1, isMobile ? 1.25 : 1.5);
   return dpr;
 }
 
@@ -87,9 +84,9 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
   if (!P.trackName && P.soundTrack) P.trackName = P.soundTrack;
   if (isMobileDevice()) {
     if (P.maxDpr && !sp.has('maxDpr')) {
-      P.maxDpr.value = 1.0;
-      P.maxDpr.base = 1.0;
-      P.maxDpr.default = 1.0;
+      P.maxDpr.value = 1.25;
+      P.maxDpr.base = 1.25;
+      P.maxDpr.default = 1.25;
     }
     if (P.fxaa && !sp.has('fxaa')) {
       P.fxaa.value = 1;
@@ -556,7 +553,7 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
     store.scheduleSave();
   }
 
-  const chrome = setupChrome(!capture, () => {}, {
+  const chrome = setupChrome(!capture, (open) => { panel?.onPaneChange?.(open); }, {
     onRandomize: doRandomize,
     onGrow: growMore,
     onSound: toggleSound,
@@ -605,6 +602,7 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
     slug,
     store,
     presets,
+    lazyRows: detectMobileDevice() && location.hash !== '#settings',
     onPreset: (name, seconds) => applyPreset(name, seconds),
     onRandomize: doRandomize,
     onSkipTrack: () => sound.nextTrack(1),
@@ -1042,6 +1040,9 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
     }
 
     const state = store.tick(dt);
+    loop.interacting = Boolean(
+      dragging || activePointers.size > 0 || Math.abs(velYaw) > 15 || Math.abs(velPitch) > 15 || state === 'moving'
+    );
     if (state === 'moving') {
       cluster.morphHabitFrom = store.glideHabitFrom;
       cluster.morphHabitTo = store.glideHabitTo;
