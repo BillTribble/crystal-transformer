@@ -690,6 +690,9 @@ export default function create({ canvas, P, model, degrade, onStartupHandoff }) 
       workerToStop.onmessage = null;
       workerToStop.onerror = null;
       try { workerToStop.postMessage({ type: 'stop' }); } catch { /* ignore */ }
+      setTimeout(() => {
+        try { workerToStop.terminate(); } catch { /* ignore */ }
+      }, 120);
     }
     if (urlToRevoke) {
       try { URL.revokeObjectURL(urlToRevoke); } catch { /* ignore */ }
