@@ -316,7 +316,12 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
         if (rem <= 1e-6) break;
       }
       if (!morphState.fromLive) captureLiveFrom();
-      const duration = Math.max(5, Math.min(600, Number(P.morphTime?.value) || 30));
+      const fromMeltMorph = Number(morphState.fromMap.melt ?? 0);
+      const toMeltMorph = Number(morphState.toMap.melt ?? 0);
+      const enteringGaMorph = (toMeltMorph - fromMeltMorph) > 0.08;
+      const leavingGaMorph = (fromMeltMorph - toMeltMorph) > 0.08;
+      const baseDuration = Math.max(5, Math.min(600, Number(P.morphTime?.value) || 30));
+      const duration = leavingGaMorph ? Math.min(baseDuration, 14) : (enteringGaMorph ? Math.min(baseDuration, 18) : baseDuration);
       const needed = Math.max(0, duration - morphState.elapsed);
       const take = Math.min(rem, needed > 1e-6 ? needed : duration);
       morphState.elapsed += take;
@@ -325,6 +330,7 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
       const rawT = Math.min(1, morphState.elapsed / duration);
       morphState.progress = Number(rawT.toFixed(4));
       const k = 0.5 - 0.5 * Math.cos(Math.PI * rawT);
+      const ease01 = (x) => { const cx = Math.max(0, Math.min(1, x)); return 0.5 - 0.5 * Math.cos(Math.PI * cx); };
       cluster.morphHabitFrom = morphState.fromMap.habit || P.habit?.value;
       cluster.morphHabitTo = morphState.toMap.habit || P.habit?.value;
       cluster.morphHabitBlend = k;
@@ -336,33 +342,47 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
         const toV = morphState.toMap[p.key];
         if (fromV === undefined || toV === undefined) continue;
 
+        let pk = k;
+        if (p.key === 'melt') {
+          if (enteringGaMorph) {
+            pk = ease01((rawT - 0.32) / 0.68);
+          } else if (leavingGaMorph) {
+            const ue = Math.max(0, Math.min(1, rawT / 0.62));
+            pk = 0.36 * ue + 0.64 * ease01(ue);
+          }
+        } else if (p.key === 'metallic' && (enteringGaMorph || leavingGaMorph)) {
+          pk = enteringGaMorph ? ease01(rawT / 0.50) : ease01((rawT - 0.32) / 0.60);
+        } else if (p.type === 'color' && leavingGaMorph && p.key !== 'studioEdge') {
+          pk = ease01((rawT - 0.28) / 0.64);
+        }
+
         if (p.type === 'color') {
           const h0 = morphState.fromOkhsl[p.key];
           const h1 = morphState.toOkhsl[p.key];
           if (h0 && h1 && Number.isFinite(h0.h) && Number.isFinite(h1.h) && h0.s > 0.12 && h1.s > 0.12) {
             const dh = ((h1.h - h0.h + 1.5) % 1) - 0.5;
-            const h = (h0.h + dh * k + 1) % 1;
-            const s = h0.s + (h1.s - h0.s) * k;
-            const l = h0.l + (h1.l - h0.l) * k;
+            const h = (h0.h + dh * pk + 1) % 1;
+            const s = h0.s + (h1.s - h0.s) * pk;
+            const l = h0.l + (h1.l - h0.l) * pk;
             const hex = okhslToHex(h, s, l);
             store.setSmooth(p, hex);
             p.base = p.value;
           } else {
-            const r = fromV[0] + (toV[0] - fromV[0]) * k;
-            const g = fromV[1] + (toV[1] - fromV[1]) * k;
-            const b = fromV[2] + (toV[2] - fromV[2]) * k;
+            const r = fromV[0] + (toV[0] - fromV[0]) * pk;
+            const g = fromV[1] + (toV[1] - fromV[1]) * pk;
+            const b = fromV[2] + (toV[2] - fromV[2]) * pk;
             store.setSmooth(p, null, [r, g, b]);
             p.base = p.value;
           }
         } else if (p.key === 'hueShift') {
           const dh = ((toV - fromV + 540) % 360) - 180;
-          const hVal = ((fromV + dh * k) % 360 + 360) % 360;
+          const hVal = ((fromV + dh * pk) % 360 + 360) % 360;
           store.setSmooth(p, hVal);
           p.base = p.value;
         } else if (p.key === 'doubleTerminated') {
           const f0 = typeof fromV === 'boolean' ? (fromV ? 1.0 : 0.0) : Number(fromV);
           const f1 = typeof toV === 'boolean' ? (toV ? 1.0 : 0.0) : Number(toV);
-          const dtVal = f0 + (f1 - f0) * k;
+          const dtVal = f0 + (f1 - f0) * pk;
           cluster.doubleTermBlend = dtVal;
           const nextBool = dtVal >= 0.5;
           if (p.value !== nextBool) {
@@ -370,13 +390,13 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
             p.base = p.value;
           }
         } else if (p.type === 'select' || p.type === 'bool') {
-          const nextChoice = k >= 0.5 ? toV : fromV;
+          const nextChoice = pk >= 0.5 ? toV : fromV;
           if (p.value !== nextChoice) {
             store.setSmooth(p, nextChoice);
             p.base = p.value;
           }
         } else {
-          const v = fromV + (toV - fromV) * k;
+          const v = fromV + (toV - fromV) * pk;
           store.setSmooth(p, v);
           p.base = p.value;
         }
@@ -548,7 +568,14 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
       name = 'Liquid Gallium';
     }
     if (!all[name] && !(name === 'Glacial Ice' && all['Blue Celestite'])) return 0;
-    const s = seconds !== undefined ? seconds : (instance?.presetSeconds?.(all[name]) ?? presetSeconds);
+    const curMeltVal = Number(P.melt?.value) || 0;
+    const nextMeltVal = Number(all[name]?.melt ?? 0);
+    const defaultGalliumSeconds = (nextMeltVal - curMeltVal) > 0.08
+      ? 1.85
+      : ((curMeltVal - nextMeltVal) > 0.08 ? 1.65 : null);
+    const s = seconds !== undefined
+      ? seconds
+      : (defaultGalliumSeconds ?? instance?.presetSeconds?.(all[name]) ?? presetSeconds);
     saveOnLanding = save;
     const own = !!instance?.morph;
     if (!store.preset) {

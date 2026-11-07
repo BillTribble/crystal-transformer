@@ -1405,7 +1405,7 @@ void evalSingleRidgeBevel(
 bool applyTinyEdgeChip(int row, int k0, vec3 ro, vec3 rd, inout float tn, inout float tf, inout int kn, out float edgeSilAlpha, out vec3 outChipN) {
   edgeSilAlpha = 1.0;
   float rawSurfScale = mix(0.15, 1.0, clamp(u_rawAmount / 0.4, 0.0, 1.0)) * mix(1.0, 1.65, max(0.0, (u_rawAmount - 0.4) / 1.6));
-  float effEdgeMacro = max(0.0, u_patinaMacro * u_edgeMacro * rawSurfScale);
+  float effEdgeMacro = max(0.0, u_patinaMacro * u_edgeMacro * rawSurfScale) * (1.0 - smoothstep(0.002, 0.03, clamp(u_melt / 0.72, 0.0, 1.0)));
   float effChips = clamp(u_edgeChips * effEdgeMacro, 0.0, 2.0);
   float effIrreg = clamp((u_edgeIrregularity + 0.25 * u_edgeWear) * effEdgeMacro, 0.0, 2.0);
   vec4 pl0 = body(row, PA + k0);
@@ -1668,58 +1668,60 @@ float smaxSimple(float a, float b, float k) {
   return mix(b, a, h) + k * h * (1.0 - h);
 }
 
-float evalGalliumPuddleSDF(vec3 qGa, float meltAmt, out float outFloorClip, out vec2 outPuddleUV) {
-  float tMorph = clamp(meltAmt / 0.72, 0.0, 1.0);
-  // At resting Liquid Gallium (tMorph == 1.0, meltAmt == 0.72), mScale = 1.02 and pCen = (-0.012, -0.014, 0.042);
-  // as Liquid Gallium transforms into the next crystal (tMorph: 1.0 -> 0.22), the basal pool rises and absorbs
-  // smoothly into the liquid-rounded crystal spires!
-  float puddleKeep = smoothstep(0.22, 0.92, tMorph);
-  float mScale = puddleKeep * 1.02;
-  vec3 pCen = vec3(-0.012, mix(0.032, -0.014, puddleKeep), 0.042);
-  if (mScale <= 1e-3) {
+float evalGalliumPuddleSDF(vec3 qGa, float rScale, float tMorph, vec3 coreAnchor, out float outFloorClip, out vec2 outPuddleUV) {
+  if (rScale <= 1e-4) {
     outFloorClip = -1e9;
     outPuddleUV = vec2(0.0);
     return 1e4;
   }
+  // At resting Liquid Gallium (tMorph == 1.0, rScale == 1.0, meltAmt == 0.72), sRest = 1.02 and pCen = (-0.012, -0.014, 0.042).
+  // As rScale contracts 1.0 -> 0.0 (leaving Gallium) or expands 0.0 -> 1.0 (entering Gallium), all 3 pool lobes scale
+  // radially in exact world-unit coordinates (sRest = 1.02 constant so |grad| == 1 down to rScale = 0) while pCen
+  // draws smoothly inward and upward into coreAnchor (the interior centroid of Hero Crystal #0).
+  const float sRest = 1.02;
+  vec3 pCen = mix(coreAnchor, vec3(-0.012, -0.014, 0.042), smoothstep(0.0, 0.94, rScale));
 
   // Tilted puddle plane (~34 deg forward slope toward viewer, matching reference photo 372c3f66)
   vec3 nP = vec3(0.055, 0.825, 0.562);
   vec3 uP = vec3(0.997, -0.020, -0.075);
   vec3 vP = vec3(-0.0112, -0.5618, 0.8272);
 
-  vec3 rel = (qGa - pCen) / max(mScale, 0.08);
+  vec3 rel = (qGa - pCen) / sRest;
   vec2 uv = vec2(dot(rel, uP), dot(rel, vP));
   float h = dot(rel, nP);
-  outPuddleUV = uv;
+  vec2 uvNorm = uv / max(rScale, 0.04);
+  outPuddleUV = uvNorm;
 
-  // Broad, natural, flat-lying liquid-mercury/gallium pool (3 wide overlapping horizontal pancake lobes with zero protruding drip/bulb)
-  vec2 pMain = uv - vec2(-0.018, 0.010);
-  float dPoolMain = (length(pMain * vec2(0.74, 1.24)) - 0.198) * 0.86;
+  // Broad, natural, flat-lying liquid-mercury/gallium pool (3 wide overlapping horizontal pancake lobes scaling radially from 0 <-> 1)
+  vec2 pMain = uv - vec2(-0.018, 0.010) * rScale;
+  float dPoolMain = (length(pMain * vec2(0.74, 1.24)) - 0.198 * rScale) * 0.86;
 
-  vec2 pLeft = uv - vec2(-0.078, 0.024);
-  float dPoolLeft = (length(pLeft * vec2(0.84, 1.28)) - 0.158) * 0.86;
+  vec2 pLeft = uv - vec2(-0.078, 0.024) * rScale;
+  float dPoolLeft = (length(pLeft * vec2(0.84, 1.28)) - 0.158 * rScale) * 0.86;
 
-  vec2 pRight = uv - vec2(0.082, 0.018);
-  float dPoolRight = (length(pRight * vec2(0.84, 1.28)) - 0.156) * 0.86;
+  vec2 pRight = uv - vec2(0.082, 0.018) * rScale;
+  float dPoolRight = (length(pRight * vec2(0.84, 1.28)) - 0.156 * rScale) * 0.86;
 
-  float d2D = sminSimple(dPoolMain, sminSimple(dPoolLeft, dPoolRight, 0.076), 0.076);
+  float kLobe = 0.076 * rScale;
+  float d2D = sminSimple(dPoolMain, sminSimple(dPoolLeft, dPoolRight, kLobe), kLobe);
 
-  // Bulbous high-surface-tension capillary rim profile (thickness ~ 0.098) + polynomial central collar seat (zero transcendental cos/exp!)
-  float T = 0.049 + 0.005 * smoothstep(-0.08, 0.0, d2D);
-  float centerSeat = 0.026 * max(0.0, 1.0 - dot(uv, uv) * 14.0);
-  float hCamber = centerSeat - 0.004 * smoothstep(0.04, 0.18, uv.y);
+  // Bulbous high-surface-tension capillary rim profile (thickness ~ 0.098 at rest) gathering slightly as it draws upward
+  float vScale = mix(rScale, sqrt(rScale), 0.32 * smoothstep(0.05, 0.45, rScale));
+  float T = (0.049 + 0.005 * smoothstep(-0.08 * max(rScale, 0.04), 0.0, d2D)) * vScale;
+  float centerSeat = 0.026 * vScale * max(0.0, 1.0 - dot(uvNorm, uvNorm) * 14.0);
+  float hCamber = centerSeat - 0.004 * vScale * smoothstep(0.04, 0.18, uvNorm.y);
   float dCore2D = max(d2D + T, 0.0);
   float dh = h - hCamber;
-  float dPad = (sqrt(dCore2D * dCore2D + dh * dh) - T) * mScale;
+  float dPad = (sqrt(dCore2D * dCore2D + dh * dh) - T) * sRest;
 
-  outFloorClip = -(h - (hCamber - T * 0.42)) * mScale * smoothstep(0.55, 0.92, tMorph);
+  outFloorClip = -(h - (hCamber - T * 0.42)) * sRest * smoothstep(0.55, 0.92, tMorph);
   return dPad;
 }
 
-// Pure 3D evaluation of the molten gallium puddle + 3D coaxial spire capsule drops
-// (100% aligned with each crystal's 3D axis — zero sideways sausages and zero UBO reads inside the march loop!).
+// Pure 3D evaluation of the molten gallium puddle + upward-climbing capillary meniscus collar around the 3D crystal axes
+// (100% aligned with each crystal's 3D axis — zero bloated upper sausages and zero UBO reads inside the march loop!).
 float evalGalliumFastStep(
-  vec3 qGa, float meltAmt, float blobBell,
+  vec3 qGa, float meltAmt, float rScale, float tMorph, float blobBell, vec3 coreAnchor,
   vec3 pA0, vec3 ba0, float rCap0,
   vec3 pA1, vec3 ba1, float rCap1,
   vec3 pA2, vec3 ba2, float rCap2,
@@ -1727,7 +1729,7 @@ float evalGalliumFastStep(
 ) {
   float floorClip = -1e9;
   vec2 puddleUV = vec2(0.0);
-  float dPuddle = evalGalliumPuddleSDF(qGa, meltAmt, floorClip, puddleUV);
+  float dPuddle = evalGalliumPuddleSDF(qGa, rScale, tMorph, coreAnchor, floorClip, puddleUV);
 
   vec3 pa0 = qGa - pA0;
   float d0 = length(pa0 - ba0 * clamp(dot(pa0, ba0) / max(dot(ba0, ba0), 1e-4), 0.0, 1.0)) - rCap0;
@@ -1736,15 +1738,13 @@ float evalGalliumFastStep(
   vec3 pa2 = qGa - pA2;
   float d2 = length(pa2 - ba2 * clamp(dot(pa2, ba2) / max(dot(ba2, ba2), 1e-4), 0.0, 1.0)) - rCap2;
 
-  float dBase = sminSimple(d0, sminSimple(d1, d2, 0.072), 0.072);
-  float tMorph = clamp(meltAmt / 0.72, 0.0, 1.0);
-  float kMeniscus = (0.082 + 0.098 * clamp(meltAmt, 0.0, 1.0)) * smoothstep(0.18, 0.85, tMorph);
+  float kBand = 0.072 * max(rScale, 0.25);
+  float dBase = sminSimple(d0, sminSimple(d1, d2, kBand), kBand);
+  float kMeniscus = (0.082 + 0.098 * clamp(meltAmt, 0.0, 1.0) + 0.068 * blobBell) * smoothstep(0.04, 0.36, rScale);
   // C1-smooth 3D capillary meniscus collar that visibly climbs up and fillets the lower crystal walls
   float uMen = (kMeniscus > 1e-4) ? (1.0 - smoothstep(-0.060, kMeniscus, dBase)) : 0.0;
-  float meniscusLift = 0.62 * kMeniscus * uMen * uMen;
-  float dPudMen = dPuddle - meniscusLift;
-  float dCoalesced = sminSimple(dPudMen, dBase, 0.085);
-  float dLiquid = mix(dPudMen, dCoalesced, smoothstep(0.04, 0.42, blobBell));
+  float meniscusLift = (0.62 + 0.36 * blobBell) * kMeniscus * uMen * uMen;
+  float dLiquid = dPuddle - meniscusLift;
   outMeltFactor = smoothstep(0.02, 0.35, uMen);
   return dLiquid;
 }
@@ -1760,9 +1760,12 @@ bool intersectGalliumMelt(
   outEdgeDist = 1.0;
 
   float tMorph = clamp(meltAmt / 0.72, 0.0, 1.0);
-  // Bell curve of 3D liquid-drop rounding across the crystal spires during transition (0 at resting Liquid Gallium & 0 at final crystal,
-  // peaking at tMorph ~ 0.55 so the crystal cluster rounds into bulbous liquid-metal drops and then flattens directly into crystal facets!)
-  float blobBell = sin(tMorph * PI) * smoothstep(0.02, 0.24, tMorph);
+  float rScale = pow(tMorph, 1.12) * smoothstep(0.03, 0.11, tMorph);
+  // Bell curve of 3D liquid surface-tension rounding across the crystal spires during transition (0 at resting Liquid Gallium & 0 at final crystal)
+  float blobBell = sin(tMorph * PI) * smoothstep(0.03, 0.24, tMorph);
+  float gaFacetStyle = smoothstep(0.03, 0.42, tMorph);
+  vec3 c0 = toGalliumFrame(body(0, 0).xyz);
+  vec3 coreAnchor = c0;
 
   // 1. Exact analytical convex polytope intersection across active crystals
   int nc = clamp(int(f_crystals + 0.5), 0, MAX_CRYSTALS);
@@ -1778,7 +1781,7 @@ bool intersectGalliumMelt(
         vec3 qCand = toGalliumFrame(ro + rd * tCand);
         float fClip = -1e9;
         vec2 puv = vec2(0.0);
-        evalGalliumPuddleSDF(qCand, meltAmt, fClip, puv);
+        evalGalliumPuddleSDF(qCand, rScale, tMorph, coreAnchor, fClip, puv);
         if (fClip < 0.015) {
           polyT = tCand; polyTf = tf; polyId = i; polyK = kn;
           hasPolyHit = true;
@@ -1792,8 +1795,8 @@ bool intersectGalliumMelt(
   float polyEdgeDist = 1.0;
   if (hasPolyHit) {
     float rPoly = max(body(polyId, 2).w, 0.02);
-    float rRound = rPoly * (0.022 * tMorph + 0.44 * blobBell);
-    vec3 pPoly = ro + rd * mix(polyT, 0.5 * (polyT + polyTf), 0.36 * blobBell);
+    float rRound = rPoly * (0.022 * gaFacetStyle + 0.34 * blobBell);
+    vec3 pPoly = ro + rd * mix(polyT, 0.5 * (polyT + polyTf), 0.30 * blobBell);
     polyN = body(polyId, PA + polyK).xyz;
     float d2nd = 1e9;
     vec3 n2nd = polyN;
@@ -1814,17 +1817,17 @@ bool intersectGalliumMelt(
       }
     }
     polyEdgeDist = d2nd;
-    // Subtle cast-metal facet camber + smooth physical edge bevel so wReflGa sweeps across studio reflections within each facet
+    // Subtle cast-metal facet camber + smooth physical edge bevel (fading cleanly to 0 as tMorph -> 0.03)
     vec3 relCen = (pPoly - body(polyId, 0).xyz) / max(rPoly, 0.05);
-    vec3 camberN = (relCen - polyN * dot(relCen, polyN)) * 0.082;
-    float bevelW = (1.0 - smoothstep(0.0, rPoly * 0.040, d2nd)) * 0.36;
+    vec3 camberN = (relCen - polyN * dot(relCen, polyN)) * (0.082 * gaFacetStyle);
+    float bevelW = (1.0 - smoothstep(0.0, rPoly * 0.040, d2nd)) * (0.36 * gaFacetStyle);
     vec3 nSharpBevel = normalize(mix(polyN + camberN, normalize(polyN + n2nd), bevelW));
     vec3 nBlob = normalize(nRound + polyN * 1e-4);
-    polyN = normalize(mix(nSharpBevel, nBlob, smoothstep(0.01, 0.22, blobBell)));
+    polyN = normalize(mix(nSharpBevel, nBlob, smoothstep(0.01, 0.26, blobBell) * 0.88));
   }
 
-  // If the basal puddle & liquid spire rounding have already settled into the crystal facets (tMorph <= 0.18), return the crystal directly!
-  if (tMorph <= 0.18) {
+  // Once rScale <= 1e-4, the shrinking puddle has completely drawn inside Crystal #0 (dPuddle == 1e4), so return the crystal directly
+  if (rScale <= 1e-4) {
     if (!hasPolyHit) return false;
     outId = polyId; outTHit = polyT; outTfHit = polyTf;
     outK = CP + 3000 + clamp(polyK, 0, 16);
@@ -1832,11 +1835,11 @@ bool intersectGalliumMelt(
     return true;
   }
 
-  // 3. Bounding sphere around the molten gallium puddle & coaxial spire drops
+  // 3. Bounding sphere around the molten gallium puddle & meniscus collar (tracking coreAnchor as rScale -> 0)
   vec3 qRo = toGalliumFrame(ro);
   vec3 qRd = toGalliumFrame(rd);
-  vec3 pudSphCen = vec3(-0.01, mix(-0.065, 0.025, blobBell), 0.045);
-  float pudSphRad = mix(0.38, 0.50, blobBell);
+  vec3 pudSphCen = mix(coreAnchor, vec3(-0.01, -0.065, 0.045), smoothstep(0.0, 0.94, rScale));
+  float pudSphRad = mix(0.12, 0.42, rScale);
   vec3 oc = qRo - pudSphCen;
   float b = dot(oc, qRd);
   float h = b * b - dot(oc, oc) + pudSphRad * pudSphRad;
@@ -1850,17 +1853,17 @@ bool intersectGalliumMelt(
 
   float s = sqrt(h);
   float t0 = max(0.0, -b - s);
-  float t1 = min(-b + s, (hasPolyHit && blobBell < 0.15) ? polyT : (-b + s));
+  // Never march behind a solid front crystal face (polyT), preventing internal puddle X-raying as the pool draws into Crystal #0
+  float t1 = hasPolyHit ? min(-b + s, polyT) : (-b + s);
 
-  // Precompute 3 coaxial 3D crystal spire capsules in qGa frame ONCE outside the march loop
-  float spireLenScale = mix(0.14, 0.52, blobBell);
-  vec3 c0 = toGalliumFrame(body(0, 0).xyz);
+  // Precompute 3 coaxial 3D crystal spire axes in qGa frame ONCE outside the march loop for capillary meniscus lift
+  float spireLenScale = mix(0.14, 0.44, blobBell);
   vec3 ax0 = toGalliumFrame(body(0, 1).xyz);
   float r0 = max(body(0, 2).w, 0.05);
   float L0 = max(body(0, 1).w, 0.12) * spireLenScale;
   vec3 pA0 = c0 - ax0 * (0.45 * L0);
   vec3 ba0 = ax0 * L0;
-  float rCap0 = r0 * mix(0.92, 0.96, blobBell);
+  float rCap0 = r0 * mix(0.92, 0.82, blobBell);
 
   vec3 c1 = (nc > 1) ? toGalliumFrame(body(1, 0).xyz) : c0;
   vec3 ax1 = (nc > 1) ? toGalliumFrame(body(1, 1).xyz) : ax0;
@@ -1868,24 +1871,25 @@ bool intersectGalliumMelt(
   float L1 = (nc > 1) ? (max(body(1, 1).w, 0.12) * spireLenScale) : L0;
   vec3 pA1 = c1 - ax1 * (0.45 * L1);
   vec3 ba1 = ax1 * L1;
-  float rCap1 = r1 * mix(0.92, 0.96, blobBell);
+  float rCap1 = r1 * mix(0.92, 0.82, blobBell);
 
   int idx2 = (nc > 3) ? 3 : 2;
   vec3 c2Spire = (nc > 2) ? toGalliumFrame(body(idx2, 0).xyz) : c0;
   vec3 ax2 = (nc > 2) ? toGalliumFrame(body(idx2, 1).xyz) : ax0;
   float r2 = (nc > 2) ? max(body(idx2, 2).w, 0.05) : r0;
   float L2 = (nc > 2) ? (max(body(idx2, 1).w, 0.12) * spireLenScale) : L0;
-  float wSpire2 = smoothstep(0.02, 0.25, blobBell);
-  vec3 pA2 = mix(vec3(-0.005, 0.038, 0.048), c2Spire - ax2 * (0.45 * L2), wSpire2);
+  float wSpire2 = smoothstep(0.02, 0.30, blobBell);
+  vec3 saddleCen = mix(coreAnchor, vec3(-0.005, 0.038, 0.048), rScale);
+  vec3 pA2 = mix(saddleCen, c2Spire - ax2 * (0.45 * L2), wSpire2);
   vec3 ba2 = ax2 * (L2 * wSpire2);
-  float rCap2 = mix(0.122, r2 * 0.96, wSpire2);
+  float rCap2 = mix(0.122 * rScale, r2 * 0.82, wSpire2);
 
   // Early exit for upper crystal hits well above the puddle/meniscus zone when resting (blobBell < 0.15)
   if (hasPolyHit && blobBell < 0.15) {
     vec3 qPolyHit = qRo + qRd * polyT;
     float fClipP = -1e9;
     vec2 puvP = vec2(0.0);
-    float dPudHit = evalGalliumPuddleSDF(qPolyHit, meltAmt, fClipP, puvP);
+    float dPudHit = evalGalliumPuddleSDF(qPolyHit, rScale, tMorph, coreAnchor, fClipP, puvP);
     if (dPudHit > 0.13) {
       outId = polyId; outTHit = polyT; outTfHit = polyTf;
       outK = CP + 3000 + clamp(polyK, 0, 16);
@@ -1902,7 +1906,7 @@ bool intersectGalliumMelt(
     for (int st = 0; st < 32; st++) {
       if (t > t1) break;
       float mF = 0.0;
-      float d = evalGalliumFastStep(qRo + qRd * t, meltAmt, blobBell, pA0, ba0, rCap0, pA1, ba1, rCap1, pA2, ba2, rCap2, mF);
+      float d = evalGalliumFastStep(qRo + qRd * t, meltAmt, rScale, tMorph, blobBell, coreAnchor, pA0, ba0, rCap0, pA1, ba1, rCap1, pA2, ba2, rCap2, mF);
       if (d <= 0.0006) {
         hitPuddle = true;
         break;
@@ -1917,14 +1921,14 @@ bool intersectGalliumMelt(
     // Smooth capillary wetting fillet on the solid crystal wall right where it meets the liquid pool
     vec3 qPoly = qRo + qRd * polyT;
     float mFPoly = 0.0;
-    float dLiqPoly = evalGalliumFastStep(qPoly, meltAmt, blobBell, pA0, ba0, rCap0, pA1, ba1, rCap1, pA2, ba2, rCap2, mFPoly);
-    float wetW = (1.0 - smoothstep(0.005, 0.068, dLiqPoly)) * clamp(meltAmt * 1.35, 0.0, 1.0);
+    float dLiqPoly = evalGalliumFastStep(qPoly, meltAmt, rScale, tMorph, blobBell, coreAnchor, pA0, ba0, rCap0, pA1, ba1, rCap1, pA2, ba2, rCap2, mFPoly);
+    float wetW = (1.0 - smoothstep(0.005, 0.068, dLiqPoly)) * smoothstep(0.48, 0.90, rScale);
     if (wetW > 0.005) {
       float epsW = 0.0018;
       float dm1, dm2, dm3;
-      float gxW = evalGalliumFastStep(qPoly + vec3(epsW, 0.0, 0.0), meltAmt, blobBell, pA0, ba0, rCap0, pA1, ba1, rCap1, pA2, ba2, rCap2, dm1) - dLiqPoly;
-      float gyW = evalGalliumFastStep(qPoly + vec3(0.0, epsW, 0.0), meltAmt, blobBell, pA0, ba0, rCap0, pA1, ba1, rCap1, pA2, ba2, rCap2, dm2) - dLiqPoly;
-      float gzW = evalGalliumFastStep(qPoly + vec3(0.0, 0.0, epsW), meltAmt, blobBell, pA0, ba0, rCap0, pA1, ba1, rCap1, pA2, ba2, rCap2, dm3) - dLiqPoly;
+      float gxW = evalGalliumFastStep(qPoly + vec3(epsW, 0.0, 0.0), meltAmt, rScale, tMorph, blobBell, coreAnchor, pA0, ba0, rCap0, pA1, ba1, rCap1, pA2, ba2, rCap2, dm1) - dLiqPoly;
+      float gyW = evalGalliumFastStep(qPoly + vec3(0.0, epsW, 0.0), meltAmt, rScale, tMorph, blobBell, coreAnchor, pA0, ba0, rCap0, pA1, ba1, rCap1, pA2, ba2, rCap2, dm2) - dLiqPoly;
+      float gzW = evalGalliumFastStep(qPoly + vec3(0.0, 0.0, epsW), meltAmt, rScale, tMorph, blobBell, coreAnchor, pA0, ba0, rCap0, pA1, ba1, rCap1, pA2, ba2, rCap2, dm3) - dLiqPoly;
       vec3 nGaW = normalize(vec3(gxW, gyW, gzW) + vec3(0.0, 1e-6, 0.0));
       vec3 nLiqW = normalize(vec3(
         0.186646 * nGaW.x + 0.982427 * nGaW.z,
@@ -1943,7 +1947,7 @@ bool intersectGalliumMelt(
   for (int bs = 0; bs < 3; bs++) {
     float tMid = 0.5 * (tLo + tHi);
     float mFMid = 0.0;
-    if (evalGalliumFastStep(qRo + qRd * tMid, meltAmt, blobBell, pA0, ba0, rCap0, pA1, ba1, rCap1, pA2, ba2, rCap2, mFMid) <= 0.0002) {
+    if (evalGalliumFastStep(qRo + qRd * tMid, meltAmt, rScale, tMorph, blobBell, coreAnchor, pA0, ba0, rCap0, pA1, ba1, rCap1, pA2, ba2, rCap2, mFMid) <= 0.0002) {
       tHi = tMid;
     } else {
       tLo = tMid;
@@ -1952,25 +1956,14 @@ bool intersectGalliumMelt(
   float tFinal = 0.5 * (tLo + tHi);
   vec3 qHit = qRo + qRd * tFinal;
   float mF0 = 1.0;
-  float d0 = evalGalliumFastStep(qHit, meltAmt, blobBell, pA0, ba0, rCap0, pA1, ba1, rCap1, pA2, ba2, rCap2, mF0);
-
-  // As tMorph goes from 0.52 -> 0.18, require hits outside hasPolyHit to be deeper inside the capsule so the curved
-  // liquid silhouette tightens smoothly onto the 3D faceted crystal silhouette without ever popping!
-  float facetLock = 1.0 - smoothstep(0.18, 0.52, tMorph);
-  if (!hasPolyHit && facetLock > 0.05) {
-    vec3 qMidCheck = qRo + qRd * (tFinal + 0.045 * facetLock);
-    float mFCheck = 0.0;
-    if (evalGalliumFastStep(qMidCheck, meltAmt, blobBell, pA0, ba0, rCap0, pA1, ba1, rCap1, pA2, ba2, rCap2, mFCheck) > 0.0) {
-      return false;
-    }
-  }
+  float d0 = evalGalliumFastStep(qHit, meltAmt, rScale, tMorph, blobBell, coreAnchor, pA0, ba0, rCap0, pA1, ba1, rCap1, pA2, ba2, rCap2, mF0);
 
   // Compute 3D gradient normal in qGa space using 3 forward differences (zero UBO reads!)
   float eps = 0.0018;
   float dm1, dm2, dm3;
-  float gx = evalGalliumFastStep(qHit + vec3(eps, 0.0, 0.0), meltAmt, blobBell, pA0, ba0, rCap0, pA1, ba1, rCap1, pA2, ba2, rCap2, dm1) - d0;
-  float gy = evalGalliumFastStep(qHit + vec3(0.0, eps, 0.0), meltAmt, blobBell, pA0, ba0, rCap0, pA1, ba1, rCap1, pA2, ba2, rCap2, dm2) - d0;
-  float gz = evalGalliumFastStep(qHit + vec3(0.0, 0.0, eps), meltAmt, blobBell, pA0, ba0, rCap0, pA1, ba1, rCap1, pA2, ba2, rCap2, dm3) - d0;
+  float gx = evalGalliumFastStep(qHit + vec3(eps, 0.0, 0.0), meltAmt, rScale, tMorph, blobBell, coreAnchor, pA0, ba0, rCap0, pA1, ba1, rCap1, pA2, ba2, rCap2, dm1) - d0;
+  float gy = evalGalliumFastStep(qHit + vec3(0.0, eps, 0.0), meltAmt, rScale, tMorph, blobBell, coreAnchor, pA0, ba0, rCap0, pA1, ba1, rCap1, pA2, ba2, rCap2, dm2) - d0;
+  float gz = evalGalliumFastStep(qHit + vec3(0.0, 0.0, eps), meltAmt, rScale, tMorph, blobBell, coreAnchor, pA0, ba0, rCap0, pA1, ba1, rCap1, pA2, ba2, rCap2, dm3) - d0;
   vec3 nGaLocal = normalize(vec3(gx, gy, gz) + vec3(0.0, 1e-6, 0.0));
   // Transform normal back from qGa to cluster space p
   vec3 nPuddleWorld = normalize(vec3(
@@ -1980,25 +1973,24 @@ bool intersectGalliumMelt(
   ));
 
   vec3 nFinal = nPuddleWorld;
+  float endLock = 1.0 - smoothstep(0.04, 0.16, rScale);
   if (hasPolyHit) {
     float wallProx = 1.0 - smoothstep(0.0, 0.018, abs(polyT - tFinal));
-    float lockW = max(wallProx * 0.65, facetLock);
+    float lockW = max(wallProx * 0.65, endLock);
     nFinal = normalize(mix(nPuddleWorld, polyN, lockW));
-    tFinal = mix(tFinal, polyT, facetLock);
+    tFinal = mix(tFinal, polyT, endLock);
   }
   if (dot(nFinal, rd) > -0.04) {
     nFinal = normalize(nFinal - rd * (dot(nFinal, rd) + 0.04));
   }
 
-  // Use puddle shader (outMeltFactor = 1.0) on the lower tilted basin, and mirror-chrome solidCol on the upper coaxial liquid spires
-  float isUpperSpire = smoothstep(-0.04, 0.04, qHit.y) * smoothstep(0.05, 0.35, blobBell);
   outId = hasPolyHit ? polyId : 0;
   outTHit = tFinal;
   outTfHit = hasPolyHit ? max(tFinal + 0.12, polyTf) : (tFinal + 0.16);
-  outK = CP + 3000 + (isUpperSpire > 0.5 ? clamp(hasPolyHit ? polyK : 0, 0, 16) : 17);
+  outK = CP + 3000 + 17;
   outN = nFinal;
-  outMeltFactor = mix(1.0, 0.0, isUpperSpire);
-  outEdgeDist = hasPolyHit ? mix(1.0, polyEdgeDist, facetLock) : 1.0;
+  outMeltFactor = 1.0 - endLock;
+  outEdgeDist = hasPolyHit ? mix(1.0, polyEdgeDist, endLock) : 1.0;
   return true;
 }
 
@@ -2007,7 +1999,7 @@ bool traceScene(vec3 ro, vec3 rd, int skipMask, out int id, out float tHit, out 
   outVoidN = vec3(0.0, 1.0, 0.0);
   outVoidBorder = 1e9;
   outVoidSeam = 1e9;
-  if (u_melt > 0.001 && skipMask == 0) {
+  if (u_melt > 0.0216 && skipMask == 0) {
     int mId, mK;
     float mT, mTf, mMeltF, mEdgeD;
     vec3 mN;
@@ -3025,8 +3017,12 @@ vec3 shadeMetallicCrystal(int id, int k, vec3 pEntry, vec3 rd, vec3 nRefl, float
   float sMx = max(stoneLin.r, max(stoneLin.g, stoneLin.b));
   float sMn = min(stoneLin.r, min(stoneLin.g, stoneLin.b));
   float stoneSat = (sMx - sMn) / max(sMx, 1e-4);
-  float gaModeW = clamp(max(smoothstep(0.002, 0.18, u_melt), (1.0 - smoothstep(0.16, 0.34, stoneSat)) * (1.0 - iridW)), 0.0, 1.0);
+  float nonPyriteMetal = (1.0 - smoothstep(0.46, 0.66, u_striations)) * (1.0 - iridW);
+  float gaModeW = clamp(max(max(smoothstep(0.002, 0.18, u_melt), nonPyriteMetal), (1.0 - smoothstep(0.16, 0.34, stoneSat)) * (1.0 - iridW)), 0.0, 1.0);
   if (gaModeW > 0.001) {
+    float tGaRest = clamp(u_melt / 0.72, 0.0, 1.0);
+    float restPuddleW = smoothstep(0.58, 0.98, tGaRest);
+    float blobMidGa = sin(tGaRest * PI);
     float liqW = smoothstep(0.02, 0.36, meltFactor);
     vec3 qGa = toGalliumFrame(pEntry);
     int kCrystal = (k >= CP + 3000 && k < CP + 4000) ? (k - (CP + 3000)) : clamp(k, 0, 17);
@@ -3078,7 +3074,7 @@ vec3 shadeMetallicCrystal(int id, int k, vec3 pEntry, vec3 rd, vec3 nRefl, float
     float keySoftboxGrad = pow(max(0.0, smoothstep(-0.18, 0.82, wReflGa.y + 0.32 * wReflGa.z - 0.18 * wReflGa.x)), 1.65);
     float rimStripGrad = pow(max(0.0, smoothstep(-0.12, 0.80, abs(wReflGa.x) * 0.65 + wReflGa.z * 0.72)), 1.65);
     float chDiff = (wReflGa.y + 0.06) * 3.8;
-    float chBand = 1.0 - 0.84 * exp(-chDiff * chDiff);
+    float chBand = 1.0 - (0.84 - 0.56 * blobMidGa) * exp(-chDiff * chDiff);
     float darkTentGrad = (0.08 + 0.92 * smoothstep(-0.42, 0.36, wReflGa.y + 0.25 * wReflGa.z)) * chBand;
     float chromeSoftboxSpec = pow(max(0.0, smoothstep(0.08, 0.86, wReflGa.y * 0.65 + wReflGa.z * 0.60 - wReflGa.x * 0.25)), 2.2)
                             + 0.72 * pow(max(0.0, smoothstep(0.14, 0.88, abs(wReflGa.x) * 0.68 + wReflGa.z * 0.64)), 2.4);
@@ -3101,20 +3097,20 @@ vec3 shadeMetallicCrystal(int id, int k, vec3 pEntry, vec3 rd, vec3 nRefl, float
     // Outer grazing silhouette attenuation (cosSmooth < 0.24 reflects the dark studio floor/horizon, never a blown-out white halo!)
     float silhouetteDarkEdge = smoothstep(0.04, 0.28, cosSmooth);
 
-    // 1. Broad tilted puddle basin reflects bright silvery-platinum studio diffuser
-    float basinMask = smoothstep(0.46, 0.82, basinDot) * silhouetteDarkEdge;
-    vec3 puddleWarmPool = mix(vec3(0.46, 0.52, 0.62), vec3(0.86, 0.91, 0.98), smoothstep(0.62, 0.95, basinDot));
+    // 1. Broad tilted puddle basin reflects bright silvery-platinum studio diffuser (staying luminous mercury as it contracts/expands)
+    float basinMask = smoothstep(mix(0.16, 0.46, restPuddleW), mix(0.58, 0.82, restPuddleW), basinDot) * silhouetteDarkEdge;
+    vec3 puddleWarmPool = mix(vec3(0.56, 0.62, 0.72), vec3(0.86, 0.91, 0.98), smoothstep(mix(0.32, 0.62, restPuddleW), mix(0.75, 0.95, restPuddleW), basinDot));
 
     // 2. Concave meniscus crease right where solid crystal plunges into the molten pool
     float meniscusCrease = max(0.0, sin(clamp((meltFactor - 0.03) / 0.55, 0.0, 1.0) * PI));
-    float meniscusDark = 1.0 - 0.78 * pow(meniscusCrease, 1.35);
+    float meniscusDark = 1.0 - (0.32 + 0.46 * restPuddleW) * pow(meniscusCrease, 1.35);
     float meniscusFilletSpec = pow(meniscusCrease, 2.4) * smoothstep(0.08, 0.72, wReflGa.y + 0.35 * wReflGa.z) * silhouetteDarkEdge;
 
-    // 3. High-contrast black-chrome studio horizon band along the bulbous capillary rim & outer grazing edge
+    // 3. High-contrast black-chrome studio horizon band along the resting capillary rim (relaxing into bright mercury during morph)
     float rimDiff = (basinDot - 0.52) / 0.20;
-    float rimDarkRing = exp(-rimDiff * rimDiff);
-    float outerGrazingDark = 1.0 - silhouetteDarkEdge;
-    float darkBand = clamp(max(rimDarkRing * 0.92, outerGrazingDark * 0.88), 0.0, 0.95);
+    float rimDarkRing = exp(-rimDiff * rimDiff) * (0.22 + 0.70 * restPuddleW);
+    float outerGrazingDark = (1.0 - silhouetteDarkEdge) * (0.55 + 0.33 * restPuddleW);
+    float darkBand = clamp(max(rimDarkRing, outerGrazingDark), 0.0, 0.95);
 
     // 4. Inward-set silver-white liquid-mercury specular highlight tube along the upper-outer curvature of the rim (cosSmooth ~ 0.28..0.68)
     float tubeDiff = (cosSmooth - 0.44) / 0.16;
@@ -3454,7 +3450,7 @@ void main() {
 
     float rawAmt = clamp(u_rawAmount, 0.0, 2.0);
     float rawSurfScale = mix(0.15, 1.0, clamp(rawAmt / 0.4, 0.0, 1.0)) * mix(1.0, 1.65, max(0.0, (rawAmt - 0.4) / 1.6));
-    float effEdgeMacro = max(0.0, u_patinaMacro * u_edgeMacro * rawSurfScale) * (1.0 - smoothstep(0.20, 0.55, u_hopper)) * (1.0 - smoothstep(0.0, 0.25, u_cathedral));
+    float effEdgeMacro = max(0.0, u_patinaMacro * u_edgeMacro * rawSurfScale) * (1.0 - smoothstep(0.20, 0.55, u_hopper)) * (1.0 - smoothstep(0.0, 0.25, u_cathedral)) * (1.0 - smoothstep(0.002, 0.03, clamp(u_melt / 0.72, 0.0, 1.0)));
     float edgeSilAlpha = 1.0;
     vec3 chipFacetN = vec3(0.0, 1.0, 0.0);
     if (!primaryEvaluated && (u_edgeChips * effEdgeMacro > 0.005 || u_edgeIrregularity * effEdgeMacro > 0.005 || u_edgeWear * effEdgeMacro > 0.005) && k < CP) {
@@ -3527,9 +3523,10 @@ void main() {
     vec3 adjN = rawFaceN;
     int ridgeKLo = -1, ridgeKHi = -1;
     float tMorphM = clamp(u_melt / 0.72, 0.0, 1.0);
-    float gaHoldMetal = smoothstep(0.06, 0.56, tMorphM);
-    float metalW = clamp(max(max(u_metallic, gaHoldMetal), smoothstep(0.02, 0.35, meltFactor)), 0.0, 1.0);
-    bool isOpaqueMetal = (metalW >= 0.95 || (isGalliumMelt && kBaseFace == 17));
+    float gaHoldMetal = smoothstep(0.42, 0.92, tMorphM) * 0.96;
+    float rawMetalW = clamp(max(max(u_metallic, gaHoldMetal), smoothstep(0.02, 0.35, meltFactor)), 0.0, 1.0);
+    float metalW = smoothstep(0.0, 0.95, rawMetalW);
+    bool isOpaqueMetal = (metalW >= 0.995 || (isGalliumMelt && kBaseFace == 17));
     bool needDEdge = !isGalliumMelt && !(isOpaqueMetal && u_hopper > 0.65) && (((hop == 0) && (u_patina > 0.01 || u_occlusion > 0.01 || u_hopper > 0.0 || u_cathedral > 0.0 || u_iridescence > 0.0 || u_bloom > 0.0)) || (g1 > 0.001 && u_edgeWear > 0.0));
     float dEdge = isGalliumMelt ? voidSeam : (needDEdge ? edgeDist(id, kBaseFace, p, adjN, ridgeKLo, ridgeKHi) : 1.0);
 
@@ -3576,8 +3573,12 @@ void main() {
     vec3 nSurfFull = isCathedralTerrace ? normalize(rawFaceN + (n - nBaseForRefr)) : n;
     vec3 nRefl = nSurfFull;
     float patinaGlint = 0.0, patinaRough = 0.0;
-    if (!isOpaqueMetal && hop == 0 && !isOcclusionVoid && !isGalliumMelt) {
+    float patinaFade = 1.0 - smoothstep(0.002, 0.03, tMorphM);
+    if (!isOpaqueMetal && hop == 0 && !isOcclusionVoid && !isGalliumMelt && patinaFade > 0.001) {
       evalSurfacePatina(id, kBaseFace, p, nSurfFull, footprint, dEdge, nRefl, patinaGlint, patinaRough);
+      nRefl = normalize(mix(nSurfFull, nRefl, patinaFade));
+      patinaGlint *= patinaFade;
+      patinaRough *= patinaFade;
       // Keep internal refraction 100% pure & clear by only applying a tiny fraction (6%) of surface scratch normal to n
       n = normalize(mix(n, n + (nRefl - nSurfFull), 0.06 * (1.0 - 0.85 * dither)));
     }

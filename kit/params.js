@@ -256,6 +256,10 @@ export function createModel(schema, storageKey, presets = {}) {
         p.base = coerce(p, resolveTarget(p));
       }
       glides = [];
+      const fromMelt = byKey.melt ? Number(byKey.melt.value) || 0 : 0;
+      const toMelt = byKey.melt ? Number(coerce(byKey.melt, resolveTarget(byKey.melt))) || 0 : 0;
+      const enteringGallium = (toMelt - fromMelt) > 0.08;
+      const leavingGallium = (fromMelt - toMelt) > 0.08;
       for (const p of params) {
         if (p.key === 'renderScale' || p.key === 'targetFps' || p.key === 'maxFps' || p.key === 'maxDpr' || p.key === 'bloom' || p.noPreset) continue;
         if (STICKY_USER_KEYS.has(p.key) && values[p.key] === undefined) continue;
@@ -268,9 +272,16 @@ export function createModel(schema, storageKey, presets = {}) {
         if (p.type === 'color') {
           const a = [0, 0, 0], b = [0, 0, 0];
           hexToRgb(String(p.value), a); hexToRgb(String(to), b);
-          glides.push({ p, from: 0, to: 1, rgbFrom: a, rgbTo: b });
+          const curve = (leavingGallium && p.key !== 'studioEdge') ? 'colorExitGallium' : '';
+          glides.push({ p, from: 0, to: 1, rgbFrom: a, rgbTo: b, curve });
         } else if (Number(p.value) !== Number(to)) {
-          glides.push({ p, from: Number(p.value), to: Number(to) });
+          let curve = '';
+          if (p.key === 'melt') {
+            curve = enteringGallium ? 'meltEnter' : (leavingGallium ? 'meltExit' : '');
+          } else if (p.key === 'metallic' && (enteringGallium || leavingGallium)) {
+            curve = enteringGallium ? 'metalEnter' : 'metalExit';
+          }
+          glides.push({ p, from: Number(p.value), to: Number(to), curve });
         }
       }
       glideT = 0;
@@ -410,9 +421,23 @@ export function createModel(schema, storageKey, presets = {}) {
       if (!glides.length) return 'idle';
       glideT = Math.min(glideLen, glideT + dt);
       const done = glideT >= glideLen;
-      const k = easeInOut(glideT / glideLen);
-      store.glideHabitBlend = k;
+      const u = glideLen > 0 ? Math.max(0, Math.min(1, glideT / glideLen)) : 1;
+      const kBase = easeInOut(u);
+      store.glideHabitBlend = kBase;
       for (const g of glides) {
+        let k = kBase;
+        if (g.curve === 'meltEnter') {
+          k = easeInOut((u - 0.32) / 0.68);
+        } else if (g.curve === 'metalEnter') {
+          k = easeInOut(u / 0.50);
+        } else if (g.curve === 'meltExit') {
+          const ue = Math.max(0, Math.min(1, u / 0.62));
+          k = 0.36 * ue + 0.64 * easeInOut(ue);
+        } else if (g.curve === 'metalExit') {
+          k = easeInOut((u - 0.32) / 0.60);
+        } else if (g.curve === 'colorExitGallium') {
+          k = easeInOut((u - 0.28) / 0.64);
+        }
         if (g.rgbFrom && g.rgbTo) {
           const a = g.rgbFrom, b = g.rgbTo;
           const r = a[0] + (b[0] - a[0]) * k, gr = a[1] + (b[1] - a[1]) * k, bl = a[2] + (b[2] - a[2]) * k;

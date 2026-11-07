@@ -1220,7 +1220,7 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
   const meltVal = P?.melt ? Math.max(0, Math.min(1, Number(P.melt.value))) : 0;
   const metallicVal = P?.metallic ? Math.max(0, Math.min(1, Number(P.metallic.value))) : 0;
   const hopperBlend = Math.max(0, Math.min(1, hopperVal / 0.92));
-  const meltBlend = smooth01(Math.max(0, Math.min(1, meltVal / 0.52)));
+  const meltBlend = smooth01(Math.max(0, Math.min(1, meltVal / 0.72)));
   const rawCount = P?.crystals ? Number(P.crystals.value) : (P?.count ? Number(P.count.value) : 4.0);
   const count = rawCount;
   const floatC = Math.max(3.0, Math.min(MAX_CRYSTALS, count));
@@ -1259,18 +1259,19 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
   const hFrom = cluster.morphHabitFrom ? resolveHabitSystem(cluster.morphHabitFrom) : '';
   const hTo = cluster.morphHabitTo ? resolveHabitSystem(cluster.morphHabitTo) : '';
   const curSys = resolveHabitSystem(curHabit);
-  const pyriteCubeBlend = Math.max(0, Math.min(1, (metallicVal - 0.08) / 0.88)) * (1 - hopperBlend);
-  const cubeBlockBlend = Math.max(hopperBlend, pyriteCubeBlend);
+  const baseCubicBlend = (hFrom && hTo && hFrom !== hTo)
+    ? (hFrom === 'Cubic / Isometric' ? 1 - morphBlend : 0) + (hTo === 'Cubic / Isometric' ? morphBlend : 0)
+    : (curSys === 'Cubic / Isometric' ? 1 : 0);
+  const pyriteCubeBlend = Math.max(0, Math.min(1, (metallicVal - 0.08) / 0.88)) * baseCubicBlend * (1 - hopperBlend);
+  const galliumBlockBlend = meltBlend * (1 - hopperBlend);
+  const cubeBlockBlend = Math.max(hopperBlend, Math.max(pyriteCubeBlend, galliumBlockBlend));
 
   const baseRepel = (hFrom && hTo && hFrom !== hTo)
     ? habitRepelWeight(hFrom) * (1 - morphBlend) + habitRepelWeight(hTo) * morphBlend
     : habitRepelWeight(curSys);
   const repelStrength = hopperBlend > 1e-4
     ? baseRepel * (1 - hopperBlend) + 0.86 * hopperBlend
-    : baseRepel * (1 - 0.66 * pyriteCubeBlend);
-  const baseCubicBlend = (hFrom && hTo && hFrom !== hTo)
-    ? (hFrom === 'Cubic / Isometric' ? 1 - morphBlend : 0) + (hTo === 'Cubic / Isometric' ? morphBlend : 0)
-    : (curSys === 'Cubic / Isometric' ? 1 : 0);
+    : baseRepel * (1 - 0.66 * Math.max(pyriteCubeBlend, galliumBlockBlend));
   const cubicBlend = Math.max(baseCubicBlend, cubeBlockBlend);
 
   const paramDoubleTerm = P?.doubleTerminated !== undefined
@@ -1503,7 +1504,8 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
       node.v0 = new Float32Array(sz);
       node.frameInit = true;
     } else if (nodeDt > 0 || !evolveOn) {
-      const aAxis = nodeDt > 0 ? (1 - Math.exp(-2.8 * nodeDt)) : 1.0;
+      const gaFast = (meltVal > 0.01 || Math.abs((P.melt?.base ?? 0) - meltVal) > 0.01) ? 5.2 : 2.8;
+      const aAxis = nodeDt > 0 ? (1 - Math.exp(-gaFast * nodeDt)) : 1.0;
       node.axis0[0] += (ax[0] - node.axis0[0]) * aAxis;
       node.axis0[1] += (ax[1] - node.axis0[1]) * aAxis;
       node.axis0[2] += (ax[2] - node.axis0[2]) * aAxis;
@@ -1877,7 +1879,8 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
       node.smoothOffL = new Float32Array(tgtOffL);
       node.planesInit = true;
     } else if (nodeDt > 0 || !evolveOn) {
-      const aPlane = nodeDt > 0 ? (1 - Math.exp(-3.0 * nodeDt)) : 1.0;
+      const gaPlaneFast = (meltVal > 0.01 || Math.abs((P.melt?.base ?? 0) - meltVal) > 0.01) ? 5.6 : 3.0;
+      const aPlane = nodeDt > 0 ? (1 - Math.exp(-gaPlaneFast * nodeDt)) : 1.0;
       for (let k = 0; k < 18; k++) {
         const nx = node.smoothLx[k] + (tgtLx[k] - node.smoothLx[k]) * aPlane;
         const ny = node.smoothLy[k] + (tgtLy[k] - node.smoothLy[k]) * aPlane;
@@ -2012,8 +2015,8 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
     weightTotal += w;
 
     if (meltVal > 1e-3 && rowIdx === 0) {
-      const puddleReachY = -0.34 * Math.min(1.0, meltVal * 1.25);
-      const puddleReachXZ = 0.34 * Math.min(1.0, meltVal * 1.25);
+      const puddleReachY = -0.34 * meltBlend;
+      const puddleReachXZ = 0.34 * meltBlend;
       minY = Math.min(minY, puddleReachY);
       maxR2 = Math.max(maxR2, puddleReachXZ * puddleReachXZ);
     }
@@ -2052,7 +2055,8 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
   if (!cluster.centerInit || !Number.isFinite(cluster.fitScale)) {
     cluster.fitScale = desiredFitScale;
   } else {
-    const aFit = nodeDt > 0 ? (1 - Math.exp(-2.4 * nodeDt)) : (!evolveOn ? 0.15 : 0.04);
+    const fitRate = (meltVal > 0.01 || Math.abs((P.melt?.base ?? 0) - meltVal) > 0.01) ? 5.2 : 2.4;
+    const aFit = nodeDt > 0 ? (1 - Math.exp(-fitRate * nodeDt)) : (!evolveOn ? 0.15 : 0.04);
     cluster.fitScale += (desiredFitScale - cluster.fitScale) * aFit;
   }
   const fitScale = cluster.fitScale;
@@ -2113,7 +2117,7 @@ export function buildCluster(P, viewportW = 0, viewportH = 0) {
     // Slow critically-damped 2nd-order spring-damper (true ease-in from rest + smooth ease-out deceleration, tau ~ 2.2s)
     let remC = Math.max(0, Math.min(cluster.pendingCenterDt > 0 ? cluster.pendingCenterDt : (!evolveOn ? 0.016 : 0), 10));
     cluster.pendingCenterDt = 0;
-    const omega = 1.35;
+    const omega = (meltVal > 0.01 || Math.abs((P.melt?.base ?? 0) - meltVal) > 0.01) ? 4.5 : 1.35;
     const omega2 = omega * omega;
     const damp = 2.0 * omega;
     while (remC > 1e-6) {
