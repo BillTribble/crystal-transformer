@@ -9,36 +9,27 @@ export function createLoop(canvas, P, sketch) {
   const P_renderScale = P.renderScale, P_maxDpr = P.maxDpr;
   const P_maxFps = P.maxFps;
 
-  let raf = 0, last = 0, sceneTime = 0, realTime = 0;
+  let raf = 0, startupTimer = 0, last = 0, lastTickWall = 0, sceneTime = 0, realTime = 0;
   let fpsAccum = 0, fpsFrames = 0;
   let lastW = 0, lastH = 0, lastRatio = 0, frames = 0;
 
   let dynScale = 1;
   let running = false;
-  let shaderFirstReadyAt = 0;
   let lastInteractAt = 0;
 
-  function computeMobileDynScale(s, nowMs) {
+  function computeMobileDynScale(_s, nowMs) {
     if (loop.fixed) return 1;
-    if (!s || !s.shaderReady) {
-      shaderFirstReadyAt = 0;
-      return 0.40;
-    }
-    if (!shaderFirstReadyAt) shaderFirstReadyAt = nowMs;
-    const readyElapsed = nowMs - shaderFirstReadyAt;
-    // Progressive cold-start ramp on mobile: 0.40x on Frame 1 (< 5ms GPU draw), 0.72x over 150..420ms, 1.00x settled
-    let startupScale = 1.0;
-    if (readyElapsed < 150) startupScale = 0.40;
-    else if (readyElapsed < 420) startupScale = 0.72;
-
+    // PSO pre-warm now completes behind opacity:0 gated by gl.fenceSync while the OffscreenCanvas
+    // worker rotates at 60 FPS, so #stage stays at crisp 1.0x scale throughout pre-warm & crossfade
+    // (avoiding mid-crossfade FBO reallocations) and only drops to 0.68x during active touch drag.
     if (loop.interacting) {
       lastInteractAt = nowMs;
-      return Math.min(startupScale, 0.68);
+      return 0.68;
     }
     if (lastInteractAt > 0 && (nowMs - lastInteractAt) < 250) {
-      return Math.min(startupScale, 0.68);
+      return 0.68;
     }
-    return startupScale;
+    return 1.0;
   }
 
   function adapt(_dt) {
@@ -104,6 +95,26 @@ export function createLoop(canvas, P, sketch) {
     return P_maxFps && !loop.fixed ? P_maxFps.value : 0;
   }
 
+  function armStartupFallback() {
+    if (startupTimer || !running) return;
+    const s = sketch();
+    const inStartup = s && (!s.shaderReady || s.fillInProgress < 1.0);
+    if (!inStartup) return;
+    startupTimer = setTimeout(() => {
+      startupTimer = 0;
+      if (!running || (typeof document !== 'undefined' && document.hidden)) return;
+      const now = performance.now();
+      if (now - lastTickWall >= 24) {
+        const rawElapsed = last ? (now - last) * 0.001 : 0.016;
+        const dt = rawElapsed > 0.12 ? 0.016 : rawElapsed;
+        last = now;
+        lastTickWall = now;
+        render(dt);
+      }
+      armStartupFallback();
+    }, 24);
+  }
+
   function frame(now) {
     if (!running) {
       raf = 0;
@@ -116,11 +127,13 @@ export function createLoop(canvas, P, sketch) {
     raf = requestAnimationFrame(frame);
     const s = sketch();
     const inStartup = s && (!s.shaderReady || s.fillInProgress < 1.0);
+    if (inStartup) armStartupFallback();
     const cap = inStartup ? 0 : cappedFps();
     if (cap > 0 && last && now - last < 900 / cap) return;
     const rawElapsed = last ? (now - last) * 0.001 : 0.016;
     const dt = rawElapsed > 0.12 ? 0.016 : rawElapsed;
     last = now;
+    lastTickWall = now;
     render(dt);
   }
 
@@ -149,13 +162,21 @@ export function createLoop(canvas, P, sketch) {
     start() {
       running = true;
       cancelAnimationFrame(raf);
+      if (startupTimer) { clearTimeout(startupTimer); startupTimer = 0; }
       if (frames === 0) render(0);
       last = performance.now();
+      lastTickWall = last;
       if (typeof document === 'undefined' || !document.hidden) {
         raf = requestAnimationFrame(frame);
+        armStartupFallback();
       }
     },
-    stop() { running = false; cancelAnimationFrame(raf); raf = 0; },
+    stop() {
+      running = false;
+      cancelAnimationFrame(raf);
+      raf = 0;
+      if (startupTimer) { clearTimeout(startupTimer); startupTimer = 0; }
+    },
     step(dt) { render(dt); },
     degrade(factor) {
       if (detectMobileDevice() && !loop.fixed) {

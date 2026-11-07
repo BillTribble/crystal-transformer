@@ -833,6 +833,7 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
   let dragging = false;
   let lastX = 0, lastY = 0;
   let velYaw = 0, velPitch = 0;
+  let startupGlide = false;
   let pinchDist = 0;
   let lastMoveTime = 0;
 
@@ -847,6 +848,8 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
     if (e.button !== undefined && e.button !== 0) return;
     canvas.setPointerCapture(e.pointerId);
     activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    startupGlide = false;
+    instance?.notifyUserCameraOverride?.();
     if (activePointers.size === 1) {
       dragging = true;
       lastX = e.clientX;
@@ -872,6 +875,7 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
         const ratio = pinchDist / d;
         const nextDist = clamp(Number(P.distance.value) * ratio, P.distance.min, P.distance.max);
         store.setValue(P.distance, nextDist);
+        instance?.syncWorkerCamera?.();
         panel.syncAll();
       }
       pinchDist = d;
@@ -899,6 +903,7 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
     if (P.tilt) {
       store.setValue(P.tilt, clamp(Number(P.tilt.value) + dPitch, P.tilt.min, P.tilt.max));
     }
+    instance?.syncWorkerCamera?.();
 
     // Exponentially smoothed angular velocity (deg/s) for momentum release
     const instYaw = clamp(dYaw / dt, -520, 520);
@@ -936,9 +941,12 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
   canvas.addEventListener('wheel', (e) => {
     if (!P.distance) return;
     e.preventDefault();
+    startupGlide = false;
+    instance?.notifyUserCameraOverride?.();
     const factor = Math.exp(e.deltaY * 0.0012);
     const nextDist = clamp(Number(P.distance.value) * factor, P.distance.min, P.distance.max);
     store.setValue(P.distance, nextDist);
+    instance?.syncWorkerCamera?.();
     panel.syncAll();
     panel.refreshStatus();
     store.scheduleSave();
@@ -970,33 +978,41 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
   let paneWait = 0;
   loop.onTick = (dt, _sdt) => {
     let needsUiSync = false;
+    const inStartupLock = Boolean(instance?.startupPhaseActive);
 
-    // 1. Post-drag momentum that smoothly blends right back into continuous slow auto-rotation
-    if (!dragging && dt > 0) {
+    // 1. Phase-locked wall-clock orbit during startup + crossfade, handing off seamlessly (C0/C1)
+    //    into post-drag / startup-glide momentum and continuous slow auto-rotation.
+    if (inStartupLock && !dragging && !instance?.userOverrodeCamera) {
+      instance.syncMainCameraYaw?.();
+    } else if (!dragging && dt > 0) {
       const baseSpin = P.spin ? Number(P.spin.value) : 0;
       const hasMomentum = Math.abs(velYaw) > 0.05 || Math.abs(velPitch) > 0.05;
       const yawRate = baseSpin + velYaw;
       if (P.spinStart && Math.abs(yawRate) > 1e-4) {
         const nextSpin = wrap360(Number(P.spinStart.value) + yawRate * dt);
-        P.spinStart.value = Number(nextSpin.toFixed(3));
+        P.spinStart.value = Number(nextSpin.toFixed(4));
       }
       if (P.tilt && Math.abs(velPitch) > 0.05) {
         store.setValue(P.tilt, clamp(Number(P.tilt.value) + velPitch * dt, P.tilt.min, P.tilt.max));
       }
       if (hasMomentum) {
-        velYaw *= Math.exp(-2.2 * dt);
+        const yawDecay = startupGlide ? 1.15 : 2.2;
+        velYaw *= Math.exp(-yawDecay * dt);
         velPitch *= Math.exp(-2.8 * dt);
-        if (Math.abs(velYaw) <= 0.05) velYaw = 0;
+        if (Math.abs(velYaw) <= 0.05) {
+          velYaw = 0;
+          startupGlide = false;
+        }
         if (Math.abs(velPitch) <= 0.05) velPitch = 0;
         needsUiSync = true;
       }
     }
 
-    // 2. Viewport-Aware Auto-Growth + Click-to-Grow Surge:
+    // 2. Viewport-Aware Auto-Growth + Click-to-Grow Surge (held steady during startup crossfade for 1:1 wireframe geometry lock):
     // Auto-grows sideways (when viewport width > height) or upwards (when height > width)
     // until the crystals fill the screen, then smoothly slows down. Clicking the Grow plant
     // button (#grow-btn) adds a `growBoost` surge that makes the crystals grow even more!
-    if (P.growth && dt > 0 && (P.autoGrow?.value || growBoost > 0.001)) {
+    if (!inStartupLock && P.growth && dt > 0 && (P.autoGrow?.value || growBoost > 0.001)) {
       const curG = Number(P.growth.value);
       const maxG = P.growth.max || 3.5;
       let deltaG = 0;
@@ -1041,7 +1057,7 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
 
     const state = store.tick(dt);
     loop.interacting = Boolean(
-      dragging || activePointers.size > 0 || Math.abs(velYaw) > 15 || Math.abs(velPitch) > 15 || state === 'moving'
+      dragging || activePointers.size > 0 || (!startupGlide && Math.abs(velYaw) > 15) || Math.abs(velPitch) > 15 || state === 'moving'
     );
     if (state === 'moving') {
       cluster.morphHabitFrom = store.glideHabitFrom;
@@ -1056,7 +1072,7 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
     }
 
     // 3. Secondary Evolve: gradual parameter morphing across standard presets -> random dice
-    if (dt > 0 && state === 'idle' && P.morphPresets?.value) {
+    if (!inStartupLock && dt > 0 && state === 'idle' && P.morphPresets?.value) {
       if (tickMorphPresets(dt)) {
         needsUiSync = true;
       }
@@ -1064,7 +1080,9 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
 
     // 4. Primary Evolve: Phase 1 (seed -> full size) + Phase 2 (continuous branching & old-segment dissolve)
     if (dt > 0) {
-      stepEvolution(P, dt, canvas.clientWidth || window.innerWidth, canvas.clientHeight || window.innerHeight);
+      if (!inStartupLock) {
+        stepEvolution(P, dt, canvas.clientWidth || window.innerWidth, canvas.clientHeight || window.innerHeight);
+      }
       sound.tick(dt);
       if (P.occlusion && P.occlusionStyle) {
         const occStyle = String(P.occlusionStyle.value || 'Auto alternate (Ovoids & Invisible Crystals)');
@@ -1173,7 +1191,19 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
   });
 
   try {
-    instance = sketch({ canvas, P, model: store, degrade: (f) => loop.degrade(f) });
+    instance = sketch({
+      canvas,
+      P,
+      model: store,
+      degrade: (f) => loop.degrade(f),
+      onStartupHandoff(handoffSpinDegPerSec) {
+        if (!dragging && activePointers.size === 0) {
+          const baseSpin = P.spin ? Number(P.spin.value) : 0;
+          velYaw = handoffSpinDegPerSec - baseSpin;
+          startupGlide = true;
+        }
+      },
+    });
   } catch (err) {
     fail(err);
     return;
@@ -1184,12 +1214,21 @@ export function run(slug, { manifest, params, presets, randomize, sketch }) {
     get velYaw() { return velYaw; },
     get velPitch() { return velPitch; },
     get shaderReady() { return Boolean(instance?.shaderReady); },
+    get startupPhaseActive() { return Boolean(instance?.startupPhaseActive); },
+    get usingOffscreenWorker() { return Boolean(instance?.usingOffscreenWorker); },
+    get fenceSignaled() { return Boolean(instance?.fenceSignaled); },
+    get fenceWaitMs() { return instance?.fenceWaitMs ?? null; },
     get wireframeAlpha() { return Number(instance?.wireframeAlpha ?? 0); },
     get fillInProgress() { return Number(instance?.fillInProgress ?? 1); },
     get firstWireframeMs() { return instance?.firstWireframeMs ?? null; },
     get firstWireframeNavMs() { return instance?.firstWireframeNavMs ?? null; },
     get shaderReadyMs() { return instance?.shaderReadyMs ?? null; },
     get wireframeCanvas() { return instance?.wireframeCanvas ?? null; },
+    get wireframeFrames() { return Number(instance?.wireframeFrames ?? 0); },
+    get wireframeYawDeg() { return instance?.wireframeYawDeg ?? null; },
+    get raytracerYawDeg() { return Number(P.spinStart?.value ?? 0); },
+    get startupSpinDegPerSec() { return Number(instance?.startupSpinDegPerSec ?? 0); },
+    get wireframeLog() { return instance?.wireframeLog ?? []; },
     drawWireframe: (bgAlpha = 1.0, wfAlpha = 1.0) => instance?.drawWireframe?.(bgAlpha, wfAlpha),
     ensureReadySync: () => instance?.ensureReadySync?.(),
     instance,
