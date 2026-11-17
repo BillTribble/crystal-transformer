@@ -189,14 +189,14 @@ def main():
       '  <meta property="og:title" content="Crystal Transformer" />\n'
       '  <meta property="og:description" content="Ray traced crystal experiment with procedural growth and generative ambient soundtrack." />\n'
       '  <meta property="og:url" content="https://billtribble.github.io/crystal-transformer/" />\n'
-      '  <meta property="og:image" content="https://billtribble.github.io/crystal-transformer/preview.png" />\n'
+      '  <meta property="og:image" content="https://billtribble.github.io/crystal-transformer/og-preview.png" />\n'
       '  <meta property="og:image:type" content="image/png" />\n'
-      '  <meta property="og:image:width" content="1080" />\n'
-      '  <meta property="og:image:height" content="1080" />\n'
+      '  <meta property="og:image:width" content="1200" />\n'
+      '  <meta property="og:image:height" content="630" />\n'
       '  <meta name="twitter:card" content="summary_large_image" />\n'
       '  <meta name="twitter:title" content="Crystal Transformer" />\n'
       '  <meta name="twitter:description" content="Ray traced crystal experiment with procedural growth and generative ambient soundtrack." />\n'
-      '  <meta name="twitter:image" content="https://billtribble.github.io/crystal-transformer/preview.png" />'
+      '  <meta name="twitter:image" content="https://billtribble.github.io/crystal-transformer/og-preview.png" />'
   )
   if 'property="og:image"' not in html:
     html = html.replace(
