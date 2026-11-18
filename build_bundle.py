@@ -204,6 +204,9 @@ def main():
         '<meta name="theme-color" content="#030304" />\n' + og_block,
         1,
     )
+  gc_tag = '  <script data-goatcounter="https://billtribble.goatcounter.com/count" async src="https://gc.zgo.at/count.js"></script>'
+  if "data-goatcounter=" not in html:
+    html = html.replace("</head>", gc_tag + "\n</head>", 1)
   pattern = re.compile(r"<script type=\"module\">.*?</script>", re.DOTALL)
   replacement = f'<script type="module">\n{bundle_js}\n  </script>'
   new_html, count = pattern.subn(lambda _: replacement, html, count=1)
